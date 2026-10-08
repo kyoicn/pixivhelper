@@ -1,0 +1,377 @@
+#!/usr/bin/env python3
+"""Download all original-size images from a Pixiv artwork.
+
+Uses the logged-in browser session cookie (PHPSESSID) to authenticate
+against Pixiv's web AJAX API, then downloads each page from i.pximg.net
+with the required Referer header.
+
+Usage:
+    pixiv-dl <artwork-id-or-url> [...] [-o OUT_DIR] [-j JOBS] [--browser BROWSER]
+
+Examples:
+    pixiv-dl 145892669
+    pixiv-dl https://www.pixiv.net/artworks/145892669
+    pixiv-dl 145892669 149348199 -j 8
+    pixiv-dl - < ids.txt
+"""
+
+import argparse
+import html
+import json
+import os
+import random
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import threading
+import time
+import unicodedata
+import urllib.request
+import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.error import HTTPError, URLError
+
+try:
+    import browser_cookie3
+except ImportError:
+    sys.exit("Missing dependency. Install with:  pip3 install browser-cookie3")
+
+SESSION_CACHE = os.path.expanduser("~/.config/pixiv-dl/session")
+RETRY_STATUS = {429, 500, 502, 503, 504}
+MAX_ATTEMPTS = 4
+
+_print_lock = threading.Lock()
+
+
+def log(msg):
+    with _print_lock:
+        print(msg, flush=True)
+
+
+def parse_artwork_id(s: str) -> str:
+    s = s.strip()
+    if s.isdigit():
+        return s
+    m = re.search(r"/artworks/(\d+)", s) or re.search(r"[?&]illust_id=(\d+)", s)
+    if not m:
+        sys.exit(f"Could not parse artwork ID from: {s!r}")
+    return m.group(1)
+
+
+def safe_component(s: str, max_bytes: int = 60) -> str:
+    """Make an artist name safe as a single path component.
+
+    Truncation is by UTF-8 bytes, not characters: macOS caps a component at
+    255 bytes and Japanese names run 3 bytes per character.
+    """
+    s = unicodedata.normalize("NFC", s)
+    s = re.sub(r"[\x00-\x1f\x7f/:\\]", "", s)
+    s = re.sub(r"\s+", "_", s).strip("._ ")
+    s = s.encode("utf-8")[:max_bytes].decode("utf-8", "ignore").strip("._ ")
+    return s or "unknown"
+
+
+def get_phpsessid(browser: str) -> str:
+    loader = getattr(browser_cookie3, browser, None)
+    if loader is None:
+        sys.exit(f"Unknown browser: {browser!r} (try chrome, firefox, safari, edge, brave)")
+    cj = loader(domain_name=".pixiv.net")
+    for c in cj:
+        if c.name == "PHPSESSID":
+            return c.value
+    sys.exit(
+        f"No PHPSESSID found in {browser}. Log in to pixiv.net in that browser first.\n"
+        f"Tip: Chrome must be fully quit (Cmd+Q) so its cookie DB is unlocked."
+    )
+
+
+def load_session(browser: str, refresh: bool = False) -> str:
+    """Cached session cookie, so Chrome only needs quitting when it goes stale."""
+    if not refresh:
+        try:
+            with open(SESSION_CACHE) as f:
+                cached = f.read().strip()
+            if cached:
+                return cached
+        except OSError:
+            pass
+    sid = get_phpsessid(browser)
+    try:
+        os.makedirs(os.path.dirname(SESSION_CACHE), exist_ok=True)
+        fd = os.open(SESSION_CACHE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(sid)
+    except OSError:
+        pass
+    return sid
+
+
+def _backoff(attempt: int) -> float:
+    return 1.5 * (2 ** attempt) + random.uniform(0, 0.5)
+
+
+def _retry_after(e: HTTPError):
+    raw = e.headers.get("Retry-After") if e.headers else None
+    try:
+        return min(float(raw), 30.0)
+    except (TypeError, ValueError):
+        return None
+
+
+class Fetcher:
+    """Fetches with backoff on transient errors, and one session refresh on 403."""
+
+    def __init__(self, browser: str):
+        self.browser = browser
+        self.sid = load_session(browser)
+        self._lock = threading.Lock()
+        self._refreshed = False
+
+    def _request(self, url: str) -> bytes:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://www.pixiv.net/",
+            "Cookie": f"PHPSESSID={self.sid}",
+        })
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.read()
+
+    def _refresh(self) -> bool:
+        with self._lock:
+            if self._refreshed:
+                return False
+            self._refreshed = True
+            self.sid = load_session(self.browser, refresh=True)
+            return True
+
+    def __call__(self, url: str) -> bytes:
+        last = None
+        for attempt in range(MAX_ATTEMPTS):
+            try:
+                return self._request(url)
+            except HTTPError as e:
+                last = e
+                # A 403 is pixiv rejecting the session or the Referer, not a
+                # transient fault: retrying is pointless unless the cookie changes.
+                if e.code == 403 and self._refresh():
+                    continue
+                if e.code not in RETRY_STATUS:
+                    raise
+                delay = _retry_after(e) or _backoff(attempt)
+            except (URLError, socket.timeout, TimeoutError) as e:
+                last = e
+                delay = _backoff(attempt)
+            if attempt < MAX_ATTEMPTS - 1:
+                time.sleep(delay)
+        raise last
+
+
+def download_page(url: str, dest: str, fetch) -> tuple:
+    if os.path.exists(dest):
+        return "skip", 0
+    data = fetch(url)
+    tmp = dest + ".part"
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, dest)
+    except BaseException:
+        # Never leave a truncated file behind: os.path.exists would treat it as done.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return "ok", len(data)
+
+
+def plain_text(s: str) -> str:
+    """Pixiv descriptions are HTML; keep the line breaks that carry the meaning."""
+    s = re.sub(r"<br\s*/?>|</p>|</div>", "\n", s or "", flags=re.I)
+    s = re.sub(r"<[^>]+>", "", s)
+    return html.unescape(s).strip()
+
+
+def write_metadata(body: dict, out_dir: str) -> None:
+    meta = {
+        "id": body.get("illustId") or body.get("id"),
+        "title": body.get("illustTitle"),
+        "description": plain_text(body.get("description")),
+        "userName": body.get("userName"),
+        "userId": body.get("userId"),
+        "createDate": body.get("createDate"),
+        "uploadDate": body.get("uploadDate"),
+        "pageCount": body.get("pageCount"),
+        "illustType": body.get("illustType"),
+        "xRestrict": body.get("xRestrict"),
+        "tags": [t.get("tag") for t in (body.get("tags") or {}).get("tags", [])],
+        "url": f"https://www.pixiv.net/artworks/{body.get('illustId') or body.get('id')}",
+    }
+    with open(os.path.join(out_dir, "metadata.json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+
+def download_ugoira(artwork_id: str, out_dir: str, fetch) -> int:
+    """Pixiv animated works are a zip of frames + per-frame delays.
+    Download, extract, and assemble to MP4 via ffmpeg if available."""
+    meta = json.loads(fetch(f"https://www.pixiv.net/ajax/illust/{artwork_id}/ugoira_meta"))
+    if meta.get("error"):
+        log(f"ugoira_meta error: {meta.get('message')!r}")
+        return 1
+    body = meta["body"]
+    frames = body["frames"]  # [{file: "000000.jpg", delay: 100}, ...]
+    log(f"Type:   ugoira ({len(frames)} frames)")
+    log(f"\nDownloading frame archive -> {out_dir}\n")
+
+    zip_path = os.path.join(out_dir, f"{artwork_id}_ugoira.zip")
+    if os.path.exists(zip_path):
+        log(f"  skip (exists) {os.path.basename(zip_path)}")
+    else:
+        try:
+            download_page(body["originalSrc"], zip_path, fetch)
+        except Exception as e:
+            log(f"  FAILED {os.path.basename(zip_path)}: {e}")
+            return 1
+        log(f"  {os.path.basename(zip_path)}  ({os.path.getsize(zip_path)//1024} KB)")
+
+    frames_dir = os.path.join(out_dir, f"{artwork_id}_frames")
+    os.makedirs(frames_dir, exist_ok=True)
+    have = len([f for f in os.listdir(frames_dir) if not f.endswith((".json", ".txt"))])
+    if have < len(frames):
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extractall(frames_dir)
+        log(f"  extracted {len(frames)} frames -> {frames_dir}/")
+    else:
+        log(f"  frames already extracted -> {frames_dir}/")
+    with open(os.path.join(frames_dir, "frames.json"), "w") as f:
+        json.dump(frames, f, indent=2)
+
+    mp4_path = os.path.join(out_dir, f"{artwork_id}.mp4")
+    if not shutil.which("ffmpeg"):
+        log("\nffmpeg not found - skipping MP4 assembly.")
+        log("Install with `brew install ffmpeg`, then re-run to build the video.")
+        return 0
+
+    # Absolute paths: the concat demuxer's relative-path resolution depends on
+    # the working directory, which this script does not control.
+    list_path = os.path.join(frames_dir, "concat.txt")
+    with open(list_path, "w") as f:
+        for fr in frames:
+            f.write(f"file '{os.path.join(frames_dir, fr['file'])}'\n")
+            f.write(f"duration {fr['delay']/1000:.4f}\n")
+        f.write(f"file '{os.path.join(frames_dir, frames[-1]['file'])}'\n")  # ffmpeg quirk
+
+    cmd = [
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+        "-i", list_path,
+        "-fps_mode", "vfr", "-pix_fmt", "yuv420p",
+        "-c:v", "libx264", "-crf", "18",
+        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",  # ensure even dims
+        mp4_path,
+    ]
+    log("\nAssembling MP4 with ffmpeg...")
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        log(r.stderr[-2000:])
+        log("ffmpeg failed.")
+        return 1
+    log(f"  {os.path.basename(mp4_path)}  ({os.path.getsize(mp4_path)//1024} KB)")
+    return 0
+
+
+def download_artwork(artwork_id: str, fetch, out_override, jobs: int) -> int:
+    """Returns the number of failures."""
+    try:
+        meta = json.loads(fetch(f"https://www.pixiv.net/ajax/illust/{artwork_id}"))
+    except HTTPError as e:
+        log(f"Metadata request failed for {artwork_id}: HTTP {e.code}")
+        return 1
+    except URLError as e:
+        log(f"Network error for {artwork_id}: {e.reason}")
+        return 1
+
+    if meta.get("error"):
+        log(f"Pixiv API error for {artwork_id}: {meta.get('message')!r}")
+        return 1
+
+    body = meta["body"]
+    artist = safe_component(body.get("userName") or "unknown")
+    out_dir = out_override or os.path.expanduser(f"~/Downloads/pixiv-{artist}-{artwork_id}")
+    os.makedirs(out_dir, exist_ok=True)
+
+    log(f"Title:  {body['illustTitle']}")
+    log(f"Artist: {body['userName']}  (id {body.get('userId')})")
+    write_metadata(body, out_dir)
+
+    if body.get("illustType") == 2:
+        return download_ugoira(artwork_id, out_dir, fetch)
+
+    log(f"Pages:  {body['pageCount']}")
+    pages = json.loads(fetch(f"https://www.pixiv.net/ajax/illust/{artwork_id}/pages"))["body"]
+    urls = [p["urls"]["original"] for p in pages]
+    log(f"\nDownloading {len(urls)} originals -> {out_dir}\n")
+
+    done = failed = 0
+    with ThreadPoolExecutor(max_workers=jobs) as ex:
+        futs = {ex.submit(download_page, u, os.path.join(out_dir, os.path.basename(u)), fetch): u
+                for u in urls}
+        for fut in as_completed(futs):
+            base = os.path.basename(futs[fut])
+            done += 1
+            try:
+                status, size = fut.result()
+            except Exception as e:
+                failed += 1
+                log(f"  [{done}/{len(urls)}] FAILED {base}: {e}")
+                continue
+            if status == "skip":
+                log(f"  [{done}/{len(urls)}] skip (exists) {base}")
+            else:
+                log(f"  [{done}/{len(urls)}] {base}  ({size//1024} KB)")
+    return failed
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Download all images from a Pixiv artwork.")
+    ap.add_argument("artwork", nargs="+",
+                    help="Artwork IDs or pixiv.net/artworks/<id> URLs ('-' reads them from stdin)")
+    ap.add_argument("-o", "--out", default=None,
+                    help="Output directory (default: ~/Downloads/pixiv-<artist>-<id>)")
+    ap.add_argument("-j", "--jobs", type=int, default=5,
+                    help="Parallel downloads per artwork (default: 5)")
+    ap.add_argument("--browser", default="chrome",
+                    help="Browser to read the session cookie from (default: chrome)")
+    args = ap.parse_args()
+
+    targets = args.artwork
+    if targets == ["-"]:
+        targets = [ln.strip() for ln in sys.stdin if ln.strip()]
+    ids = [parse_artwork_id(t) for t in targets]
+    if not ids:
+        sys.exit("No artwork IDs given.")
+    if args.out and len(ids) > 1:
+        sys.exit("-o/--out takes a single artwork; omit it to download several.")
+    if args.jobs < 1:
+        sys.exit("-j/--jobs must be at least 1.")
+
+    out_override = os.path.expanduser(args.out) if args.out else None
+    fetch = Fetcher(args.browser)
+
+    failures = 0
+    for n, artwork_id in enumerate(ids, 1):
+        if len(ids) > 1:
+            log(f"\n=== [{n}/{len(ids)}] {artwork_id} ===")
+        failures += download_artwork(artwork_id, fetch, out_override, args.jobs)
+
+    if failures:
+        log(f"\nDone with {failures} failure(s).")
+        sys.exit(1)
+    log("\nDone.")
+
+
+if __name__ == "__main__":
+    main()
