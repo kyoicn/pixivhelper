@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CUJ-3 saved — ugoira output changed to WebM; quiet autosave confirmation beside the heading</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .chip { height:28px; padding:0 10px; border-radius:9999px; border:1px solid #d0d5db; background:#fff; color:#1f1f1f; font-size:12.5px; display:inline-flex; align-items:center; cursor:pointer; }
+  .chip:hover { border-color:#0096FA; color:#0096FA; background:#f0f8ff; }
+  .seg { display:inline-flex; border:1px solid #d0d5db; border-radius:10px; overflow:hidden; background:#fff; }
+  .seg button { height:36px; padding:0 18px; font-size:14px; color:#3c4043; background:transparent; border-right:1px solid #d0d5db; }
+  .seg button:last-child { border-right:0; }
+  .seg button:hover { background:#f5f7f9; }
+  .seg button[aria-pressed="true"] { background:#0096FA; color:#fff; font-weight:600; }
+  .toggle { width:44px; height:26px; border-radius:9999px; background:#0096FA; position:relative; flex-shrink:0; cursor:pointer; }
+  .toggle::after { content:""; position:absolute; top:3px; left:21px; width:20px; height:20px; border-radius:9999px; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.25); }
+  input.field:focus { outline:2px solid #0096FA; outline-offset:0; border-color:transparent; }
+  @media (prefers-color-scheme: dark) {
+    .chip { background:#1f1f1f; border-color:#3a3f45; color:#e8eaed; }
+    .chip:hover { background:#102a3f; }
+    .seg { background:#1f1f1f; border-color:#3a3f45; }
+    .seg button { color:#e8eaed; border-color:#3a3f45; }
+    .seg button:hover { background:#2a2f35; }
+  }
+</style>
+</head>
+<body class="bg-[#f6f7f9] dark:bg-[#121212] text-[#1f1f1f] dark:text-[#e8eaed] overflow-x-auto">
+
+<!-- ===== Chrome browser frame (context only): a full tab, not a popup ===== -->
+<div class="bg-[#dee1e6] dark:bg-[#202124]">
+  <div class="flex items-end h-10 px-2 gap-1">
+    <div class="flex items-center gap-2 bg-[#e8eaed] dark:bg-[#2b2c2f] rounded-t-lg px-3 h-8 text-[12px] text-[#3c4043] dark:text-[#9aa0a6] max-w-[300px]">
+      <span class="w-4 h-4 rounded-sm bg-[#0096FA] text-white text-[10px] font-bold flex items-center justify-center">p</span>
+      <span class="truncate">雨上がりの渋谷 - みずきのイラスト - pixiv</span>
+      <span class="ml-auto">×</span>
+    </div>
+    <div class="flex items-center gap-2 bg-white dark:bg-[#35363a] rounded-t-lg px-3 h-8 text-[12px] text-[#3c4043] dark:text-[#e8eaed] max-w-[300px]">
+      <span class="w-4 h-4 rounded-md bg-[#0096FA] flex items-center justify-center"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M4 19h16"/></svg></span>
+      <span class="truncate">pixiv Downloader — Settings</span>
+      <span class="ml-auto text-[#5f6368]">×</span>
+    </div>
+    <span class="text-[#5f6368] text-lg px-2 pb-1">+</span>
+  </div>
+  <div class="bg-white dark:bg-[#35363a] flex items-center gap-2 px-3 h-11 border-b border-[#dadce0] dark:border-[#202124]">
+    <span class="text-[#5f6368] px-1">←</span><span class="text-[#c4c7c5] px-1">→</span><span class="text-[#5f6368] px-1">⟳</span>
+    <div class="flex-1 flex items-center gap-2 bg-[#f1f3f4] dark:bg-[#202124] rounded-full h-8 px-3 text-[13px] text-[#202124] dark:text-[#e8eaed] mono">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#5f6368" stroke-width="2.4"><path d="M4 7h4a2 2 0 1 1 4 0h4v4a2 2 0 1 1 0 4v4h-4a2 2 0 1 1-4 0H4v-4a2 2 0 1 1 0-4V7z"/></svg>
+      chrome-extension://hgfedcbakjihnmlpoqrstuvwxyzabcde/options.html
+    </div>
+    <div class="relative" title="pixiv Downloader — click to open settings">
+      <div class="w-7 h-7 rounded-md bg-[#0096FA] flex items-center justify-center">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M4 19h16"/></svg>
+      </div>
+    </div>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#5f6368" stroke-width="2"><path d="M4 7h4a2 2 0 1 1 4 0h4v4a2 2 0 1 1 0 4v4h-4a2 2 0 1 1-4 0H4v-4a2 2 0 1 1 0-4V7z"/></svg>
+    <div class="w-7 h-7 rounded-full bg-[#c58af9]"></div>
+    <span class="text-[#5f6368] px-1">⋮</span>
+  </div>
+</div>
+
+<!-- ===== Settings page ===== -->
+<main class="min-h-screen">
+  <div class="max-w-[640px] mx-auto px-6 pt-14 pb-20">
+
+    <!-- Header -->
+    <header class="flex items-center gap-4">
+      <div class="w-12 h-12 rounded-xl bg-[#0096FA] flex items-center justify-center shadow-sm">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M4 19h16"/></svg>
+      </div>
+      <div>
+        <h1 class="text-[22px] font-bold leading-tight">pixiv Downloader</h1>
+        <p class="text-[14px] text-[#5c6166] dark:text-[#9aa0a6]">Settings</p>
+      </div>
+    </header>
+
+    <!-- 1. Download folder -->
+    <section class="mt-12">
+      <div class="flex items-baseline justify-between">
+        <h2 class="text-[16px] font-semibold">Download folder</h2>
+        <span class="text-[12.5px] text-[#1a9f5a] opacity-0" aria-live="polite">Saved</span>
+      </div>
+      <p class="mt-1 text-[14px] text-[#5c6166] dark:text-[#9aa0a6] leading-relaxed">Inside your Downloads folder. Use tokens to name folders after the artwork.</p>
+      <input class="field mono mt-4 w-full h-11 rounded-lg border border-[#d0d5db] dark:border-[#3a3f45] bg-white dark:bg-[#1f1f1f] px-4 text-[14px]" value="pixiv/{artist}-{id}" spellcheck="false" aria-label="Folder pattern">
+      <div class="mt-3 flex flex-wrap items-center gap-2">
+        <span class="text-[12.5px] text-[#5c6166] dark:text-[#9aa0a6] mr-1">Insert:</span>
+        <button class="chip mono" title="Artist display name, as shown on pixiv">{artist}</button>
+        <button class="chip mono" title="Artwork ID, the number in the page URL">{id}</button>
+        <button class="chip mono" title="Artwork title, shortened to stay a safe folder name">{title}</button>
+        <button class="chip mono" title="Artist's numeric pixiv account ID; stable if the artist renames">{userId}</button>
+      </div>
+      <div class="mt-4 flex items-center gap-2 text-[13px] text-[#5c6166] dark:text-[#9aa0a6]">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <span>Preview:</span>
+        <span class="mono text-[#1f1f1f] dark:text-[#e8eaed]">Downloads/pixiv/みずき-135882741/135882741_p0.jpg</span>
+      </div>
+    </section>
+
+    <!-- 2. Ugoira output -->
+    <section class="mt-12">
+      <div class="flex items-baseline justify-between">
+        <h2 class="text-[16px] font-semibold">Ugoira output</h2>
+        <span class="inline-flex items-center gap-1 text-[12.5px] text-[#1a9f5a]" aria-live="polite">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Saved
+        </span>
+      </div>
+      <p class="mt-1 text-[14px] text-[#5c6166] dark:text-[#9aa0a6] leading-relaxed">Encoded in your browser from the original frames. The frame zip and <span class="mono">frames.json</span> are always saved.</p>
+      <div class="seg mt-4" role="group" aria-label="Ugoira output format">
+        <button aria-pressed="false">MP4</button>
+        <button aria-pressed="true">WebM</button>
+        <button aria-pressed="false">ZIP only</button>
+      </div>
+    </section>
+
+    <!-- 3. metadata.json -->
+    <section class="mt-12">
+      <div class="flex items-start justify-between gap-6">
+        <div>
+          <h2 class="text-[16px] font-semibold">Save <span class="mono">metadata.json</span></h2>
+          <p class="mt-1 text-[14px] text-[#5c6166] dark:text-[#9aa0a6] leading-relaxed">Title, description, tags, dates and artist, saved next to the images.</p>
+        </div>
+        <button class="toggle mt-1" role="switch" aria-checked="true" aria-label="Save metadata.json"></button>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="mt-16 pt-6 border-t border-[#e3e6ea] dark:border-[#2a2f35] flex flex-wrap items-center gap-x-6 gap-y-2 text-[13px] text-[#5c6166] dark:text-[#9aa0a6]">
+      <a class="text-[#0096FA] hover:underline cursor-pointer">Reset to defaults</a>
+      <a class="text-[#0096FA] hover:underline cursor-pointer">Report an issue</a>
+      <span class="ml-auto">v1.0.0</span>
+      <p class="w-full mt-2 leading-relaxed">Only talks to pixiv.net and its image host. Nothing you download leaves your browser.</p>
+    </footer>
+  </div>
+</main>
+</body>
+</html>
