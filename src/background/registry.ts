@@ -21,7 +21,8 @@ export type Effect =
   | { type: 'download'; idx: number } // hand the file's blob URL to chrome.downloads
   | { type: 'abort'; taskIds: string[] } // off/abort
   | { type: 'release'; taskIds: string[]; keepRetained?: boolean } // off/release
-  | { type: 'push' } // job/update to the origin tab
+  | { type: 'cancelDownload'; downloadIds: number[] } // chrome.downloads.cancel (removes the partial file)
+  | { type: 'push'; throttle?: boolean } // job/update to the origin tab; `throttle` for byte progress
   | { type: 'badge' } // re-render the toolbar badge and title
   | { type: 'finalize' }; // classify, push the final view, release the job's tasks
 
