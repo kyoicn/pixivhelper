@@ -1,0 +1,49 @@
+{
+  "error": false,
+  "message": "",
+  "body": {
+    "illustId": "135882741",
+    "illustTitle": "雨上がりの渋谷",
+    "illustComment": "夕方の渋谷<br />雨上がり",
+    "id": "135882741",
+    "title": "雨上がりの渋谷",
+    "description": "夕方の渋谷<br />雨上がり",
+    "illustType": 1,
+    "createDate": "2025-10-01T18:00:00+00:00",
+    "uploadDate": "2025-10-01T18:00:00+00:00",
+    "restrict": 0,
+    "xRestrict": 0,
+    "sl": 2,
+    "urls": {
+      "mini": "https://i.pximg.net/c/48x48/custom-thumb/img/2025/10/02/03/00/00/135882741_p0_custom1200.jpg",
+      "thumb": "https://i.pximg.net/c/250x250_80_a2/custom-thumb/img/2025/10/02/03/00/00/135882741_p0_custom1200.jpg",
+      "small": "https://i.pximg.net/c/540x540_70/img-master/img/2025/10/02/03/00/00/135882741_p0_master1200.jpg",
+      "regular": "https://i.pximg.net/img-master/img/2025/10/02/03/00/00/135882741_p0_master1200.jpg",
+      "original": "https://i.pximg.net/img-original/img/2025/10/02/03/00/00/135882741_p0.jpg"
+    },
+    "tags": {
+      "authorId": "40285173",
+      "isLocked": false,
+      "tags": [
+        { "tag": "オリジナル", "locked": true, "deletable": false, "userId": "40285173" },
+        { "tag": "風景", "locked": true, "deletable": false, "userId": "40285173" }
+      ],
+      "writable": true
+    },
+    "alt": "#オリジナル 雨上がりの渋谷 - みずきのマンガ",
+    "userId": "40285173",
+    "userName": "みずき",
+    "userAccount": "mizuki",
+    "likeData": false,
+    "width": 1200,
+    "height": 1697,
+    "pageCount": 3,
+    "bookmarkCount": 1520,
+    "likeCount": 980,
+    "commentCount": 12,
+    "responseCount": 0,
+    "viewCount": 20341,
+    "isOriginal": true,
+    "aiType": 1
+  }
+}
