@@ -1,16 +1,16 @@
 ---
 id: prd-000
-title: pixiv Downloader MVP
+title: Helper for Pixiv MVP
 status: active
 created: 2026-10-08
 deprecation_reason:
 ---
 
-# PRD-000: pixiv Downloader MVP
+# PRD-000: Helper for Pixiv MVP
 
 ## 1. Overview
 
-pixiv Downloader is a Manifest V3 Chrome extension for desktop Chrome, published on the Chrome Web Store. It adds one button to every pixiv artwork page. One click saves the whole artwork the way an archivist wants it: one folder per artwork inside Chrome's Downloads folder, every page at original size, a `metadata.json`, and for ugoira (pixiv's animated works) the original frame zip, the frame timing list, and a playable video encoded in the browser.
+Helper for Pixiv (public name per R-002) is a Manifest V3 Chrome extension for desktop Chrome, published on the Chrome Web Store. It adds one button to every pixiv artwork page. One click saves the whole artwork the way an archivist wants it: one folder per artwork inside Chrome's Downloads folder, every page at original size, a `metadata.json`, and for ugoira (pixiv's animated works) the original frame zip, the frame timing list, and a playable video encoded in the browser.
 
 The extension replaces a personal Python script, `ref/pixiv-dl`, and carries over its behaviors (endpoints, folder-name sanitization, `metadata.json` fields, retry policy). The browser now does what the terminal, the cookie extraction, and the local ffmpeg install used to do.
 
@@ -226,10 +226,10 @@ The busy tooltip is `Cancel download` in every busy state. `cuj-2-encoding.html`
 - **Click** always opens the settings page in a full tab (CUJ-3), whether or not downloads are running. There is no popup.
 - **Badge text:** the number of files still to land across every job in flight. An illustration or manga job counts its image pages not yet complete (`metadata.json` never counts). An ugoira job counts **1** from start to finish: the video, or the zip with ZIP only. (assumption — confirm that the ugoira job counts 1 during its zip-fetch phase too) Counts of 1000 or more show `999+`. With nothing in flight, the badge is hidden (empty text).
 - **Badge style:** background `#1f1f1f`, text `#FFFFFF`.
-- **Action title (tooltip):**
-  - Nothing in flight: `pixiv Downloader — click to open settings`
-  - One job: `pixiv Downloader — 5 files remaining` (singular: `pixiv Downloader — 1 file remaining`)
-  - Two or more jobs: `pixiv Downloader — 23 files remaining across 2 downloads`
+- **Action title (tooltip)** (product name per R-002):
+  - Nothing in flight: `Helper for Pixiv — click to open settings`
+  - One job: `Helper for Pixiv — 5 files remaining` (singular: `Helper for Pixiv — 1 file remaining`)
+  - Two or more jobs: `Helper for Pixiv — 23 files remaining across 2 downloads`
 - The badge updates within 1 s of any file completing, any job starting, or any job being cancelled or failing.
 - **Service-worker restarts:** in-flight job state (queued files, completed and failed counts, originating tab) survives a service-worker restart (for example in session-scoped extension storage). The badge is recomputed within 1 s of the restart. State does not survive quitting Chrome (4.1 #6).
 
@@ -284,7 +284,7 @@ This is the core promise of the product. The user is looking at an illustration 
 
 3. **User action**: User waits, or keeps browsing pixiv.
    - **System response**: Each time Chrome reports an original complete, the worker sends progress to the tab, decrements the badge, and hands the next queued original to Chrome.
-   - **User sees**: The counter advances (`7 / 12`) and the ring fills clockwise to the matching fraction (58% at 7/12). The toolbar badge shows `5` with the tooltip `pixiv Downloader — 5 files remaining`. See `cuj-1-downloading.html`.
+   - **User sees**: The counter advances (`7 / 12`) and the ring fills clockwise to the matching fraction (58% at 7/12). The toolbar badge shows `5` with the tooltip `Helper for Pixiv — 5 files remaining` (per R-002). See `cuj-1-downloading.html`.
    - **Details**: `metadata.json` counts in neither the counter nor the badge. The counter never goes down. Pages may finish out of order, and the counter only counts completions.
 
 4. **User action**: User hovers the busy button.
@@ -299,7 +299,7 @@ This is the core promise of the product. The user is looking at an illustration 
 
 6. **User action**: User waits for the last file (no cancel).
    - **System response**: When the 12th original completes, the job ends, the worker notifies the tab, and the badge clears.
-   - **User sees**: Within 300 ms the button becomes **Saved**: white fill, 1.5 px `#0096FA` border, `#0096FA` text, checkmark icon, `Saved · 12P` (single page: `Saved`). Hovering gives only a faint `#e6f4fe` tint, and the text never changes. Tooltip: `Saved to Downloads/pixiv/みずき-135882741`. The toolbar badge is gone, and the action title returns to `pixiv Downloader — click to open settings`. On disk, `Downloads/pixiv/みずき-135882741/` holds `metadata.json` and `135882741_p0.jpg` … `135882741_p11.jpg`. See `cuj-1-saved.html`.
+   - **User sees**: Within 300 ms the button becomes **Saved**: white fill, 1.5 px `#0096FA` border, `#0096FA` text, checkmark icon, `Saved · 12P` (single page: `Saved`). Hovering gives only a faint `#e6f4fe` tint, and the text never changes. Tooltip: `Saved to Downloads/pixiv/みずき-135882741`. The toolbar badge is gone, and the action title returns to `Helper for Pixiv — click to open settings`. On disk, `Downloads/pixiv/みずき-135882741/` holds `metadata.json` and `135882741_p0.jpg` … `135882741_p11.jpg`. See `cuj-1-saved.html`.
    - **Details**: `aria-busy` is removed. `aria-label` is `Saved 12 pages to Downloads/pixiv/みずき-135882741. Click to download again.` The live region announces `Saved 12 pages`. If any page failed after retries, the job ends in CUJ-5's error state instead.
 
 7. **User action**: User follows a link within pixiv to another artwork, then presses Back.
@@ -378,7 +378,7 @@ Ugoira is pixiv's animated format: a zip of still frames plus a per-frame delay 
 
 2. **User action**: User clicks the button.
    - **System response**: The worker snapshots the settings, writes `metadata.json` (if enabled), and fetches `ugoira_meta` and then the original frame zip, reporting byte progress.
-   - **User sees**: The pill shows the progress ring and `0%`, rising through 0–40% as the zip downloads. The toolbar badge shows `1` with the tooltip `pixiv Downloader — 1 file remaining`.
+   - **User sees**: The pill shows the progress ring and `0%`, rising through 0–40% as the zip downloads. The toolbar badge shows `1` with the tooltip `Helper for Pixiv — 1 file remaining` (per R-002).
    - **Details**: `aria-label` is `Downloading frames, 23 percent. Click to cancel.` (with the live value). The Cancel face and double-click guard behave exactly as in CUJ-1 (4.7.5).
 
 3. **User action**: User waits.
@@ -451,9 +451,9 @@ The product's positioning is "three settings, not thirty". Users come here once,
 
 #### Journey Steps
 
-1. **User action**: User clicks the pixiv Downloader icon in Chrome's toolbar.
+1. **User action**: User clicks the Helper for Pixiv icon in Chrome's toolbar.
    - **System response**: Chrome opens the extension's options page as a **full tab** to the right of the current tab and focuses it. If a settings tab is already open, that tab and its window are focused instead. No popup ever opens.
-   - **User sees**: A tab titled `pixiv Downloader — Settings`. The page background is `#f6f7f9` (dark: `#121212`), with a centered 640 px column, 56 px top padding and 24 px side padding. The header has a 48 × 48 px rounded blue square with the download glyph, `pixiv Downloader` (22 px bold), and `Settings` (14 px, `#5c6166`) below it. Then three sections, 48 px apart, in this order: **Download folder**, **Ugoira output**, **Save metadata.json**, followed by the footer. See `cuj-3-initial.html`.
+   - **User sees**: A tab titled `Helper for Pixiv — Settings`. The page background is `#f6f7f9` (dark: `#121212`), with a centered 640 px column, 56 px top padding and 24 px side padding. The header has a 48 × 48 px rounded blue square with the download glyph, `Helper for Pixiv` (22 px bold; name per R-002), and `Settings` (14 px, `#5c6166`) below it. Then three sections, 48 px apart, in this order: **Download folder**, **Ugoira output**, **Save metadata.json**, followed by the footer. See `cuj-3-initial.html`.
    - **Details**: Each section heading is 16 px semibold, and its help text is 14 px `#5c6166` (dark: `#9aa0a6`). The page follows the system light/dark preference via `prefers-color-scheme`. All strings appear in Chrome's UI language (en, ja, zh_CN, or zh_TW, falling back to en).
 
 2. **User action**: User reads the Download folder section.
@@ -508,7 +508,7 @@ The product's positioning is "three settings, not thirty". Users come here once,
 
 10. **User action**: User reads or uses the footer.
     - **User sees**: A 1 px top border, then 13 px gray text: `Reset to defaults` and `Report an issue` as `#0096FA` links (underlined on hover), the version (`v1.0.0`, read from the manifest) right-aligned, and a full-width line below: `Only talks to pixiv.net and its image host. Nothing you download leaves your browser.`
-    - **Details**: `Report an issue` opens the project's issue tracker in a new tab. (assumption — confirm: the exact URL is not yet decided and must exist before Web Store submission.)
+    - **Details**: `Report an issue` opens the project's GitHub Issues, `https://github.com/kyoicn/pixivhelper/issues`, in a new tab (per R-001).
 
 #### Edge Cases & Error States
 - **Reset or any change while a download runs**: the change is saved and applies to the next download only. The running job keeps its snapshot.
@@ -530,7 +530,7 @@ Mocks for this CUJ:
 - `docs/ux/prd-000-mvp-mockups/cuj-3-saved.html`: WebM selected, green `Saved` beside the Ugoira output heading
 
 #### Acceptance Criteria
-- Clicking the toolbar icon opens the settings page in a full tab titled `pixiv Downloader — Settings`. Clicking it again while that tab exists focuses the existing tab and opens no new one.
+- Clicking the toolbar icon opens the settings page in a full tab titled `Helper for Pixiv — Settings`. Clicking it again while that tab exists focuses the existing tab and opens no new one.
 - No popup ever appears from the toolbar icon.
 - With no settings saved, the page shows `pixiv/{artist}-{id}`, `MP4` selected, and the metadata switch on.
 - Each of the four chips inserts its token at the caret, and its tooltip matches the copy in step 2 exactly.
@@ -564,20 +564,20 @@ Downloads run in the background and outlive their tabs, so the user needs one gl
 
 1. **User action**: In tab A, user clicks `Download · 30P`.
    - **System response**: Job A starts (CUJ-1).
-   - **User sees**: Tab A's button shows `0 / 30`. The badge shows `30`, and its tooltip reads `pixiv Downloader — 30 files remaining`.
+   - **User sees**: Tab A's button shows `0 / 30`. The badge shows `30`, and its tooltip reads `Helper for Pixiv — 30 files remaining` (per R-002).
 
 2. **User action**: User switches to tab B and clicks `Download · 8P` while job A is still running.
    - **System response**: Job B starts right away. It is not queued behind A. Each job independently keeps at most 5 files in Chrome's downloader.
-   - **User sees**: Tab B's button shows its own progress only, for example `3 / 8`. The badge shows the sum of files still to land: 18 for A plus 5 for B gives `23`. Badge style: `#1f1f1f` background, white text. Hovering the icon shows `pixiv Downloader — 23 files remaining across 2 downloads`. Chrome's own downloads button shows activity alongside it. See `cuj-4-initial.html`.
+   - **User sees**: Tab B's button shows its own progress only, for example `3 / 8`. The badge shows the sum of files still to land: 18 for A plus 5 for B gives `23`. Badge style: `#1f1f1f` background, white text. Hovering the icon shows `Helper for Pixiv — 23 files remaining across 2 downloads`. Chrome's own downloads button shows activity alongside it. See `cuj-4-initial.html`.
    - **Details**: The badge counts down as files land from either job and updates within 1 s of each completion.
 
 3. **User action**: User stays on tab B until job B finishes.
    - **System response**: Job B ends.
-   - **User sees**: Tab B's button shows `Saved · 8P`. The badge keeps counting job A's remainder (e.g. `14`), and the tooltip switches to the one-job form, `pixiv Downloader — 14 files remaining`.
+   - **User sees**: Tab B's button shows `Saved · 8P`. The badge keeps counting job A's remainder (e.g. `14`), and the tooltip switches to the one-job form, `Helper for Pixiv — 14 files remaining`.
 
 4. **User action**: User goes back to tab A, hovers the busy button, and clicks `Cancel`.
    - **System response**: Only job A stops. Any other running jobs continue.
-   - **User sees**: Tab A's button returns to `Download · 30P`. The badge drops at once by job A's remaining count. If nothing else is in flight, it disappears and the tooltip returns to `pixiv Downloader — click to open settings`.
+   - **User sees**: Tab A's button returns to `Download · 30P`. The badge drops at once by job A's remaining count. If nothing else is in flight, it disappears and the tooltip returns to `Helper for Pixiv — click to open settings`.
 
 5. **User action**: (Alternative to step 4) User lets job A run to the end.
    - **User sees**: When the last file of the last job lands, the badge disappears.
@@ -586,7 +586,7 @@ Downloads run in the background and outlive their tabs, so the user needs one gl
    - **System response / User sees**: The settings page opens or is focused, exactly as in CUJ-3. Nothing about the downloads changes.
 
 #### Edge Cases & Error States
-- **Large totals**: badge text is limited to 4 characters, so counts of 1000 or more show `999+`. The tooltip still shows the exact number, e.g. `pixiv Downloader — 1204 files remaining across 7 downloads`.
+- **Large totals**: badge text is limited to 4 characters, so counts of 1000 or more show `999+`. The tooltip still shows the exact number, e.g. `Helper for Pixiv — 1204 files remaining across 7 downloads`.
 - **Service-worker restart mid-job** (Chrome stops idle extension workers): the in-flight job list survives the restart (4.8). Within 1 s the badge shows the correct remaining count again, and the jobs continue.
 - **Ugoira in the mix**: an ugoira job contributes `1` for its whole life (4.8). A 12-page job plus an encoding ugoira shows, e.g., `6`.
 - **A job ends with failures**: its failed files leave the count (nothing is in flight for them). Its button shows CUJ-5's error state, and the badge keeps counting the other jobs.
@@ -600,13 +600,13 @@ Mocks for this CUJ:
 - `docs/ux/prd-000-mvp-mockups/cuj-4-initial.html`: tab B busy at `3 / 8`, tab A (30-page manga) visible in the tab strip, toolbar badge `23` with the "across 2 downloads" tooltip
 
 #### Acceptance Criteria
-- With two jobs running (18 and 5 files remaining), the badge reads `23` on a `#1f1f1f` background with white text, and the icon's tooltip reads `pixiv Downloader — 23 files remaining across 2 downloads`.
-- With one job running, the tooltip uses the one-job form (`pixiv Downloader — 5 files remaining`, or `… — 1 file remaining`).
+- With two jobs running (18 and 5 files remaining), the badge reads `23` on a `#1f1f1f` background with white text, and the icon's tooltip reads `Helper for Pixiv — 23 files remaining across 2 downloads`.
+- With one job running, the tooltip uses the one-job form (`Helper for Pixiv — 5 files remaining`, or `… — 1 file remaining`).
 - Each tab's button shows only the progress of the artwork in that tab.
 - The badge decreases within 1 s of any file landing, from any job.
 - Starting a second artwork while one is running begins downloading the second immediately. Neither job waits for the other.
 - Cancelling one job stops only that artwork's files, and the badge immediately drops by that job's remaining count.
-- When the last in-flight file lands (or the last job is cancelled or fails), the badge disappears and the tooltip reads `pixiv Downloader — click to open settings`.
+- When the last in-flight file lands (or the last job is cancelled or fails), the badge disappears and the tooltip reads `Helper for Pixiv — click to open settings`.
 - A count of 1000 or more displays as `999+`.
 - Stopping the extension's service worker from `chrome://serviceworker-internals` mid-job (or waiting for Chrome to stop it) does not lose the count. The badge shows the correct remaining number again within 1 s, and the jobs complete.
 - Clicking the toolbar icon while jobs run opens settings and does not affect the jobs.
@@ -782,16 +782,16 @@ English is canonical. Strings marked **(derived)** were not mocked or given in d
 
 | ID | English |
 |---|---|
-| `action_title_idle` | `pixiv Downloader — click to open settings` |
-| `action_title_one` | `pixiv Downloader — <n> files remaining` / `pixiv Downloader — 1 file remaining` |
-| `action_title_many` | `pixiv Downloader — <n> files remaining across <jobs> downloads` |
+| `action_title_idle` (per R-002) | `Helper for Pixiv — click to open settings` |
+| `action_title_one` (per R-002) | `Helper for Pixiv — <n> files remaining` / `Helper for Pixiv — 1 file remaining` |
+| `action_title_many` (per R-002) | `Helper for Pixiv — <n> files remaining across <jobs> downloads` |
 
 ### Settings page
 
 | ID | English |
 |---|---|
-| `opt_tab_title` | `pixiv Downloader — Settings` |
-| `opt_title` | `pixiv Downloader` |
+| `opt_tab_title` (per R-002) | `Helper for Pixiv — Settings` |
+| `opt_title` (per R-002) | `Helper for Pixiv` |
 | `opt_subtitle` | `Settings` |
 | `opt_folder_heading` | `Download folder` |
 | `opt_folder_help` | `Inside your Downloads folder. Use tokens to name folders after the artwork.` |

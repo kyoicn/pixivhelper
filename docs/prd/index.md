@@ -1,10 +1,10 @@
-# pixiv Downloader: Product Requirements Index
+# Helper for Pixiv: Product Requirements Index
 
 This is the entry point for all product requirements. Feature specs live in numbered PRD files (`prd-NNN-<slug>.md`). Mocks live in `docs/ux/prd-NNN-<slug>-mockups/`.
 
 ## Product vision
 
-**pixiv Downloader** is a Chrome extension (Manifest V3, desktop Chrome, Chrome Web Store) that puts one button on every pixiv artwork page. One click saves the whole artwork the way an archivist wants it:
+**Helper for Pixiv** (public name per R-002) is a Chrome extension (Manifest V3, desktop Chrome, Chrome Web Store) that puts one button on every pixiv artwork page. One click saves the whole artwork the way an archivist wants it:
 
 - one folder per artwork inside Chrome's Downloads folder
 - every page at original size
@@ -56,7 +56,7 @@ It replaces a personal terminal script (`ref/pixiv-dl`), which needed cookie ext
 
 | PRD | Title | Status | CUJs | Summary |
 |---|---|---|---|---|
-| [prd-000](prd-000-mvp.md) | pixiv Downloader MVP | active | CUJ-1 to CUJ-5 | Covers the Download button on artwork pages, ugoira-to-video in the browser, the three-setting options page, the files-remaining toolbar badge, and failure recovery. |
+| [prd-000](prd-000-mvp.md) | Helper for Pixiv MVP | active | CUJ-1 to CUJ-5 | Covers the Download button on artwork pages, ugoira-to-video in the browser, the three-setting options page, the files-remaining toolbar badge, and failure recovery. |
 
 ### CUJ index
 
@@ -118,6 +118,7 @@ CUJ IDs are never reused across PRDs.
 - Privacy disclosures in the developer dashboard state that no user data is collected or transmitted.
 - Store listing (name, short description, full description, screenshots) in `en`, `ja`, `zh_CN`, `zh_TW`.
 - The version shown on the options page comes from the manifest.
+- The GitHub repository `kyoicn/pixivhelper` must be public before Web Store submission, because the options page's `Report an issue` link and the listing's support URL point to `https://github.com/kyoicn/pixivhelper/issues` (per R-001).
 
 ## Non-functional requirements
 
@@ -139,7 +140,7 @@ CUJ IDs are never reused across PRDs.
 
 - **pixiv DOM changes.** The action row selector is the most fragile dependency. Mitigation: the floating-button fallback (PRD-000 CUJ-5), with selectors kept in one place for fast updates.
 - **Undocumented pixiv AJAX endpoints** (`/ajax/illust/{id}`, `/pages`, `/ugoira_meta`) may change shape without notice. Mitigation: the same endpoints have been stable in the reference script, and failures surface as the reactive error states.
-- **Web Store trademark review.** A listing named "pixiv Downloader" uses a third-party brand and may be flagged. If it is, the name becomes an owner decision (e.g. "Downloader for pixiv").
+- **Web Store trademark review.** Settled by R-002: the public name is "Helper for Pixiv", the "<name> for <brand>" pattern the store accepts.
 - **Chrome's "Ask where to save each file before downloading" setting** may force a Save dialog per file. This is a known v1 limitation (PRD-000 CUJ-1 edge cases).
 - **H.264 encoder availability** varies (some Chromium builds lack it). Mitigation: automatic per-download WebM fallback (PRD-000 §4.6).
 
