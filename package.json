@@ -11,12 +11,16 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:prod": "node scripts/build.mjs --prod",
+    "build:e2e": "node scripts/build.mjs --e2e",
     "watch": "node scripts/build.mjs --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . && prettier --check .",
     "test": "vitest run",
+    "test:e2e": "npm run build:e2e && playwright test",
     "check": "npm run typecheck && npm run lint && npm run test && npm run build",
-    "golden": "python3 -I scripts/gen-golden.py"
+    "golden": "python3 -I scripts/gen-golden.py",
+    "qa:fake": "npm run build:e2e && node e2e/qa/run.mjs fake",
+    "qa:live": "npm run build && node e2e/qa/run.mjs live"
   },
   "dependencies": {
     "fflate": "^0.8.3",
@@ -30,6 +34,7 @@
     "eslint": "^10.13.0",
     "happy-dom": "^21.0.4",
     "prettier": "^3.9.10",
+    "selfsigned": "^5.5.0",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.72.0",
     "vitest": "^5.0.5"
