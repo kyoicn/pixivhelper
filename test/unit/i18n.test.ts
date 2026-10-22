@@ -96,6 +96,10 @@ describe('i18n stub', () => {
     expect(createGetMessage('en')('btn_progress_pages', ['7'])).toBe('7 / ');
   });
 
+  it('i18n stub: cuts a substitution at U+0000, like Chrome', () => {
+    expect(createGetMessage('en')('btn_progress_pages', ['7\u00008', '12'])).toBe('7 / 12');
+  });
+
   it('i18n stub: keeps chrome members installed before it', () => {
     vi.stubGlobal('chrome', { runtime: { id: 'test' } });
     stubChromeI18n('en');

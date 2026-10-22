@@ -1,7 +1,8 @@
 // chrome.i18n.getMessage over the real src/_locales files, with Chrome's semantics:
 // - message names are case-insensitive; a missing key falls back to the default locale (en), then '';
 // - `$name$` expands to the named placeholder's `content` (names are case-insensitive);
-// - then `$1`…`$9` take the substitutions (a missing one becomes ''), and `$$` becomes `$`.
+// - then `$1`…`$9` take the substitutions (a missing one becomes ''), and `$$` becomes `$`;
+// - a substitution ends at its first U+0000, as Chrome passes it on as a C string.
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -65,7 +66,9 @@ export function createGetMessage(locale: Locale = 'en'): GetMessage {
     const subs =
       substitutions === undefined
         ? []
-        : (Array.isArray(substitutions) ? substitutions : [substitutions]).map(String);
+        : (Array.isArray(substitutions) ? substitutions : [substitutions]).map(
+            (sub) => String(sub).split('\u0000')[0] ?? '',
+          );
     return substitute(message, subs);
   };
 }
