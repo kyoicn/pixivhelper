@@ -1,0 +1,96 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { openOrFocusOptions } from '../../../src/background/options-tab';
+import { EXTENSION_ORIGIN, installChromeFake, type ChromeFake } from '../../fakes/chrome';
+
+const OPTIONS_URL = `${EXTENSION_ORIGIN}/options.html`;
+const ARTWORK_URL = 'https://www.pixiv.net/artworks/135882741';
+
+let fake: ChromeFake;
+
+beforeEach(() => {
+  fake = installChromeFake();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe('openOrFocusOptions', () => {
+  it('openOrFocusOptions: opens the settings tab right of the current tab, in its window', async () => {
+    const current = fake.tabs.add({ url: ARTWORK_URL, active: true });
+    fake.tabs.add({ url: 'https://www.pixiv.net/' });
+    await openOrFocusOptions(current.tab);
+    expect(fake.api.tabs.create).toHaveBeenCalledWith({
+      url: OPTIONS_URL,
+      index: 1,
+      windowId: current.tab.windowId,
+      openerTabId: current.id,
+      active: true,
+    });
+  });
+
+  it('openOrFocusOptions: the new settings tab is active, before the tabs that were right of it', async () => {
+    const current = fake.tabs.add({ url: ARTWORK_URL, active: true });
+    fake.tabs.add({ url: 'https://www.pixiv.net/' });
+    await openOrFocusOptions(current.tab);
+    const strip = fake.tabs.inWindow(current.tab.windowId);
+    expect(strip.map((t) => [t.tab.url, t.tab.active])).toEqual([
+      [ARTWORK_URL, false],
+      [OPTIONS_URL, true],
+      ['https://www.pixiv.net/', false],
+    ]);
+  });
+
+  it('openOrFocusOptions: opens in the window of the clicked tab, not the focused one', async () => {
+    const other = fake.tabs.addWindow({ focused: false });
+    const current = fake.tabs.add({ url: ARTWORK_URL, windowId: other, active: true });
+    await openOrFocusOptions(current.tab);
+    expect(fake.tabs.inWindow(other).map((t) => t.tab.url)).toEqual([ARTWORK_URL, OPTIONS_URL]);
+  });
+
+  it('openOrFocusOptions: activates an existing settings tab instead of opening another', async () => {
+    const settings = fake.tabs.add({ url: OPTIONS_URL });
+    const current = fake.tabs.add({ url: ARTWORK_URL, active: true });
+    await openOrFocusOptions(current.tab);
+    expect([fake.api.tabs.create.mock.calls.length, settings.tab.active]).toEqual([0, true]);
+  });
+
+  it('openOrFocusOptions: focuses the window of a settings tab in another window', async () => {
+    const settingsWindow = fake.tabs.addWindow({ focused: false });
+    const settings = fake.tabs.add({ url: OPTIONS_URL, windowId: settingsWindow });
+    fake.tabs.add({ url: 'https://www.pixiv.net/', windowId: settingsWindow, active: true });
+    const current = fake.tabs.add({ url: ARTWORK_URL, windowId: 1, active: true });
+    await openOrFocusOptions(current.tab);
+    expect([
+      settings.tab.active,
+      fake.tabs.isFocused(settingsWindow),
+      fake.tabs.isFocused(1),
+    ]).toEqual([true, true, false]);
+  });
+
+  it('openOrFocusOptions: looks the settings tab up as a TAB context by its URL', async () => {
+    const current = fake.tabs.add({ url: ARTWORK_URL, active: true });
+    await openOrFocusOptions(current.tab);
+    expect(fake.api.runtime.getContexts).toHaveBeenCalledWith({
+      contextTypes: ['TAB'],
+      documentUrls: [OPTIONS_URL],
+    });
+  });
+
+  it('openOrFocusOptions: opens a tab when the settings context is not in a tab', async () => {
+    fake.api.runtime.getContexts.mockResolvedValueOnce([
+      {
+        contextId: 'ctx',
+        contextType: 'TAB',
+        documentUrl: OPTIONS_URL,
+        frameId: 0,
+        tabId: -1,
+        windowId: -1,
+        incognito: false,
+      },
+    ]);
+    const current = fake.tabs.add({ url: ARTWORK_URL, active: true });
+    await openOrFocusOptions(current.tab);
+    expect(fake.api.tabs.create).toHaveBeenCalledTimes(1);
+  });
+});
