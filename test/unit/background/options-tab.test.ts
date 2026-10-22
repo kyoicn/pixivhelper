@@ -1,9 +1,14 @@
+import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { openOrFocusOptions } from '../../../src/background/options-tab';
+import { type ActionTestApi, openOrFocusOptions } from '../../../src/background/options-tab';
 import { EXTENSION_ORIGIN, installChromeFake, type ChromeFake } from '../../fakes/chrome';
 
 const OPTIONS_URL = `${EXTENSION_ORIGIN}/options.html`;
 const ARTWORK_URL = 'https://www.pixiv.net/artworks/135882741';
+const OPTIONS_TAB_SOURCE = fileURLToPath(
+  new URL('../../../src/background/options-tab.ts', import.meta.url),
+);
 
 let fake: ChromeFake;
 
@@ -92,5 +97,79 @@ describe('openOrFocusOptions', () => {
     const current = fake.tabs.add({ url: ARTWORK_URL, active: true });
     await openOrFocusOptions(current.tab);
     expect(fake.api.tabs.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('__hfpTest (e2e toolbar trigger)', () => {
+  /** chrome.tabs.get over the fake's tabs (the fake itself has no tabs.get). */
+  function stubTabsGet(): void {
+    const get = vi.fn((tabId: number): Promise<chrome.tabs.Tab> => {
+      const found = fake.tabs.get(tabId);
+      return found
+        ? Promise.resolve({ ...found.tab })
+        : Promise.reject(new Error(`No tab with id: ${tabId}.`));
+    });
+    vi.stubGlobal('chrome', { ...fake.api, tabs: { ...fake.api.tabs, get } });
+  }
+
+  function testApi(): ActionTestApi {
+    const api = (globalThis as { __hfpTest?: ActionTestApi }).__hfpTest;
+    if (!api) throw new Error('__hfpTest is not installed');
+    return api;
+  }
+
+  it('__hfpTest: is installed when test hooks are compiled in', () => {
+    expect(typeof testApi().clickAction).toBe('function');
+  });
+
+  it('__hfpTest.clickAction: opens the settings tab right of the given tab', async () => {
+    fake.tabs.add({ url: 'https://www.pixiv.net/' });
+    const current = fake.tabs.add({ url: ARTWORK_URL, active: true });
+    stubTabsGet();
+    await testApi().clickAction(current.id);
+    expect(fake.api.tabs.create).toHaveBeenCalledWith({
+      url: OPTIONS_URL,
+      index: 2,
+      windowId: current.tab.windowId,
+      openerTabId: current.id,
+      active: true,
+    });
+  });
+
+  it('__hfpTest.clickAction: focuses an existing settings tab instead of opening another', async () => {
+    const settings = fake.tabs.add({ url: OPTIONS_URL });
+    const current = fake.tabs.add({ url: ARTWORK_URL, active: true });
+    stubTabsGet();
+    await testApi().clickAction(current.id);
+    expect([fake.api.tabs.create.mock.calls.length, settings.tab.active]).toEqual([0, true]);
+  });
+
+  it('__hfpTest.clickAction: rejects for a tab that does not exist', async () => {
+    stubTabsGet();
+    await expect(testApi().clickAction(99)).rejects.toThrow('No tab with id: 99.');
+  });
+});
+
+describe('__hfpTest in builds', () => {
+  /** options-tab.ts bundled as scripts/build.mjs does, with `__TEST_HOOKS__` as given. */
+  async function bundle(testHooks: boolean): Promise<string> {
+    const result = await build({
+      entryPoints: [OPTIONS_TAB_SOURCE],
+      bundle: true,
+      write: false,
+      format: 'esm',
+      platform: 'browser',
+      define: { __TEST_HOOKS__: JSON.stringify(testHooks) },
+      logLevel: 'silent',
+    });
+    return result.outputFiles.map((file) => file.text).join('');
+  }
+
+  it('__hfpTest: a build without test hooks carries no trace of it', async () => {
+    expect(await bundle(false)).not.toContain('__hfpTest');
+  });
+
+  it('__hfpTest: an e2e build installs it', async () => {
+    expect(await bundle(true)).toContain('__hfpTest');
   });
 });
