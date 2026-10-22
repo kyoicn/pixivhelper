@@ -34,6 +34,11 @@ export interface FileTask {
   blobUrl?: string;
   downloadId?: number;
   failure?: Failure;
+  /**
+   * metadata.json text, built when the file is dispatched (the same mutation drops `metaBody`).
+   * Kept while the file is in flight so a re-queue after a restart can dispatch it again.
+   */
+  text?: string;
 }
 
 export interface UgoiraState {
