@@ -3,7 +3,7 @@
 // DOM as text nodes (system.md §11.1).
 
 import { h } from '../shared/dom';
-import { type MessageKey, t } from '../shared/i18n';
+import { type MessageKey, splitOnPlaceholder, t } from '../shared/i18n';
 import { type PatternError, SAMPLE } from '../shared/pattern';
 
 export type Copy = Array<string | HTMLElement>;
@@ -16,21 +16,8 @@ const PREVIEW_ROOT = 'Downloads';
 /** The sample artwork's first page (PRD CUJ-3 step 2). */
 const PREVIEW_FILE = `${SAMPLE.id}_p0.jpg`;
 
-/**
- * Marks the placeholder in splitMessage. Chrome's getMessage cuts a substitution at U+0000 (and
- * drops U+E000), which loses the split of shared splitOnPlaceholder in the browser; a
- * noncharacter passes through unchanged.
- */
-const SPLIT_SENTINEL = '\uFDD0';
-
 const mono = (text: string, extra = ''): HTMLSpanElement =>
   h('span', { class: extra ? `mono ${extra}` : 'mono' }, text);
-
-/** Message `key` around its single placeholder: [before, after]. */
-function splitMessage(key: MessageKey): [string, string] {
-  const [before = '', after = ''] = t(key, SPLIT_SENTINEL).split(SPLIT_SENTINEL);
-  return [before, after];
-}
 
 /** `text` with every token name and file name wrapped in a mono span. */
 export function withMono(text: string): Copy {
@@ -68,7 +55,7 @@ export function errorMessage(error: PatternError): Copy {
     case 'dotdot':
       return withMono(t('err_dotdot'));
     case 'unknownToken': {
-      const [before, after] = splitMessage('err_unknown_token');
+      const [before = '', after = ''] = splitOnPlaceholder('err_unknown_token');
       return [...withMono(before), mono(error.token, 'strong'), ...withMono(after)];
     }
     case 'illegalChars':
@@ -93,6 +80,6 @@ export function previewLine(folder: string): Copy {
 
 /** `Still using: <pattern> — your last valid pattern stays in effect until this one is fixed.` */
 export function stillUsingLine(pattern: string): Copy {
-  const [before, after] = splitMessage('opt_still_using');
+  const [before = '', after = ''] = splitOnPlaceholder('opt_still_using');
   return [h('span', null, before), mono(pattern, 'path'), h('span', { class: 'muted' }, after)];
 }

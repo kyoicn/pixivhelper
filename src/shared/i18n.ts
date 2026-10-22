@@ -9,7 +9,9 @@ export type LocaleTag = 'en' | 'ja' | 'zh-CN' | 'zh-TW';
 export type Substitution = string | number;
 
 const LOCALE_TAGS: readonly LocaleTag[] = ['en', 'ja', 'zh-CN', 'zh-TW'];
-const SENTINEL = '\u0000';
+// Marks the placeholders for splitOnPlaceholder. Chrome's getMessage cuts a substitution at U+0000
+// and drops U+E000, which would lose the split; a noncharacter passes through unchanged.
+const SENTINEL = '\uFDD0';
 
 /** Resolves `key` in Chrome's UI locale. Numbers are substituted as ASCII digits, never localized. */
 export function t(key: MessageKey, subs?: Substitution | readonly Substitution[]): string {
