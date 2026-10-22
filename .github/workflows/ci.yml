@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run check
+
+      - run: python3 -I scripts/gen-golden.py --check
+
+      - run: npx playwright install --with-deps chromium
+
+      # CI=true (set by Actions) makes the harness launch Chromium with --headless=new.
+      - run: npm run test:e2e
+
+      # The harness writes trace.zip, server-log.json, downloads.json and console-errors.json into
+      # each failed test's directory under test-results/.
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-results-${{ github.run_attempt }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
