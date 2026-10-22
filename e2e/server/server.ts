@@ -50,6 +50,8 @@ const ZIP_RE = /^\/img-zip-ugoira\/img\/[\d/]+\/(\d+)_ugoira\d+x\d+\.zip$/;
 /** Byte requests counted by maxInFlight(): originals and frame zips. */
 const BYTES_RE = /^\/(?:img-original|img-zip-ugoira)\/.*\/(\d+)_[^/]*$/;
 const CHUNK_BYTES = 16 * 1024;
+/** A held response sends one body byte this often: well inside the e2e build's 300 ms stall timeout. */
+const HOLD_TRICKLE_MS = 100;
 
 /**
  * One scripted answer. A number is shorthand for `{ status }`. Status 200 (or none) means "answer
@@ -114,6 +116,24 @@ interface ActiveFault {
   responses: FaultResponse[];
   /** A single response applies until clearFaults(); a sequence is consumed. */
   persistent: boolean;
+}
+
+/**
+ * A hold from FakePixiv.hold(): matching 200 answers send their headers, then trickle the body one
+ * byte at a time (so the client's inactivity timeout never fires) and finish only on release().
+ */
+export interface Hold {
+  /** Matching requests being held right now. */
+  readonly held: number;
+  /** Finishes every held request and lets later matching requests through. Idempotent. */
+  release(): void;
+}
+
+interface ActiveHold {
+  matches: (request: LoggedRequest) => boolean;
+  /** One finisher per held response: sends the rest of its body. */
+  finishers: Set<() => void>;
+  release: () => void;
 }
 
 interface Waiter {
@@ -209,6 +229,7 @@ export class FakePixiv {
   readonly #inFlight = new Map<string, number>();
   readonly #peak = new Map<string, number>();
   #waiters: Waiter[] = [];
+  #holds: ActiveHold[] = [];
 
   private constructor(key: string, cert: string) {
     this.#server = http2.createSecureServer({ key, cert, allowHTTP1: true }, (req, res) => {
@@ -265,6 +286,32 @@ export class FakePixiv {
     if (responses.length > 0) this.#faults.push({ match: rule.match, responses, persistent });
   }
 
+  /**
+   * Holds matching requests that would be answered 200 with a Content-Length (e.g. originals): the
+   * headers go out at once, then the body trickles one byte every HOLD_TRICKLE_MS, keeping the last
+   * byte back, until release(). The transfer stays in flight without ever stalling, which neither
+   * delayHeadersMs nor stallAfterBytes can do under the e2e build's 300 ms stall timeout. A body of
+   * n bytes can be held for about (n − 1) × HOLD_TRICKLE_MS (the smallest fixture page, 239 bytes,
+   * for ~24 s); after that it stalls and the client's retry starts a fresh hold.
+   */
+  hold(match: RequestMatcher): Hold {
+    const active: ActiveHold = {
+      matches: toMatcher(match),
+      finishers: new Set(),
+      release: () => {
+        this.#holds = this.#holds.filter((other) => other !== active);
+        for (const finish of [...active.finishers]) finish();
+      },
+    };
+    this.#holds.push(active);
+    return {
+      get held() {
+        return active.finishers.size;
+      },
+      release: active.release,
+    };
+  }
+
   clearFaults(): void {
     this.#faults = [];
   }
@@ -316,6 +363,7 @@ export class FakePixiv {
     this.#faults = [];
     this.#patches.clear();
     this.#peak.clear();
+    for (const hold of [...this.#holds]) hold.release();
   }
 
   async close(): Promise<void> {
@@ -391,6 +439,14 @@ export class FakePixiv {
         : this.#route(req.method, host, path, request);
     request.status = reply.status;
     request.bytes = reply.body.length;
+    const hold =
+      reply.status === 200 && !reply.omitLength && fault?.stallAfterBytes === undefined
+        ? this.#holds.find((candidate) => candidate.matches(request))
+        : undefined;
+    if (hold && reply.body.length > 1) {
+      this.#sendHeld(res, reply, hold);
+      return;
+    }
     this.#send(res, reply, fault?.stallAfterBytes);
   }
 
@@ -400,6 +456,31 @@ export class FakePixiv {
       : text(status, `fake-pixiv fault ${status}`);
     if (retryAfter !== undefined) reply.headers['retry-after'] = String(retryAfter);
     return reply;
+  }
+
+  #sendHeld(res: Http2ServerResponse, reply: Reply, hold: ActiveHold): void {
+    res.writeHead(reply.status, {
+      ...reply.headers,
+      'content-length': String(reply.body.length),
+    });
+    let sent = 0;
+    const trickle = (): void => {
+      if (sent >= reply.body.length - 1) return;
+      res.write(reply.body.subarray(sent, sent + 1));
+      sent++;
+    };
+    const timer = setInterval(trickle, HOLD_TRICKLE_MS);
+    const finish = (): void => {
+      clearInterval(timer);
+      hold.finishers.delete(finish);
+      if (!res.writableEnded && !res.destroyed) res.end(reply.body.subarray(sent));
+    };
+    hold.finishers.add(finish);
+    res.once('close', () => {
+      clearInterval(timer);
+      hold.finishers.delete(finish);
+    });
+    trickle();
   }
 
   #send(res: Http2ServerResponse, reply: Reply, stallAfterBytes: number | undefined): void {

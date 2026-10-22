@@ -294,6 +294,8 @@ export class Harness {
       .then(({ success }) => success)
       .catch(() => false);
     if (closed && (await this.#waitForSwTarget(false, SW_STOP_TIMEOUT_MS / 2))) return;
+    // ServiceWorker.* commands fail with "domain not enabled" until it is.
+    await this.#anchor.send('ServiceWorker.enable');
     await this.#anchor.send('ServiceWorker.stopAllWorkers');
     if (!(await this.#waitForSwTarget(false, SW_STOP_TIMEOUT_MS / 2))) {
       throw new Error('stopServiceWorker: the service worker target did not go away');
