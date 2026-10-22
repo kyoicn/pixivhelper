@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Helper for Pixiv: ENG-002 spike (never shipped)",
+  "description": "Throwaway platform spike driven by scripts/spike/run.mjs.",
+  "version": "0.0.1",
+  "minimum_chrome_version": "116",
+  "background": { "service_worker": "sw.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://www.pixiv.net/*"],
+      "js": ["content.js"],
+      "run_at": "document_end",
+      "all_frames": false
+    }
+  ],
+  "permissions": [
+    "downloads",
+    "offscreen",
+    "declarativeNetRequestWithHostAccess",
+    "declarativeNetRequestFeedback"
+  ],
+  "host_permissions": ["https://www.pixiv.net/*", "https://i.pximg.net/*"]
+}
