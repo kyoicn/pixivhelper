@@ -13,6 +13,8 @@
 // vi.fn, so tests can assert calls or queue failures with `mockRejectedValueOnce`.
 
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { vi } from 'vitest';
 import { createGetMessage, type GetMessage, type Locale } from '../helpers/i18n-stub';
 
@@ -843,8 +845,12 @@ export interface InstallOptions {
   locale?: Locale;
 }
 
+// Not `new URL(…, import.meta.url)`: under happy-dom, Vite rewrites that to a server URL.
 const MANIFEST = JSON.parse(
-  readFileSync(new URL('../../src/manifest.json', import.meta.url), 'utf8'),
+  readFileSync(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/manifest.json'),
+    'utf8',
+  ),
 ) as chrome.runtime.Manifest;
 
 function createApi(fake: ChromeFake, getMessage: GetMessage) {
