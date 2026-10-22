@@ -62,20 +62,20 @@ A test fails if any page, the SW or the offscreen document logged an error (cons
 - With `server`: `--host-resolver-rules` maps `www.pixiv.net`, `i.pximg.net` and `accounts.pixiv.net` to the fake server, `--ignore-certificate-errors` accepts its certificate, and `dist-e2e/` is loaded. Without `server`: real network and `dist/` (the dev build).
 - Chromium is spawned with `--load-extension`, `--remote-debugging-port=0` and `--no-startup-window`. Playwright connects with `connectOverCDP`, then `Browser.setDownloadBehavior({ behavior: 'default' })` so files keep Chrome's real names in the profile's download directory.
 
-| Member                                                                      | Purpose                                                                                                    |
-| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `browser`, `context`, `cdp`                                                 | Playwright browser over CDP, its default context (the extension's profile), browser-level CDP session      |
-| `wsEndpoint`                                                                | CDP endpoint for `chromium.connectOverCDP()`                                                               |
-| `extensionId`, `serviceWorkerUrl`                                           | resolved from the extension's service-worker target                                                        |
-| `newPage()`                                                                 | a new tab (a blank anchor tab keeps the window open, so closing a spec's tab never quits Chrome)           |
-| `swEval(fn, arg?)`                                                          | `Worker.evaluate` in the extension SW, starting the worker first if it is stopped                          |
-| `serviceWorker()`                                                           | the running SW as a Playwright `Worker`                                                                    |
-| `isServiceWorkerRunning()`                                                  | whether the SW target exists                                                                               |
-| `stopServiceWorker()`                                                       | `Target.closeTarget` on the SW (fallback `ServiceWorker.stopAllWorkers`); resolves when the target is gone |
-| `downloads.dir`, `downloads.files()`                                        | the downloads directory; recursive `{ path, size }` listing, `/`-separated, sorted                         |
-| `downloads.waitForFile(path, { timeout })`                                  | resolves when the file exists under its final name                                                         |
-| `consoleErrors()`, `allowConsoleErrors(...re)`, `unexpectedConsoleErrors()` | collected errors (`source`: `sw` / `offscreen` / `extension-page` / `page`)                                |
-| `close()`                                                                   | quits Chromium and removes temp dirs                                                                       |
+| Member                                                                      | Purpose                                                                                                                                                                                                                    |
+| --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `browser`, `context`, `cdp`                                                 | Playwright browser over CDP, its default context (the extension's profile), browser-level CDP session                                                                                                                      |
+| `wsEndpoint`                                                                | CDP endpoint for `chromium.connectOverCDP()`                                                                                                                                                                               |
+| `extensionId`, `serviceWorkerUrl`                                           | resolved from the extension's service-worker target                                                                                                                                                                        |
+| `newPage()`                                                                 | a new tab (a blank anchor tab keeps the window open, so closing a spec's tab never quits Chrome)                                                                                                                           |
+| `swEval(fn, arg?)`                                                          | `Worker.evaluate` in the extension SW, starting the worker first if it is stopped                                                                                                                                          |
+| `serviceWorker()`                                                           | the running SW as a Playwright `Worker`                                                                                                                                                                                    |
+| `isServiceWorkerRunning()`                                                  | whether the SW target exists                                                                                                                                                                                               |
+| `stopServiceWorker()`                                                       | `Target.closeTarget` on the SW, repeated every 300 ms (alternate rounds also `ServiceWorker.stopAllWorkers`) because Chrome can drop a stop request right after launch; resolves when the target is gone, throws after 5 s |
+| `downloads.dir`, `downloads.files()`                                        | the downloads directory; recursive `{ path, size }` listing of completed files, `/`-separated, sorted. In-progress `*.crdownload` files, and files Chrome renames between the directory read and the `stat`, are left out  |
+| `downloads.waitForFile(path, { timeout })`                                  | resolves when the file exists under its final name                                                                                                                                                                         |
+| `consoleErrors()`, `allowConsoleErrors(...re)`, `unexpectedConsoleErrors()` | collected errors (`source`: `sw` / `offscreen` / `extension-page` / `page`)                                                                                                                                                |
+| `close()`                                                                   | quits Chromium and removes temp dirs                                                                                                                                                                                       |
 
 Also exported: `unpackedExtensionId(dir)`, `E2E_EXTENSION_DIR`, `DEV_EXTENSION_DIR`, `REPO_ROOT`. From `harness/media.ts`: `ffprobe(file)` (`-show_frames -show_streams` as JSON) and `ssim(video, framePaths)` (per-frame SSIM against the source frames cropped to even size from the top-left; `{ perFrame, mean, min }`).
 
@@ -93,6 +93,7 @@ HTTP/2 (with HTTP/1.1 fallback) on `127.0.0.1`, ephemeral port, certificate gene
 | `startFakePixiv(port?)`                                                   | start a server                                                                                                       |
 | `port`, `hostResolverRules`                                               | listening port; the `--host-resolver-rules` value                                                                    |
 | `fault({ match, responses })`                                             | script responses (below)                                                                                             |
+| `hold(match)` → `{ held, release() }`                                     | keep matching 200 transfers in flight without stalling until `release()` (below)                                     |
 | `clearFaults()`                                                           | drop every fault rule                                                                                                |
 | `patchWork(id, { title, userName, r18Hidden, noContentLength, deleted })` | override fixture fields until `reset()`                                                                              |
 | `work(id)`                                                                | the fixture as served (with patches)                                                                                 |
@@ -109,13 +110,23 @@ HTTP/2 (with HTTP/1.1 fallback) on `127.0.0.1`, ephemeral port, certificate gene
 | `503`, `{ status: 403 }`           | answer with that status (JSON `{ error: true }` on `/ajax/`, text otherwise)                          |
 | `{ status: 429, retryAfter: 120 }` | with a `Retry-After` header                                                                           |
 | `200`                              | answer normally (e.g. the last element of `[503, 503, 200]`)                                          |
-| `{ delayHeadersMs: 300 }`          | answer normally after a delay (forces overlap for `maxInFlight`)                                      |
+| `{ delayHeadersMs: 100 }`          | answer normally after a delay; must stay under the 300 ms stall timeout (below)                       |
 | `{ stallAfterBytes: 1024 }`        | send headers and 1024 body bytes, then go silent                                                      |
 | `{ reset: true }`                  | drop the request without a response (HTTP/2 stream reset; socket destroy on HTTP/1.1) → network error |
 
+**Stall timeout.** `dist-e2e/` scales the 30 s inactivity timeout by `__RETRY_TIME_SCALE__` (0.01) to **300 ms**. A response whose headers or next body chunk take 300 ms or longer counts as a `timeout` and is retried, so `{ delayHeadersMs: 300 }` (or more) does not delay a transfer: it fails the attempt. To keep transfers in flight (cancel mid-job, `maxInFlight`, badge counts while files are pending), use **`server.hold(match)`**: matching requests that would be answered 200 with a `Content-Length` get their headers at once, then their body one byte every 100 ms with the last byte held back, until `release()` (or `reset()`). The transfer never stalls, so nothing times out. A body of n bytes can be held for about (n − 1) × 100 ms (the smallest fixture page, 239 bytes, for ~24 s); after that it stalls and the client's retry starts a fresh hold. `held` counts the requests currently held.
+
+```ts
+const held = server.hold(pagesOf(EXAMPLE, range(5, 11))); // e2e/harness/flows.ts helpers
+await clickButton(page);
+await expect.poll(() => held.held).toBe(5);
+// … assert the in-flight state …
+held.release();
+```
+
 ## Fixture page (`server/page.ts`)
 
-A placeholder, until task 3.4 swaps in the structure of the ENG-002 live capture: `<html data-theme="light|dark">` (theme marker), an artwork `<figure>` with the master image (an R-18 wall when logged out), an action row with Share and More on the left and Like and Bookmark on the right, rendered `ROW_DELAY_MS` (300 ms) after `load` or after an SPA navigation with `performance.mark('fake:row')` (`ROW_MARK`), related works with their own Bookmark mini-buttons, and `<script id="__NEXT_DATA__">` carrying `"isLoggedIn":true|false` from the request's cookie. Links marked `data-spa` navigate with `history.pushState`; back/forward re-render.
+A reduction of the ENG-002 live capture (`test/fixtures/pixiv/artwork-live-*.html`, `scripts/spike/FINDINGS.md` §5) to the hooks `src/content/pixiv-dom.ts` relies on: `<html data-theme="light|dark">` (theme marker), an artwork `<figure>` with the master image (an R-18 wall when logged out), the `figcaption` work marker, and the action row, rendered `ROW_DELAY_MS` (300 ms) after `load` or after an SPA navigation with `performance.mark('fake:row')` (`ROW_MARK`). As on pixiv, the row's DOM order is share, bookmark, like, laid out `flex-direction: row-reverse` (screen order like, bookmark, share). The extension therefore inserts its host **after** the like wrapper in the DOM, which puts it immediately left of Like on screen: in specs, the host's `previousElementSibling` is the like wrapper. Related works carry their own Bookmark mini-buttons, and `<script id="__NEXT_DATA__">` carries `props.pageProps.isLoggedIn` from the request's cookie. Links marked `data-spa` navigate with `history.pushState`; back/forward re-render.
 
 Test controls (`page.evaluate(() => (window as unknown as FakeWindow).__fake.removeRow())`):
 
@@ -143,6 +154,8 @@ Test controls (`page.evaluate(() => (window as unknown as FakeWindow).__fake.rem
 
 Bytes are generated on demand (`fixtures/assets.ts`): images are flat 16×16 tiles (checkerboards for pages, a gradient with a moving square for frames), zips are stored entries with a fixed timestamp. Specs that need the expected bytes call `pageBytes()`, `ugoiraFrames()` or `ugoiraZip()`.
 
+The server builds a zip synchronously on its first request and caches it per process. For 136004517 (1920×1080, 300 frames) that takes ~1.5 s, longer than the 300 ms stall timeout, so the first download attempt would time out. Call `ugoiraZip(work)` before the click (as `warmZip()` in `cuj2.spec.ts` does); the server and the spec share the cache.
+
 ## QA sessions
 
 - `npm run qa:fake`: builds `dist-e2e/`, starts the fake server, launches headed Chromium with a persistent profile at `.qa/profile` and downloads at `.qa/downloads`, opens the CUJ-1 example, and prints the CDP endpoint, extension ID and fixture URLs. In a terminal it opens a REPL with `server`, `harness`, `page` and `works` (e.g. `server.fault({ match: '_p3.', responses: [503, 503, 200] })`, `await harness.swEval(() => chrome.action.getBadgeText({}))`); `.exit` closes everything. Without a terminal (an agent running it in the background) there is no REPL; attach with `chromium.connectOverCDP(endpoint)` and stop it with SIGINT/SIGTERM.
@@ -158,14 +171,14 @@ Skeleton: every PRD acceptance criterion (docs/prd/prd-000-mvp.md), the check th
 
 | PRD AC                                                                             | Check                                                                                                                             |
 | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| One button, immediately left of like, ≤ 500 ms after the row renders               | one `hfp-download`; its `nextElementSibling` is the Like control; `fake:row` mark → host connected ≤ 500 ms                       |
+| One button, immediately left of like, ≤ 500 ms after the row renders               | one `hfp-download`; its `previousElementSibling` is the like wrapper (row-reverse row); `fake:row` mark → host connected ≤ 500 ms |
 | `Download · 12P` / `Download` (single page)                                        | idle label on 135882741 / 135882742                                                                                               |
 | 164 px in idle, busy, Cancel-hover, Saved; width never changes                     | host `getBoundingClientRect().width` in each state, including after hover                                                         |
 | Folder holds `metadata.json` + `135882741_p0` … `p11`, sizes = `Content-Length`    | `downloads.files()` vs `server.log` `bytes`                                                                                       |
 | `metadata.json`: 12 keys in order, literal non-ASCII, `\n` kept                    | key order; raw bytes contain `みずき`, not `\u` escapes                                                                           |
-| Never > 5 of this artwork's files in flight                                        | `server.maxInFlight('135882741') ≤ 5` with `{ delayHeadersMs: 300 }`; `chrome.downloads.search({ state: 'in_progress' })` sampled |
+| Never > 5 of this artwork's files in flight                                        | `server.maxInFlight('135882741') ≤ 5` with `server.hold()`; `chrome.downloads.search({ state: 'in_progress' })` sampled           |
 | `N / 12` only rises; `12 / 12` only after every original; metadata never changes N | label texts recorded by a `MutationObserver`                                                                                      |
-| Cancel stops the job, keeps completed files, back to `Download · 12P`              | delayed responses; hover after `pointerleave`; click; no new `_pN` requests in `server.log`                                       |
+| Cancel stops the job, keeps completed files, back to `Download · 12P`              | held responses (`server.hold()`); hover after `pointerleave`; click; no new `_pN` requests in `server.log`                        |
 | `Saved · 12P` style and tooltip                                                    | label, computed styles, `title`                                                                                                   |
 | SPA away and back shows Saved; reload shows idle                                   | `data-spa` links, `page.goBack()`, `page.reload()`                                                                                |
 | Clicking Saved downloads again as `(1)` duplicates                                 | second click; `downloads.files()`                                                                                                 |
