@@ -1,0 +1,11 @@
+dist/
+dist-e2e/
+ref/
+docs/
+.claude/
+scripts/spike/**
+test/fixtures/**
+test/golden/**
+node_modules/
+src/shared/html-entities.ts
+package-lock.json

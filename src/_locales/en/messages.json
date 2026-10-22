@@ -1,0 +1,506 @@
+{
+  "ext_name": {
+    "message": "Helper for Pixiv"
+  },
+  "ext_description": {
+    "message": "Save a whole pixiv artwork in one click: every original image, metadata.json, and ugoira as MP4 or WebM, in one folder."
+  },
+  "locale_tag": {
+    "message": "en"
+  },
+  "btn_download": {
+    "message": "Download"
+  },
+  "hint_pages": {
+    "message": "$N$P",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "hint_format": {
+    "message": "$FORMAT$",
+    "placeholders": {
+      "format": {
+        "content": "$1",
+        "example": "MP4"
+      }
+    }
+  },
+  "btn_progress_pages": {
+    "message": "$DONE$ / $TOTAL$",
+    "placeholders": {
+      "done": {
+        "content": "$1",
+        "example": "7"
+      },
+      "total": {
+        "content": "$2",
+        "example": "12"
+      }
+    }
+  },
+  "btn_progress_percent": {
+    "message": "$P$%",
+    "placeholders": {
+      "p": {
+        "content": "$1",
+        "example": "40"
+      }
+    }
+  },
+  "btn_cancel": {
+    "message": "Cancel"
+  },
+  "tip_cancel": {
+    "message": "Cancel download"
+  },
+  "btn_saved": {
+    "message": "Saved"
+  },
+  "tip_saved": {
+    "message": "Saved to Downloads/$FOLDER$",
+    "placeholders": {
+      "folder": {
+        "content": "$1",
+        "example": "pixiv/みずき-135882741"
+      }
+    }
+  },
+  "btn_login": {
+    "message": "Log in to download"
+  },
+  "tip_login": {
+    "message": "Opens pixiv login and returns you here"
+  },
+  "btn_retry": {
+    "message": "Retry"
+  },
+  "hint_failed": {
+    "message": "$N$ failed",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "tip_partial": {
+    "message": "$SAVED$ of $TOTAL$ pages saved. $FAILED$ failed after 4 attempts each. Click to retry just those $FAILED$.",
+    "placeholders": {
+      "saved": {
+        "content": "$1",
+        "example": "10"
+      },
+      "total": {
+        "content": "$2",
+        "example": "12"
+      },
+      "failed": {
+        "content": "$3",
+        "example": "2"
+      }
+    }
+  },
+  "tip_partial_one": {
+    "message": "$SAVED$ of $TOTAL$ pages saved. 1 failed after 4 attempts. Click to retry just that one.",
+    "placeholders": {
+      "saved": {
+        "content": "$1",
+        "example": "10"
+      },
+      "total": {
+        "content": "$2",
+        "example": "12"
+      }
+    }
+  },
+  "tip_offline": {
+    "message": "No connection. Retry when you're back online."
+  },
+  "tip_refused": {
+    "message": "pixiv refused this work. If you're logged in, check your R-18 setting on pixiv."
+  },
+  "tip_server": {
+    "message": "pixiv isn't responding. Retry in a few minutes."
+  },
+  "tip_disk": {
+    "message": "Chrome couldn't save to your Downloads folder. Check free space and try again."
+  },
+  "tip_metadata_only": {
+    "message": "All $TOTAL$ pages saved. metadata.json couldn't be saved. Click to retry it.",
+    "placeholders": {
+      "total": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "btn_unavailable": {
+    "message": "Unavailable"
+  },
+  "tip_unavailable": {
+    "message": "This work is no longer available."
+  },
+  "tip_encode_failed": {
+    "message": "Frames saved as ZIP. Video encoding failed. Click to retry the encode, or choose ZIP only in settings."
+  },
+  "aria_idle_pages": {
+    "message": "Download all $N$ original images of this artwork",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "aria_idle_single": {
+    "message": "Download the original image of this artwork"
+  },
+  "aria_idle_ugoira": {
+    "message": "Download this ugoira as $FORMAT$, with its frame zip and metadata",
+    "placeholders": {
+      "format": {
+        "content": "$1",
+        "example": "MP4"
+      }
+    }
+  },
+  "aria_idle_ugoira_nometa": {
+    "message": "Download this ugoira as $FORMAT$, with its frame zip",
+    "placeholders": {
+      "format": {
+        "content": "$1",
+        "example": "MP4"
+      }
+    }
+  },
+  "aria_idle_ugoira_zip": {
+    "message": "Download this ugoira's frame zip"
+  },
+  "aria_busy_pages": {
+    "message": "Downloading, $DONE$ of $TOTAL$ pages saved. Click to cancel.",
+    "placeholders": {
+      "done": {
+        "content": "$1",
+        "example": "7"
+      },
+      "total": {
+        "content": "$2",
+        "example": "12"
+      }
+    }
+  },
+  "aria_busy_pages_one": {
+    "message": "Downloading, $DONE$ of 1 page saved. Click to cancel.",
+    "placeholders": {
+      "done": {
+        "content": "$1",
+        "example": "7"
+      }
+    }
+  },
+  "aria_busy_frames": {
+    "message": "Downloading frames, $P$ percent. Click to cancel.",
+    "placeholders": {
+      "p": {
+        "content": "$1",
+        "example": "40"
+      }
+    }
+  },
+  "aria_busy_encode": {
+    "message": "Encoding $FORMAT$, $P$ percent. Click to cancel.",
+    "placeholders": {
+      "format": {
+        "content": "$1",
+        "example": "MP4"
+      },
+      "p": {
+        "content": "$2",
+        "example": "40"
+      }
+    }
+  },
+  "aria_saved_pages": {
+    "message": "Saved $N$ pages to Downloads/$FOLDER$. Click to download again.",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      },
+      "folder": {
+        "content": "$2",
+        "example": "pixiv/みずき-135882741"
+      }
+    }
+  },
+  "aria_saved_pages_one": {
+    "message": "Saved 1 page to Downloads/$FOLDER$. Click to download again.",
+    "placeholders": {
+      "folder": {
+        "content": "$1",
+        "example": "pixiv/みずき-135882741"
+      }
+    }
+  },
+  "aria_saved_ugoira": {
+    "message": "Saved $FORMAT$ to Downloads/$FOLDER$. Click to download again.",
+    "placeholders": {
+      "format": {
+        "content": "$1",
+        "example": "MP4"
+      },
+      "folder": {
+        "content": "$2",
+        "example": "pixiv/みずき-135882741"
+      }
+    }
+  },
+  "aria_login": {
+    "message": "Log in to pixiv to download this R-18 work"
+  },
+  "aria_partial": {
+    "message": "$SAVED$ of $TOTAL$ pages saved, $FAILED$ failed. Click to retry the failed pages.",
+    "placeholders": {
+      "saved": {
+        "content": "$1",
+        "example": "10"
+      },
+      "total": {
+        "content": "$2",
+        "example": "12"
+      },
+      "failed": {
+        "content": "$3",
+        "example": "2"
+      }
+    }
+  },
+  "aria_failed": {
+    "message": "Download failed. $CAUSE$ Click to retry.",
+    "placeholders": {
+      "cause": {
+        "content": "$1",
+        "example": "No connection. Retry when you're back online."
+      }
+    }
+  },
+  "live_start": {
+    "message": "Downloading $N$ pages",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "live_start_one": {
+    "message": "Downloading 1 page"
+  },
+  "live_start_ugoira": {
+    "message": "Downloading ugoira"
+  },
+  "live_progress_pages": {
+    "message": "$DONE$ of $TOTAL$ pages saved",
+    "placeholders": {
+      "done": {
+        "content": "$1",
+        "example": "7"
+      },
+      "total": {
+        "content": "$2",
+        "example": "12"
+      }
+    }
+  },
+  "live_progress_percent": {
+    "message": "$P$ percent",
+    "placeholders": {
+      "p": {
+        "content": "$1",
+        "example": "40"
+      }
+    }
+  },
+  "live_saved": {
+    "message": "Saved $N$ pages",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "live_saved_one": {
+    "message": "Saved 1 page"
+  },
+  "live_saved_ugoira": {
+    "message": "Saved $FORMAT$",
+    "placeholders": {
+      "format": {
+        "content": "$1",
+        "example": "MP4"
+      }
+    }
+  },
+  "live_failed": {
+    "message": "$N$ pages failed",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "live_failed_one": {
+    "message": "1 page failed"
+  },
+  "live_cancelled": {
+    "message": "Download cancelled"
+  },
+  "action_title_idle": {
+    "message": "Helper for Pixiv — click to open settings"
+  },
+  "action_title_one": {
+    "message": "Helper for Pixiv — $N$ files remaining",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "action_title_one_single": {
+    "message": "Helper for Pixiv — 1 file remaining"
+  },
+  "action_title_many": {
+    "message": "Helper for Pixiv — $N$ files remaining across $JOBS$ downloads",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      },
+      "jobs": {
+        "content": "$2",
+        "example": "2"
+      }
+    }
+  },
+  "opt_tab_title": {
+    "message": "Helper for Pixiv — Settings"
+  },
+  "opt_title": {
+    "message": "Helper for Pixiv"
+  },
+  "opt_subtitle": {
+    "message": "Settings"
+  },
+  "opt_folder_heading": {
+    "message": "Download folder"
+  },
+  "opt_folder_help": {
+    "message": "Inside your Downloads folder. Use tokens to name folders after the artwork."
+  },
+  "opt_folder_aria": {
+    "message": "Folder pattern"
+  },
+  "opt_insert": {
+    "message": "Insert:"
+  },
+  "tok_artist_tip": {
+    "message": "Artist display name, as shown on pixiv"
+  },
+  "tok_id_tip": {
+    "message": "Artwork ID, the number in the page URL"
+  },
+  "tok_title_tip": {
+    "message": "Artwork title, shortened to stay a safe folder name"
+  },
+  "tok_userid_tip": {
+    "message": "Artist's numeric pixiv account ID; stable if the artist renames"
+  },
+  "opt_preview": {
+    "message": "Preview:"
+  },
+  "opt_still_using": {
+    "message": "Still using: $PATTERN$ — your last valid pattern stays in effect until this one is fixed.",
+    "placeholders": {
+      "pattern": {
+        "content": "$1",
+        "example": "pixiv/{artist}-{id}"
+      }
+    }
+  },
+  "err_empty": {
+    "message": "Enter a folder pattern."
+  },
+  "err_absolute": {
+    "message": "Must be a relative path inside Downloads."
+  },
+  "err_backslash": {
+    "message": "Use \"/\" between folders."
+  },
+  "err_dotdot": {
+    "message": "Can't contain \"..\"."
+  },
+  "err_unknown_token": {
+    "message": "Unknown token $TOKEN$. Available tokens: {artist}, {id}, {title}, {userId}.",
+    "placeholders": {
+      "token": {
+        "content": "$1",
+        "example": "{name}"
+      }
+    }
+  },
+  "err_illegal_chars": {
+    "message": "Can't contain : * ? \" < > |."
+  },
+  "opt_ugoira_heading": {
+    "message": "Ugoira output"
+  },
+  "opt_ugoira_help": {
+    "message": "Encoded in your browser from the original frames. The frame zip and frames.json are always saved."
+  },
+  "opt_ugoira_aria": {
+    "message": "Ugoira output format"
+  },
+  "opt_ugoira_mp4": {
+    "message": "MP4"
+  },
+  "opt_ugoira_webm": {
+    "message": "WebM"
+  },
+  "opt_ugoira_zip": {
+    "message": "ZIP only"
+  },
+  "opt_meta_heading": {
+    "message": "Save metadata.json"
+  },
+  "opt_meta_help": {
+    "message": "Title, description, tags, dates and artist, saved next to the images."
+  },
+  "opt_saved": {
+    "message": "Saved"
+  },
+  "opt_reset": {
+    "message": "Reset to defaults"
+  },
+  "opt_report": {
+    "message": "Report an issue"
+  },
+  "opt_version": {
+    "message": "v$VERSION$",
+    "placeholders": {
+      "version": {
+        "content": "$1",
+        "example": "1.0.0"
+      }
+    }
+  },
+  "opt_privacy": {
+    "message": "Only talks to pixiv.net and its image host. Nothing you download leaves your browser."
+  }
+}

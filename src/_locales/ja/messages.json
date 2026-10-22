@@ -1,0 +1,506 @@
+{
+  "ext_name": {
+    "message": "Helper for Pixiv"
+  },
+  "ext_description": {
+    "message": "pixivの作品をワンクリックで保存。すべての原寸画像、metadata.json、うごイラのMP4/WebMを1つのフォルダーにまとめます。"
+  },
+  "locale_tag": {
+    "message": "ja"
+  },
+  "btn_download": {
+    "message": "ダウンロード"
+  },
+  "hint_pages": {
+    "message": "$N$P",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "hint_format": {
+    "message": "$FORMAT$",
+    "placeholders": {
+      "format": {
+        "content": "$1",
+        "example": "MP4"
+      }
+    }
+  },
+  "btn_progress_pages": {
+    "message": "$DONE$ / $TOTAL$",
+    "placeholders": {
+      "done": {
+        "content": "$1",
+        "example": "7"
+      },
+      "total": {
+        "content": "$2",
+        "example": "12"
+      }
+    }
+  },
+  "btn_progress_percent": {
+    "message": "$P$%",
+    "placeholders": {
+      "p": {
+        "content": "$1",
+        "example": "40"
+      }
+    }
+  },
+  "btn_cancel": {
+    "message": "キャンセル"
+  },
+  "tip_cancel": {
+    "message": "ダウンロードをキャンセル"
+  },
+  "btn_saved": {
+    "message": "保存済み"
+  },
+  "tip_saved": {
+    "message": "Downloads/$FOLDER$ に保存しました",
+    "placeholders": {
+      "folder": {
+        "content": "$1",
+        "example": "pixiv/みずき-135882741"
+      }
+    }
+  },
+  "btn_login": {
+    "message": "ログインして保存"
+  },
+  "tip_login": {
+    "message": "pixivのログインページを開き、ログイン後にこのページへ戻ります"
+  },
+  "btn_retry": {
+    "message": "再試行"
+  },
+  "hint_failed": {
+    "message": "$N$件失敗",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "tip_partial": {
+    "message": "$TOTAL$ページ中$SAVED$ページを保存しました。$FAILED$ページはそれぞれ4回試行しても失敗しました。クリックすると、その$FAILED$ページだけを再試行します。",
+    "placeholders": {
+      "saved": {
+        "content": "$1",
+        "example": "10"
+      },
+      "total": {
+        "content": "$2",
+        "example": "12"
+      },
+      "failed": {
+        "content": "$3",
+        "example": "2"
+      }
+    }
+  },
+  "tip_partial_one": {
+    "message": "$TOTAL$ページ中$SAVED$ページを保存しました。1ページは4回試行しても失敗しました。クリックすると、そのページだけを再試行します。",
+    "placeholders": {
+      "saved": {
+        "content": "$1",
+        "example": "10"
+      },
+      "total": {
+        "content": "$2",
+        "example": "12"
+      }
+    }
+  },
+  "tip_offline": {
+    "message": "インターネットに接続されていません。オンラインに戻ってから再試行してください。"
+  },
+  "tip_refused": {
+    "message": "pixivがこの作品の取得を拒否しました。ログインしている場合は、pixivのR-18表示設定を確認してください。"
+  },
+  "tip_server": {
+    "message": "pixivが応答していません。数分後に再試行してください。"
+  },
+  "tip_disk": {
+    "message": "Chromeがダウンロードフォルダーに保存できませんでした。空き容量を確認して、もう一度お試しください。"
+  },
+  "tip_metadata_only": {
+    "message": "全$TOTAL$ページを保存しました。metadata.jsonを保存できませんでした。クリックすると再試行します。",
+    "placeholders": {
+      "total": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "btn_unavailable": {
+    "message": "利用不可"
+  },
+  "tip_unavailable": {
+    "message": "この作品は閲覧できなくなりました。"
+  },
+  "tip_encode_failed": {
+    "message": "フレームをZIPで保存しました。動画のエンコードに失敗しました。クリックしてエンコードを再試行するか、設定で「ZIPのみ」を選んでください。"
+  },
+  "aria_idle_pages": {
+    "message": "この作品の原寸画像$N$枚をすべてダウンロード",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "aria_idle_single": {
+    "message": "この作品の原寸画像をダウンロード"
+  },
+  "aria_idle_ugoira": {
+    "message": "このうごイラを$FORMAT$でダウンロード（フレームZIPとメタデータ付き）",
+    "placeholders": {
+      "format": {
+        "content": "$1",
+        "example": "MP4"
+      }
+    }
+  },
+  "aria_idle_ugoira_nometa": {
+    "message": "このうごイラを$FORMAT$でダウンロード（フレームZIP付き）",
+    "placeholders": {
+      "format": {
+        "content": "$1",
+        "example": "MP4"
+      }
+    }
+  },
+  "aria_idle_ugoira_zip": {
+    "message": "このうごイラのフレームZIPをダウンロード"
+  },
+  "aria_busy_pages": {
+    "message": "ダウンロード中、$TOTAL$ページ中$DONE$ページ保存済み。クリックでキャンセル。",
+    "placeholders": {
+      "done": {
+        "content": "$1",
+        "example": "7"
+      },
+      "total": {
+        "content": "$2",
+        "example": "12"
+      }
+    }
+  },
+  "aria_busy_pages_one": {
+    "message": "ダウンロード中、1ページ中$DONE$ページ保存済み。クリックでキャンセル。",
+    "placeholders": {
+      "done": {
+        "content": "$1",
+        "example": "7"
+      }
+    }
+  },
+  "aria_busy_frames": {
+    "message": "フレームをダウンロード中、$P$%。クリックでキャンセル。",
+    "placeholders": {
+      "p": {
+        "content": "$1",
+        "example": "40"
+      }
+    }
+  },
+  "aria_busy_encode": {
+    "message": "$FORMAT$にエンコード中、$P$%。クリックでキャンセル。",
+    "placeholders": {
+      "format": {
+        "content": "$1",
+        "example": "MP4"
+      },
+      "p": {
+        "content": "$2",
+        "example": "40"
+      }
+    }
+  },
+  "aria_saved_pages": {
+    "message": "$N$ページをDownloads/$FOLDER$に保存しました。クリックでもう一度ダウンロード。",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      },
+      "folder": {
+        "content": "$2",
+        "example": "pixiv/みずき-135882741"
+      }
+    }
+  },
+  "aria_saved_pages_one": {
+    "message": "1ページをDownloads/$FOLDER$に保存しました。クリックでもう一度ダウンロード。",
+    "placeholders": {
+      "folder": {
+        "content": "$1",
+        "example": "pixiv/みずき-135882741"
+      }
+    }
+  },
+  "aria_saved_ugoira": {
+    "message": "$FORMAT$をDownloads/$FOLDER$に保存しました。クリックでもう一度ダウンロード。",
+    "placeholders": {
+      "format": {
+        "content": "$1",
+        "example": "MP4"
+      },
+      "folder": {
+        "content": "$2",
+        "example": "pixiv/みずき-135882741"
+      }
+    }
+  },
+  "aria_login": {
+    "message": "このR-18作品をダウンロードするには、pixivにログインしてください"
+  },
+  "aria_partial": {
+    "message": "$TOTAL$ページ中$SAVED$ページ保存済み、$FAILED$ページ失敗。クリックで失敗したページを再試行。",
+    "placeholders": {
+      "saved": {
+        "content": "$1",
+        "example": "10"
+      },
+      "total": {
+        "content": "$2",
+        "example": "12"
+      },
+      "failed": {
+        "content": "$3",
+        "example": "2"
+      }
+    }
+  },
+  "aria_failed": {
+    "message": "ダウンロードに失敗しました。$CAUSE$ クリックで再試行。",
+    "placeholders": {
+      "cause": {
+        "content": "$1",
+        "example": "No connection. Retry when you're back online."
+      }
+    }
+  },
+  "live_start": {
+    "message": "$N$ページをダウンロード中",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "live_start_one": {
+    "message": "1ページをダウンロード中"
+  },
+  "live_start_ugoira": {
+    "message": "うごイラをダウンロード中"
+  },
+  "live_progress_pages": {
+    "message": "$TOTAL$ページ中$DONE$ページ保存済み",
+    "placeholders": {
+      "done": {
+        "content": "$1",
+        "example": "7"
+      },
+      "total": {
+        "content": "$2",
+        "example": "12"
+      }
+    }
+  },
+  "live_progress_percent": {
+    "message": "$P$%",
+    "placeholders": {
+      "p": {
+        "content": "$1",
+        "example": "40"
+      }
+    }
+  },
+  "live_saved": {
+    "message": "$N$ページを保存しました",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "live_saved_one": {
+    "message": "1ページを保存しました"
+  },
+  "live_saved_ugoira": {
+    "message": "$FORMAT$を保存しました",
+    "placeholders": {
+      "format": {
+        "content": "$1",
+        "example": "MP4"
+      }
+    }
+  },
+  "live_failed": {
+    "message": "$N$ページが失敗しました",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "live_failed_one": {
+    "message": "1ページが失敗しました"
+  },
+  "live_cancelled": {
+    "message": "ダウンロードをキャンセルしました"
+  },
+  "action_title_idle": {
+    "message": "Helper for Pixiv — クリックして設定を開く"
+  },
+  "action_title_one": {
+    "message": "Helper for Pixiv — 残り$N$ファイル",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "action_title_one_single": {
+    "message": "Helper for Pixiv — 残り1ファイル"
+  },
+  "action_title_many": {
+    "message": "Helper for Pixiv — $JOBS$件のダウンロードで残り$N$ファイル",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      },
+      "jobs": {
+        "content": "$2",
+        "example": "2"
+      }
+    }
+  },
+  "opt_tab_title": {
+    "message": "Helper for Pixiv — 設定"
+  },
+  "opt_title": {
+    "message": "Helper for Pixiv"
+  },
+  "opt_subtitle": {
+    "message": "設定"
+  },
+  "opt_folder_heading": {
+    "message": "保存先フォルダー"
+  },
+  "opt_folder_help": {
+    "message": "ダウンロードフォルダー内に作成されます。トークンを使うと、作品に合わせてフォルダー名を付けられます。"
+  },
+  "opt_folder_aria": {
+    "message": "フォルダー名のパターン"
+  },
+  "opt_insert": {
+    "message": "挿入:"
+  },
+  "tok_artist_tip": {
+    "message": "pixivに表示されている作者名"
+  },
+  "tok_id_tip": {
+    "message": "作品ID（ページURL内の数字）"
+  },
+  "tok_title_tip": {
+    "message": "作品タイトル（安全なフォルダー名になるよう短縮されます）"
+  },
+  "tok_userid_tip": {
+    "message": "作者の数字のpixivアカウントID。作者が名前を変えても変わりません"
+  },
+  "opt_preview": {
+    "message": "プレビュー:"
+  },
+  "opt_still_using": {
+    "message": "使用中: $PATTERN$ — このパターンを修正するまで、最後に有効だったパターンが使われます。",
+    "placeholders": {
+      "pattern": {
+        "content": "$1",
+        "example": "pixiv/{artist}-{id}"
+      }
+    }
+  },
+  "err_empty": {
+    "message": "フォルダー名のパターンを入力してください。"
+  },
+  "err_absolute": {
+    "message": "ダウンロードフォルダー内の相対パスにしてください。"
+  },
+  "err_backslash": {
+    "message": "フォルダーの区切りには「/」を使ってください。"
+  },
+  "err_dotdot": {
+    "message": "「..」は使用できません。"
+  },
+  "err_unknown_token": {
+    "message": "不明なトークン $TOKEN$ です。使用できるトークン: {artist}, {id}, {title}, {userId}",
+    "placeholders": {
+      "token": {
+        "content": "$1",
+        "example": "{name}"
+      }
+    }
+  },
+  "err_illegal_chars": {
+    "message": "次の文字は使用できません: : * ? \" < > |"
+  },
+  "opt_ugoira_heading": {
+    "message": "うごイラの出力"
+  },
+  "opt_ugoira_help": {
+    "message": "元のフレームからブラウザー内でエンコードします。フレームZIPとframes.jsonは常に保存されます。"
+  },
+  "opt_ugoira_aria": {
+    "message": "うごイラの出力形式"
+  },
+  "opt_ugoira_mp4": {
+    "message": "MP4"
+  },
+  "opt_ugoira_webm": {
+    "message": "WebM"
+  },
+  "opt_ugoira_zip": {
+    "message": "ZIPのみ"
+  },
+  "opt_meta_heading": {
+    "message": "metadata.jsonを保存"
+  },
+  "opt_meta_help": {
+    "message": "タイトル、説明、タグ、日付、作者を画像と同じフォルダーに保存します。"
+  },
+  "opt_saved": {
+    "message": "保存済み"
+  },
+  "opt_reset": {
+    "message": "初期設定に戻す"
+  },
+  "opt_report": {
+    "message": "問題を報告"
+  },
+  "opt_version": {
+    "message": "v$VERSION$",
+    "placeholders": {
+      "version": {
+        "content": "$1",
+        "example": "1.0.0"
+      }
+    }
+  },
+  "opt_privacy": {
+    "message": "通信先はpixiv.netとその画像サーバーだけです。ダウンロードしたものがブラウザーの外へ送られることはありません。"
+  }
+}

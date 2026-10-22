@@ -1,0 +1,506 @@
+{
+  "ext_name": {
+    "message": "Helper for Pixiv"
+  },
+  "ext_description": {
+    "message": "一键保存整个 pixiv 作品：全部原图、metadata.json，以及 MP4 或 WebM 格式的动图，统一存入一个文件夹。"
+  },
+  "locale_tag": {
+    "message": "zh-CN"
+  },
+  "btn_download": {
+    "message": "下载"
+  },
+  "hint_pages": {
+    "message": "$N$P",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "hint_format": {
+    "message": "$FORMAT$",
+    "placeholders": {
+      "format": {
+        "content": "$1",
+        "example": "MP4"
+      }
+    }
+  },
+  "btn_progress_pages": {
+    "message": "$DONE$ / $TOTAL$",
+    "placeholders": {
+      "done": {
+        "content": "$1",
+        "example": "7"
+      },
+      "total": {
+        "content": "$2",
+        "example": "12"
+      }
+    }
+  },
+  "btn_progress_percent": {
+    "message": "$P$%",
+    "placeholders": {
+      "p": {
+        "content": "$1",
+        "example": "40"
+      }
+    }
+  },
+  "btn_cancel": {
+    "message": "取消"
+  },
+  "tip_cancel": {
+    "message": "取消下载"
+  },
+  "btn_saved": {
+    "message": "已保存"
+  },
+  "tip_saved": {
+    "message": "已保存到 Downloads/$FOLDER$",
+    "placeholders": {
+      "folder": {
+        "content": "$1",
+        "example": "pixiv/みずき-135882741"
+      }
+    }
+  },
+  "btn_login": {
+    "message": "登录后下载"
+  },
+  "tip_login": {
+    "message": "打开 pixiv 登录页面，登录后返回此页"
+  },
+  "btn_retry": {
+    "message": "重试"
+  },
+  "hint_failed": {
+    "message": "$N$ 个失败",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "tip_partial": {
+    "message": "共 $TOTAL$ 页，已保存 $SAVED$ 页。$FAILED$ 页各尝试 4 次后仍失败。点击仅重试这 $FAILED$ 页。",
+    "placeholders": {
+      "saved": {
+        "content": "$1",
+        "example": "10"
+      },
+      "total": {
+        "content": "$2",
+        "example": "12"
+      },
+      "failed": {
+        "content": "$3",
+        "example": "2"
+      }
+    }
+  },
+  "tip_partial_one": {
+    "message": "共 $TOTAL$ 页，已保存 $SAVED$ 页。1 页尝试 4 次后仍失败。点击仅重试该页。",
+    "placeholders": {
+      "saved": {
+        "content": "$1",
+        "example": "10"
+      },
+      "total": {
+        "content": "$2",
+        "example": "12"
+      }
+    }
+  },
+  "tip_offline": {
+    "message": "没有网络连接。恢复联网后请重试。"
+  },
+  "tip_refused": {
+    "message": "pixiv 拒绝访问此作品。如果你已登录，请检查 pixiv 上的 R-18 设置。"
+  },
+  "tip_server": {
+    "message": "pixiv 没有响应。请过几分钟再重试。"
+  },
+  "tip_disk": {
+    "message": "Chrome 无法保存到你的下载文件夹。请检查可用空间后重试。"
+  },
+  "tip_metadata_only": {
+    "message": "全部 $TOTAL$ 页已保存。metadata.json 未能保存。点击重试。",
+    "placeholders": {
+      "total": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "btn_unavailable": {
+    "message": "不可用"
+  },
+  "tip_unavailable": {
+    "message": "此作品已无法访问。"
+  },
+  "tip_encode_failed": {
+    "message": "帧已保存为 ZIP。视频编码失败。点击重试编码，或在设置中选择“仅 ZIP”。"
+  },
+  "aria_idle_pages": {
+    "message": "下载此作品的全部 $N$ 张原图",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "aria_idle_single": {
+    "message": "下载此作品的原图"
+  },
+  "aria_idle_ugoira": {
+    "message": "将此动图下载为 $FORMAT$，并附带帧 ZIP 和元数据",
+    "placeholders": {
+      "format": {
+        "content": "$1",
+        "example": "MP4"
+      }
+    }
+  },
+  "aria_idle_ugoira_nometa": {
+    "message": "将此动图下载为 $FORMAT$，并附带帧 ZIP",
+    "placeholders": {
+      "format": {
+        "content": "$1",
+        "example": "MP4"
+      }
+    }
+  },
+  "aria_idle_ugoira_zip": {
+    "message": "下载此动图的帧 ZIP"
+  },
+  "aria_busy_pages": {
+    "message": "正在下载，共 $TOTAL$ 页，已保存 $DONE$ 页。点击取消。",
+    "placeholders": {
+      "done": {
+        "content": "$1",
+        "example": "7"
+      },
+      "total": {
+        "content": "$2",
+        "example": "12"
+      }
+    }
+  },
+  "aria_busy_pages_one": {
+    "message": "正在下载，共 1 页，已保存 $DONE$ 页。点击取消。",
+    "placeholders": {
+      "done": {
+        "content": "$1",
+        "example": "7"
+      }
+    }
+  },
+  "aria_busy_frames": {
+    "message": "正在下载帧，$P$%。点击取消。",
+    "placeholders": {
+      "p": {
+        "content": "$1",
+        "example": "40"
+      }
+    }
+  },
+  "aria_busy_encode": {
+    "message": "正在编码为 $FORMAT$，$P$%。点击取消。",
+    "placeholders": {
+      "format": {
+        "content": "$1",
+        "example": "MP4"
+      },
+      "p": {
+        "content": "$2",
+        "example": "40"
+      }
+    }
+  },
+  "aria_saved_pages": {
+    "message": "已将 $N$ 页保存到 Downloads/$FOLDER$。点击可再次下载。",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      },
+      "folder": {
+        "content": "$2",
+        "example": "pixiv/みずき-135882741"
+      }
+    }
+  },
+  "aria_saved_pages_one": {
+    "message": "已将 1 页保存到 Downloads/$FOLDER$。点击可再次下载。",
+    "placeholders": {
+      "folder": {
+        "content": "$1",
+        "example": "pixiv/みずき-135882741"
+      }
+    }
+  },
+  "aria_saved_ugoira": {
+    "message": "已将 $FORMAT$ 保存到 Downloads/$FOLDER$。点击可再次下载。",
+    "placeholders": {
+      "format": {
+        "content": "$1",
+        "example": "MP4"
+      },
+      "folder": {
+        "content": "$2",
+        "example": "pixiv/みずき-135882741"
+      }
+    }
+  },
+  "aria_login": {
+    "message": "登录 pixiv 以下载此 R-18 作品"
+  },
+  "aria_partial": {
+    "message": "共 $TOTAL$ 页，已保存 $SAVED$ 页，$FAILED$ 页失败。点击重试失败的页面。",
+    "placeholders": {
+      "saved": {
+        "content": "$1",
+        "example": "10"
+      },
+      "total": {
+        "content": "$2",
+        "example": "12"
+      },
+      "failed": {
+        "content": "$3",
+        "example": "2"
+      }
+    }
+  },
+  "aria_failed": {
+    "message": "下载失败。$CAUSE$ 点击重试。",
+    "placeholders": {
+      "cause": {
+        "content": "$1",
+        "example": "No connection. Retry when you're back online."
+      }
+    }
+  },
+  "live_start": {
+    "message": "正在下载 $N$ 页",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "live_start_one": {
+    "message": "正在下载 1 页"
+  },
+  "live_start_ugoira": {
+    "message": "正在下载动图"
+  },
+  "live_progress_pages": {
+    "message": "共 $TOTAL$ 页，已保存 $DONE$ 页",
+    "placeholders": {
+      "done": {
+        "content": "$1",
+        "example": "7"
+      },
+      "total": {
+        "content": "$2",
+        "example": "12"
+      }
+    }
+  },
+  "live_progress_percent": {
+    "message": "$P$%",
+    "placeholders": {
+      "p": {
+        "content": "$1",
+        "example": "40"
+      }
+    }
+  },
+  "live_saved": {
+    "message": "已保存 $N$ 页",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "live_saved_one": {
+    "message": "已保存 1 页"
+  },
+  "live_saved_ugoira": {
+    "message": "已保存 $FORMAT$",
+    "placeholders": {
+      "format": {
+        "content": "$1",
+        "example": "MP4"
+      }
+    }
+  },
+  "live_failed": {
+    "message": "$N$ 页失败",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "live_failed_one": {
+    "message": "1 页失败"
+  },
+  "live_cancelled": {
+    "message": "下载已取消"
+  },
+  "action_title_idle": {
+    "message": "Helper for Pixiv — 点击打开设置"
+  },
+  "action_title_one": {
+    "message": "Helper for Pixiv — 剩余 $N$ 个文件",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "action_title_one_single": {
+    "message": "Helper for Pixiv — 剩余 1 个文件"
+  },
+  "action_title_many": {
+    "message": "Helper for Pixiv — $JOBS$ 个下载共剩余 $N$ 个文件",
+    "placeholders": {
+      "n": {
+        "content": "$1",
+        "example": "12"
+      },
+      "jobs": {
+        "content": "$2",
+        "example": "2"
+      }
+    }
+  },
+  "opt_tab_title": {
+    "message": "Helper for Pixiv — 设置"
+  },
+  "opt_title": {
+    "message": "Helper for Pixiv"
+  },
+  "opt_subtitle": {
+    "message": "设置"
+  },
+  "opt_folder_heading": {
+    "message": "下载文件夹"
+  },
+  "opt_folder_help": {
+    "message": "位于你的下载文件夹内。使用标记可按作品命名文件夹。"
+  },
+  "opt_folder_aria": {
+    "message": "文件夹格式"
+  },
+  "opt_insert": {
+    "message": "插入："
+  },
+  "tok_artist_tip": {
+    "message": "画师的显示名称，与 pixiv 上显示的一致"
+  },
+  "tok_id_tip": {
+    "message": "作品 ID，即页面网址中的数字"
+  },
+  "tok_title_tip": {
+    "message": "作品标题，会缩短以保证文件夹名称安全"
+  },
+  "tok_userid_tip": {
+    "message": "画师的 pixiv 数字账号 ID；画师改名后也不会变"
+  },
+  "opt_preview": {
+    "message": "预览："
+  },
+  "opt_still_using": {
+    "message": "仍在使用：$PATTERN$ — 在修正此格式之前，上一个有效的格式继续生效。",
+    "placeholders": {
+      "pattern": {
+        "content": "$1",
+        "example": "pixiv/{artist}-{id}"
+      }
+    }
+  },
+  "err_empty": {
+    "message": "请输入文件夹格式。"
+  },
+  "err_absolute": {
+    "message": "必须是下载文件夹内的相对路径。"
+  },
+  "err_backslash": {
+    "message": "文件夹之间请用“/”分隔。"
+  },
+  "err_dotdot": {
+    "message": "不能包含“..”。"
+  },
+  "err_unknown_token": {
+    "message": "未知标记 $TOKEN$。可用标记：{artist}、{id}、{title}、{userId}。",
+    "placeholders": {
+      "token": {
+        "content": "$1",
+        "example": "{name}"
+      }
+    }
+  },
+  "err_illegal_chars": {
+    "message": "不能包含 : * ? \" < > |。"
+  },
+  "opt_ugoira_heading": {
+    "message": "动图输出"
+  },
+  "opt_ugoira_help": {
+    "message": "在浏览器中由原始帧编码。帧 ZIP 和 frames.json 始终会保存。"
+  },
+  "opt_ugoira_aria": {
+    "message": "动图输出格式"
+  },
+  "opt_ugoira_mp4": {
+    "message": "MP4"
+  },
+  "opt_ugoira_webm": {
+    "message": "WebM"
+  },
+  "opt_ugoira_zip": {
+    "message": "仅 ZIP"
+  },
+  "opt_meta_heading": {
+    "message": "保存 metadata.json"
+  },
+  "opt_meta_help": {
+    "message": "标题、简介、标签、日期和画师信息，与图片保存在一起。"
+  },
+  "opt_saved": {
+    "message": "已保存"
+  },
+  "opt_reset": {
+    "message": "恢复默认设置"
+  },
+  "opt_report": {
+    "message": "报告问题"
+  },
+  "opt_version": {
+    "message": "v$VERSION$",
+    "placeholders": {
+      "version": {
+        "content": "$1",
+        "example": "1.0.0"
+      }
+    }
+  },
+  "opt_privacy": {
+    "message": "只与 pixiv.net 及其图片服务器通信。你下载的任何内容都不会离开你的浏览器。"
+  }
+}
