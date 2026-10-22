@@ -1,0 +1,42 @@
+{
+  "error": false,
+  "message": "",
+  "body": {
+    "illustId": "136004512",
+    "illustTitle": "まばたき",
+    "illustComment": "",
+    "id": "136004512",
+    "title": "まばたき",
+    "description": "",
+    "illustType": 2,
+    "createDate": "2025-10-05T12:00:00+00:00",
+    "uploadDate": "2025-10-05T12:00:00+00:00",
+    "restrict": 0,
+    "xRestrict": 1,
+    "sl": 6,
+    "urls": {
+      "mini": "https://i.pximg.net/c/48x48/img-master/img/2025/10/05/21/00/00/136004512_master1200.jpg",
+      "thumb": "https://i.pximg.net/c/250x250_80_a2/img-master/img/2025/10/05/21/00/00/136004512_square1200.jpg",
+      "small": "https://i.pximg.net/c/540x540_70/img-master/img/2025/10/05/21/00/00/136004512_master1200.jpg",
+      "regular": "https://i.pximg.net/img-master/img/2025/10/05/21/00/00/136004512_master1200.jpg",
+      "original": "https://i.pximg.net/img-original/img/2025/10/05/21/00/00/136004512_ugoira0.jpg"
+    },
+    "tags": {
+      "authorId": "51234567",
+      "isLocked": false,
+      "tags": [{ "tag": "うごイラ", "locked": true, "deletable": false, "userId": "51234567" }],
+      "writable": true
+    },
+    "userId": "51234567",
+    "userName": "Sora / 空",
+    "userAccount": "sora",
+    "width": 600,
+    "height": 600,
+    "pageCount": 1,
+    "bookmarkCount": 88,
+    "likeCount": 60,
+    "viewCount": 1203,
+    "isOriginal": true,
+    "aiType": 1
+  }
+}
