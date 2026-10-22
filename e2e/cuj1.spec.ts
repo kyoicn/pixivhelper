@@ -37,13 +37,11 @@ import {
   expectBadge,
   fileName,
   IDLE_TITLE,
-  listDownloads,
   openArtwork,
   pagesOf,
   range,
   restingView,
   TRANSITION_MS,
-  waitForDownload,
 } from './harness/flows';
 import {
   buttonCenter,
@@ -241,7 +239,7 @@ test.describe('CUJ-1: download an illustration or manga', { tag: '@cuj1' }, () =
     await clickButton(page);
     await waitForText(page, 'Saved · 12P');
 
-    const listing = await listDownloads(harness);
+    const listing = await harness.downloads.files();
     expect(listing.map((file) => file.path)).toEqual(expectedFiles(FOLDER, ALL_PAGES, true));
     for (const page of ALL_PAGES) {
       const served = server
@@ -327,7 +325,7 @@ test.describe('CUJ-1: download an illustration or manga', { tag: '@cuj1' }, () =
     await clickButton(page);
 
     // metadata.json lands first and does not move the counter.
-    await waitForDownload(harness, `${FOLDER}/metadata.json`);
+    await harness.downloads.waitForFile(`${FOLDER}/metadata.json`);
     await expect.poll(() => first.held).toBe(5);
     expect((await buttonView(page)).text).toBe('0 / 12');
     expect((await buttonView(page)).ariaBusy).toBe('true');
@@ -384,7 +382,7 @@ test.describe('CUJ-1: download an illustration or manga', { tag: '@cuj1' }, () =
     await clickButton(page);
     await waitForText(page, '5 / 12');
     await expect.poll(() => hold.held).toBe(5);
-    await waitForDownload(harness, `${FOLDER}/${fileName(EXAMPLE, 4)}`);
+    await harness.downloads.waitForFile(`${FOLDER}/${fileName(EXAMPLE, 4)}`);
 
     // The pointer is still on the button from the starting click: progress, not Cancel.
     await page.waitForTimeout(TRANSITION_MS);
@@ -522,7 +520,7 @@ test.describe('CUJ-1: download an illustration or manga', { tag: '@cuj1' }, () =
     await hoverButton(page, false);
 
     await clickButton(page);
-    await waitForDownload(harness, `${FOLDER}/metadata (1).json`);
+    await harness.downloads.waitForFile(`${FOLDER}/metadata (1).json`);
     await waitForText(page, 'Saved · 12P');
     await expect.poll(() => downloadedPaths(harness)).toHaveLength(26);
     const duplicates = [
@@ -548,7 +546,7 @@ test.describe('CUJ-1: download an illustration or manga', { tag: '@cuj1' }, () =
 
     await expectBadge(harness, '9', 'Helper for Pixiv — 9 files remaining');
     hold.release();
-    await waitForDownload(harness, `${FOLDER}/${fileName(EXAMPLE, 11)}`);
+    await harness.downloads.waitForFile(`${FOLDER}/${fileName(EXAMPLE, 11)}`);
     await expect
       .poll(() => downloadedPaths(harness))
       .toEqual(expectedFiles(FOLDER, ALL_PAGES, true));
@@ -683,7 +681,7 @@ test.describe('CUJ-1: download an illustration or manga', { tag: '@cuj1' }, () =
 
     await hoverButton(page, false);
     await clickButton(page);
-    await waitForDownload(harness, `after/${EXAMPLE.id}/metadata.json`);
+    await harness.downloads.waitForFile(`after/${EXAMPLE.id}/metadata.json`);
     const next = await waitForText(page, 'Saved · 12P');
     expect(next.title).toBe(`Saved to Downloads/after/${EXAMPLE.id}`);
     expect((await downloadedPaths(harness)).filter((file) => file.startsWith('after/'))).toEqual(

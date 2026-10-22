@@ -42,7 +42,6 @@ import {
   pagesOf,
   range,
   TRANSITION_MS,
-  waitForDownload,
 } from './harness/flows';
 import {
   buttonView,
@@ -98,7 +97,7 @@ async function land(
   page: number,
 ): Promise<void> {
   holds.get(page)?.release();
-  await waitForDownload(harness, `${folder}/${fileName(work, page)}`);
+  await harness.downloads.waitForFile(`${folder}/${fileName(work, page)}`);
 }
 
 /** Cancels the busy job in `page` with the mouse: leave, hover (Cancel face), click. */

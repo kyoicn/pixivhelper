@@ -5,7 +5,7 @@ import { expect, type Page } from '@playwright/test';
 import { artworkUrl, originalUrl, type IllustWork } from '../fixtures/works';
 import type { LoggedRequest } from '../server/server';
 import { buttonView, exposeButton, hoverButton, type ButtonView } from './hfp-button';
-import type { DownloadedFile, Harness } from './launch';
+import type { Harness } from './launch';
 
 /** PRD §4.8: the badge updates within 1 s of any change. */
 export const BADGE_WITHIN = { timeout: 1_000, intervals: [50] };
@@ -63,48 +63,9 @@ export async function restingView(page: Page): Promise<ButtonView> {
   return buttonView(page);
 }
 
-/** Listing attempts before an ENOENT is passed on. */
-const LISTING_ATTEMPTS = 20;
-const LISTING_POLL_MS = 50;
-
-function isMissingFile(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT';
-}
-
-/**
- * harness.downloads.files(), tolerant of Chrome renaming an `Unconfirmed *.crdownload` file between
- * the directory read and its stat (the listing then throws ENOENT): such a listing is retried.
- */
-export async function listDownloads(harness: Harness): Promise<DownloadedFile[]> {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      return await harness.downloads.files();
-    } catch (error) {
-      if (!isMissingFile(error) || attempt >= LISTING_ATTEMPTS) throw error;
-    }
-  }
-}
-
-/** harness.downloads.waitForFile() on top of listDownloads(). */
-export async function waitForDownload(
-  harness: Harness,
-  relativePath: string,
-  { timeout = 10_000 } = {},
-): Promise<DownloadedFile> {
-  const deadline = Date.now() + timeout;
-  for (;;) {
-    const file = (await listDownloads(harness)).find((entry) => entry.path === relativePath);
-    if (file) return file;
-    if (Date.now() > deadline) {
-      throw new Error(`downloads: ${relativePath} did not appear within ${timeout} ms`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, LISTING_POLL_MS));
-  }
-}
-
 /** Every path under the downloads directory. */
 export async function downloadedPaths(harness: Harness): Promise<string[]> {
-  return (await listDownloads(harness)).map((file) => file.path);
+  return (await harness.downloads.files()).map((file) => file.path);
 }
 
 /** `folder/<page file>` for each page, plus `folder/metadata.json` when `metadata`, sorted. */

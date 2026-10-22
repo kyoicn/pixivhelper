@@ -62,6 +62,8 @@ test.describe('e2e harness', { tag: '@harness' }, () => {
     const started = Date.now();
     await harness.stopServiceWorker();
     expect(await harness.isServiceWorkerRunning()).toBe(false);
+    // Right after launch Chrome can drop a stop request; the helper repeats it every 300 ms, so a
+    // stop takes well under 0.5 s (max 361 ms over 48 parallel runs) and 2 s leaves ample margin.
     expect(Date.now() - started).toBeLessThan(2_000);
     // The helpers wake it again.
     expect(await harness.swEval(() => chrome.runtime.id)).toBe(harness.extensionId);

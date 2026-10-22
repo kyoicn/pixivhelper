@@ -53,7 +53,11 @@ export interface Downloads {
 const LAUNCH_TIMEOUT_MS = 30_000;
 const SW_START_TIMEOUT_MS = 10_000;
 const SW_STOP_TIMEOUT_MS = 5_000;
+/** How long one stop request gets to take effect before it is repeated. */
+const SW_STOP_ROUND_MS = 300;
 const POLL_MS = 50;
+/** Chrome's name for a download still being written: `Unconfirmed 123.crdownload`, `<name>.crdownload`. */
+const IN_PROGRESS_SUFFIX = '.crdownload';
 
 /** A subset of the switches Playwright passes to Chromium (never --disable-extensions): a quiet, stable browser. */
 const QUIET_SWITCHES = [
@@ -166,20 +170,31 @@ function waitForDevTools(child: ChildProcess, stderrTail: () => string): Promise
   });
 }
 
+/** Completed downloads only: in-progress `.crdownload` files are left out. */
 async function listFiles(root: string): Promise<DownloadedFile[]> {
   const entries = await readdir(root, { recursive: true, withFileTypes: true });
-  const files = await Promise.all(
+  const listed = await Promise.all(
     entries
-      .filter((entry) => entry.isFile())
-      .map(async (entry) => {
+      .filter((entry) => entry.isFile() && !entry.name.endsWith(IN_PROGRESS_SUFFIX))
+      .map(async (entry): Promise<DownloadedFile | null> => {
         const absolute = path.join(entry.parentPath, entry.name);
-        return {
-          path: path.relative(root, absolute).split(path.sep).join('/'),
-          size: (await stat(absolute)).size,
-        };
+        const size = await fileSize(absolute);
+        if (size === null) return null;
+        return { path: path.relative(root, absolute).split(path.sep).join('/'), size };
       }),
   );
+  const files = listed.filter((file): file is DownloadedFile => file !== null);
   return files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+/** The file's size, or null when Chrome renamed or removed it after the directory was read. */
+async function fileSize(file: string): Promise<number | null> {
+  try {
+    return (await stat(file)).size;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -283,22 +298,29 @@ export class Harness {
 
   /**
    * Stops the extension service worker, like "Stop" in chrome://serviceworker-internals: CDP
-   * Target.closeTarget on its target, falling back to ServiceWorker.stopAllWorkers. Resolves once
-   * the target is gone. Chrome restarts the worker on its next event; swEval() also restarts it.
+   * Target.closeTarget on its target, with ServiceWorker.stopAllWorkers as the fallback. Resolves
+   * once the target is gone. Chrome restarts the worker on its next event; swEval() also restarts it.
    */
   async stopServiceWorker(): Promise<void> {
-    const targetId = await this.#swTargetId();
-    if (targetId === null) return;
-    const closed = await this.cdp
-      .send('Target.closeTarget', { targetId })
-      .then(({ success }) => success)
-      .catch(() => false);
-    if (closed && (await this.#waitForSwTarget(false, SW_STOP_TIMEOUT_MS / 2))) return;
-    // ServiceWorker.* commands fail with "domain not enabled" until it is.
-    await this.#anchor.send('ServiceWorker.enable');
-    await this.#anchor.send('ServiceWorker.stopAllWorkers');
-    if (!(await this.#waitForSwTarget(false, SW_STOP_TIMEOUT_MS / 2))) {
-      throw new Error('stopServiceWorker: the service worker target did not go away');
+    const deadline = Date.now() + SW_STOP_TIMEOUT_MS;
+    for (let round = 0; ; round++) {
+      const targetId = await this.#swTargetId();
+      if (targetId === null) return;
+      if (Date.now() > deadline) {
+        throw new Error('stopServiceWorker: the service worker target did not go away');
+      }
+      // Shortly after launch Chrome can report a close as successful and keep the worker running,
+      // so the request is repeated each round; every other round also tries the fallback.
+      const closed = await this.cdp
+        .send('Target.closeTarget', { targetId })
+        .then(({ success }) => success)
+        .catch(() => false);
+      if (!closed || round % 2 === 1) {
+        // ServiceWorker.* commands fail with "domain not enabled" until it is.
+        await this.#anchor.send('ServiceWorker.enable');
+        await this.#anchor.send('ServiceWorker.stopAllWorkers');
+      }
+      await this.#waitForSwTarget(false, SW_STOP_ROUND_MS);
     }
   }
 

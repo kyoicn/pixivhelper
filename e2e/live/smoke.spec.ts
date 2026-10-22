@@ -15,7 +15,6 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { PIXIV_REFERER } from '../fixtures/works';
-import { listDownloads } from '../harness/flows';
 import { buttonView, clickButton, exposeButton, waitForText } from '../harness/hfp-button';
 import { launch, REPO_ROOT, type Harness } from '../harness/launch';
 
@@ -146,7 +145,7 @@ test.describe('L4 live smoke against the real pixiv', { tag: '@live' }, () => {
     const folder = (saved.title ?? '').replace(/^Saved to Downloads\//, '');
     expect(folder).toMatch(new RegExp(`^pixiv/.+-${work.id}$`));
 
-    const listing = await listDownloads(harness);
+    const listing = await harness.downloads.files();
     const names = originals.map((url) => url.slice(url.lastIndexOf('/') + 1));
     expect(listing.map((file) => file.path).sort()).toEqual(
       [...names, 'metadata.json'].map((name) => `${folder}/${name}`).sort(),
