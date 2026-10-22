@@ -4,7 +4,179 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title></title>
+    <link rel="stylesheet" href="options.css" />
     <script type="module" src="options.js"></script>
   </head>
-  <body></body>
+  <!-- Unhidden by options.ts once the strings and settings are in place. -->
+  <body hidden>
+    <main class="col">
+      <header class="page-head">
+        <div class="app-icon" aria-hidden="true">
+          <svg
+            width="26"
+            height="26"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#fff"
+            stroke-width="2.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M12 4v11" />
+            <path d="m7 10 5 5 5-5" />
+            <path d="M4 19h16" />
+          </svg>
+        </div>
+        <div>
+          <h1 data-i18n="opt_title"></h1>
+          <p class="subtitle" data-i18n="opt_subtitle"></p>
+        </div>
+      </header>
+
+      <section id="folder" aria-labelledby="folder-h">
+        <div class="head">
+          <h2 id="folder-h" data-i18n="opt_folder_heading"></h2>
+          <span class="saved" aria-live="polite"></span>
+        </div>
+        <p id="folder-help" class="help" data-i18n="opt_folder_help"></p>
+        <input
+          id="pattern"
+          type="text"
+          class="field mono"
+          spellcheck="false"
+          autocomplete="off"
+          autocapitalize="off"
+          aria-describedby="folder-help"
+          data-i18n-aria-label="opt_folder_aria"
+        />
+        <p id="pattern-error" class="error" role="alert" hidden>
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 8v5" />
+            <circle cx="12" cy="16.5" r=".9" fill="currentColor" />
+          </svg>
+          <span class="error-text"></span>
+        </p>
+        <div class="chips">
+          <span class="insert" data-i18n="opt_insert"></span>
+          <button
+            type="button"
+            class="chip mono"
+            data-token="{artist}"
+            data-i18n-title="tok_artist_tip"
+          >
+            {artist}
+          </button>
+          <button type="button" class="chip mono" data-token="{id}" data-i18n-title="tok_id_tip">
+            {id}
+          </button>
+          <button
+            type="button"
+            class="chip mono"
+            data-token="{title}"
+            data-i18n-title="tok_title_tip"
+          >
+            {title}
+          </button>
+          <button
+            type="button"
+            class="chip mono"
+            data-token="{userId}"
+            data-i18n-title="tok_userid_tip"
+          >
+            {userId}
+          </button>
+        </div>
+        <p id="preview" class="preview">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            aria-hidden="true"
+          >
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+          </svg>
+          <span class="preview-text"></span>
+        </p>
+      </section>
+
+      <section id="ugoira" aria-labelledby="ugoira-h">
+        <div class="head">
+          <h2 id="ugoira-h" data-i18n="opt_ugoira_heading"></h2>
+          <span class="saved" aria-live="polite"></span>
+        </div>
+        <p id="ugoira-help" class="help" data-i18n="opt_ugoira_help"></p>
+        <div
+          class="seg"
+          role="group"
+          aria-describedby="ugoira-help"
+          data-i18n-aria-label="opt_ugoira_aria"
+        >
+          <button
+            type="button"
+            data-value="mp4"
+            aria-pressed="false"
+            data-i18n="opt_ugoira_mp4"
+          ></button>
+          <button
+            type="button"
+            data-value="webm"
+            aria-pressed="false"
+            data-i18n="opt_ugoira_webm"
+          ></button>
+          <button
+            type="button"
+            data-value="zip"
+            aria-pressed="false"
+            data-i18n="opt_ugoira_zip"
+          ></button>
+        </div>
+      </section>
+
+      <section id="metadata" aria-labelledby="meta-h">
+        <div class="row">
+          <div class="row-text">
+            <div class="head">
+              <h2 id="meta-h" data-i18n="opt_meta_heading"></h2>
+              <span class="saved" aria-live="polite"></span>
+            </div>
+            <p id="meta-help" class="help" data-i18n="opt_meta_help"></p>
+          </div>
+          <button
+            type="button"
+            id="meta"
+            class="switch"
+            role="switch"
+            aria-checked="false"
+            aria-describedby="meta-help"
+            data-i18n-aria-label="opt_meta_heading"
+          ></button>
+        </div>
+      </section>
+
+      <footer>
+        <button type="button" id="reset" class="link" data-i18n="opt_reset"></button>
+        <a
+          id="report"
+          class="link"
+          target="_blank"
+          rel="noopener noreferrer"
+          data-i18n="opt_report"
+        ></a>
+        <span id="version" class="version"></span>
+        <p class="privacy" data-i18n="opt_privacy"></p>
+      </footer>
+    </main>
+  </body>
 </html>

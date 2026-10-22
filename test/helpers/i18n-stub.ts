@@ -4,6 +4,8 @@
 // - then `$1`…`$9` take the substitutions (a missing one becomes ''), and `$$` becomes `$`.
 
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { vi } from 'vitest';
 
 export type Locale = 'en' | 'ja' | 'zh_CN' | 'zh_TW';
@@ -18,7 +20,11 @@ export type Messages = Record<string, MessageEntry>;
 export type GetMessage = (key: string, substitutions?: string | Array<string | number>) => string;
 
 export function loadMessages(locale: Locale): Messages {
-  const file = new URL(`../../src/_locales/${locale}/messages.json`, import.meta.url);
+  // Not `new URL(…, import.meta.url)`: under happy-dom, Vite rewrites that to a server URL.
+  const file = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    `../../src/_locales/${locale}/messages.json`,
+  );
   return JSON.parse(readFileSync(file, 'utf8')) as Messages;
 }
 

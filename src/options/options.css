@@ -1,0 +1,383 @@
+/* Settings page (design-options-page.md "Styles"): colors and geometry from PRD CUJ-3 and the
+   cuj-3-*.html mocks. System fonts only; no remote resources. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --text: #1f1f1f;
+  --help: #5c6166;
+  --surface: #fff;
+  --border: #d0d5db;
+  --chip-hover: #f0f8ff;
+  --seg-text: #3c4043;
+  --seg-hover: #f5f7f9;
+  --switch-off: #bdc1c6;
+  --rule: #e3e6ea;
+  --accent: #0096fa;
+  --danger: #d93025;
+  --saved: #1a9f5a;
+  --muted: #8a8f94;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121212;
+    --text: #e8eaed;
+    --help: #9aa0a6;
+    --surface: #1f1f1f;
+    --border: #3a3f45;
+    --chip-hover: #102a3f;
+    --seg-text: #e8eaed;
+    --seg-hover: #2a2f35;
+    --switch-off: #5f6368;
+    --rule: #2a2f35;
+  }
+}
+
+*,
+::before,
+::after {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html {
+  line-height: 1.5;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Hiragino Sans', 'Noto Sans JP',
+    sans-serif;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+button,
+input {
+  margin: 0;
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.mono {
+  font-family: var(--mono);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Layout ── */
+
+.col {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 56px 24px 80px;
+}
+
+.page-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.app-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--accent);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
+}
+
+h1 {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.subtitle {
+  font-size: 14px;
+  color: var(--help);
+}
+
+section {
+  margin-top: 48px;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.help {
+  margin-top: 4px;
+  font-size: 14px;
+  line-height: 1.625;
+  color: var(--help);
+}
+
+/* Opacity and the fade are driven by saved.ts. */
+.saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+  color: var(--saved);
+  opacity: 0;
+}
+
+/* ── Download folder ── */
+
+.field {
+  display: block;
+  width: 100%;
+  height: 44px;
+  margin-top: 16px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 14px;
+}
+
+.field:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  border-color: transparent;
+}
+
+/* After :focus-visible, so the red border stays while the user fixes the pattern. */
+.field[aria-invalid='true'] {
+  border: 2px solid var(--danger);
+}
+
+.error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--danger);
+}
+
+.error svg {
+  margin-top: 1px;
+}
+
+.strong {
+  font-weight: 600;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.insert {
+  margin-right: 4px;
+  font-size: 12.5px;
+  color: var(--help);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.chip:hover {
+  border-color: var(--accent);
+  background: var(--chip-hover);
+  color: var(--accent);
+}
+
+.preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--help);
+}
+
+/* Its parts are laid out as the preview line's own flex items, as in the mocks. */
+.preview-text {
+  display: contents;
+}
+
+.path {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* ── Ugoira output ── */
+
+/* No overflow: hidden, which would clip the segments' focus rings: the end segments round
+   themselves instead. */
+.seg {
+  display: inline-flex;
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.seg button {
+  height: 36px;
+  padding: 0 18px;
+  border-right: 1px solid var(--border);
+  font-size: 14px;
+  color: var(--seg-text);
+}
+
+.seg button:first-child {
+  border-radius: 9px 0 0 9px;
+}
+
+.seg button:last-child {
+  border-right: 0;
+  border-radius: 0 9px 9px 0;
+}
+
+.seg button:hover {
+  background: var(--seg-hover);
+}
+
+.seg button[aria-pressed='true'] {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* ── Save metadata.json ── */
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.row-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 44px;
+  height: 26px;
+  margin-top: 4px;
+  border-radius: 9999px;
+  background: var(--switch-off);
+}
+
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 25%);
+  transition: left 150ms ease;
+}
+
+.switch[aria-checked='true'] {
+  background: var(--accent);
+}
+
+.switch[aria-checked='true']::after {
+  left: 21px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switch::after {
+    transition: none;
+  }
+}
+
+/* ── Footer ── */
+
+footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 24px;
+  margin-top: 64px;
+  padding-top: 24px;
+  border-top: 1px solid var(--rule);
+  font-size: 13px;
+  color: var(--help);
+}
+
+.link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.version {
+  margin-left: auto;
+}
+
+.privacy {
+  width: 100%;
+  margin-top: 8px;
+  line-height: 1.625;
+}

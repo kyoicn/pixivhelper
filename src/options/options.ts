@@ -1,5 +1,5 @@
-// Options page entry (full tab).
+// Options page entry (full tab): design-options-page.md.
 
-import { t } from '../shared/i18n';
+import { initOptionsPage } from './page';
 
-document.title = t('opt_tab_title');
+void initOptionsPage();
