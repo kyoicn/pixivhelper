@@ -1,7 +1,12 @@
 // The settings page (design-options-page.md): binds the shared settings and pattern rules to the
 // controls, autosaves every valid change, and mirrors changes saved in other settings tabs.
 
-import { PATTERN_MAX_CHARS, REPORT_ISSUE_URL, SETTINGS_DEBOUNCE_MS } from '../shared/constants';
+import {
+  PATTERN_MAX_CHARS,
+  REPORT_ISSUE_URL,
+  SETTINGS_DEBOUNCE_MS,
+  UGOIRA_OUTPUTS,
+} from '../shared/constants';
 import { localeTag, t } from '../shared/i18n';
 import { createLogger } from '../shared/log';
 import { type PatternError, resolveFolder, SAMPLE, validatePattern } from '../shared/pattern';
@@ -19,7 +24,6 @@ import { applyStrings, errorMessage, previewLine, stillUsingLine } from './strin
 type Section = 'folder' | 'ugoira' | 'metadata';
 
 const SECTIONS: readonly Section[] = ['folder', 'ugoira', 'metadata'];
-const UGOIRA_OUTPUTS: readonly UgoiraOutput[] = ['mp4', 'webm', 'zip'];
 const HELP_ID = 'folder-help';
 const ERROR_ID = 'pattern-error';
 

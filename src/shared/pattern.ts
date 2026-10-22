@@ -1,7 +1,7 @@
 // Folder-pattern grammar, token sanitization and the Chrome path-safety pass
 // (design-settings-model.md). Pure: no chrome.* access.
 
-import { PATTERN_MAX_CHARS, TOKEN_MAX_BYTES } from './constants';
+import { MAX_FOLDER_CHARS, PATTERN_MAX_CHARS, TOKEN_MAX_BYTES } from './constants';
 
 export type PatternError =
   | { code: 'empty' }
@@ -154,7 +154,7 @@ export function chromeSafeSegment(seg: string): string {
 
 /** Re-validates a folder echoed back by a tab (retry requests) before it reaches chrome.downloads. */
 export function isSafeRelativeFolder(folder: string): boolean {
-  if (folder === '' || folder.length > 1024 || folder.startsWith('/')) return false;
+  if (folder === '' || folder.length > MAX_FOLDER_CHARS || folder.startsWith('/')) return false;
   return folder
     .split('/')
     .every((seg) => seg !== '' && seg !== '.' && seg !== '..' && chromeSafeSegment(seg) === seg);

@@ -3,6 +3,7 @@
 // await may be the SW's last, so state changes are persisted before they are acted on and
 // reconcile() repairs whatever a restart interrupted.
 
+import { MAX_PAGES_PER_WORK, OFFSCREEN_DOCUMENT_PATH } from '../shared/constants';
 import { createLogger } from '../shared/log';
 import type { JobCancelResponse, OffscreenToSwEvent, OffTaskSnapshot } from '../shared/messages';
 import { classifyOutcome } from '../shared/outcome';
@@ -34,10 +35,6 @@ import { toView } from './view';
 
 const log = createLogger('engine');
 
-const OFFSCREEN_PAGE = 'offscreen.html';
-/** The badge count a `full` job shows while resolving comes from the tab; it is clamped to this. */
-const MAX_EXPECTED_FILES = 200;
-
 export interface Engine {
   readonly registry: Registry;
   readonly badge: BadgeRenderer;
@@ -64,7 +61,8 @@ function errorMessage(error: unknown): string {
 function expectedFiles(request: StartRequest): number {
   switch (request.mode) {
     case 'full':
-      return Math.min(Math.max(request.expectedFiles, 0), MAX_EXPECTED_FILES);
+      // The badge count a `full` job shows while resolving comes from the tab.
+      return Math.min(Math.max(request.expectedFiles, 0), MAX_PAGES_PER_WORK);
     case 'retryPages':
       return request.pages.length;
     case 'retryEncode':
@@ -249,7 +247,7 @@ export function createEngine(): Engine {
   async function liveTasks(): Promise<Map<string, OffTaskSnapshot>> {
     const contexts = await chrome.runtime.getContexts({
       contextTypes: ['OFFSCREEN_DOCUMENT'],
-      documentUrls: [chrome.runtime.getURL(OFFSCREEN_PAGE)],
+      documentUrls: [chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH)],
     });
     if (contexts.length === 0) return new Map();
     try {

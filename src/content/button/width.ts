@@ -1,8 +1,9 @@
 // Fixed button width (PRD §4.7.2; design-artwork-button.md "Fixed width (button/width.ts)"): the
 // widest face this artwork's button can show in the active locale, locked at first render.
 
+import { UGOIRA_OUTPUTS } from '../../shared/constants';
 import { t, type LocaleTag } from '../../shared/i18n';
-import type { UgoiraOutput, WorkInfo } from '../../shared/types';
+import type { WorkInfo } from '../../shared/types';
 import {
   busyFace,
   cancelFace,
@@ -29,7 +30,6 @@ export const LOCALE_FLOOR_PX: Readonly<Record<LocaleTag, number>> = {
 
 /** Page count assumed before the metadata arrives: the 2-digit width (PRD §4.7.2). */
 const UNKNOWN_PAGE_COUNT = 99;
-const FORMATS: readonly UgoiraOutput[] = ['mp4', 'webm', 'zip'];
 const FULL_RING = { fraction: 1, indeterminate: false };
 
 /** Returns the rendered width in px of `face` on the button. */
@@ -58,10 +58,10 @@ function pageCandidates(pages: number): Face[] {
 
 function ugoiraCandidates(): Face[] {
   return [
-    ...FORMATS.map((format) => downloadFace(formatHint(format))),
+    ...UGOIRA_OUTPUTS.map((format) => downloadFace(formatHint(format))),
     busyFace(t('btn_progress_percent', 100), FULL_RING),
     cancelFace(),
-    ...FORMATS.map((format) => savedFace(formatHint(format))),
+    ...UGOIRA_OUTPUTS.map((format) => savedFace(formatHint(format))),
     loginFace(),
     retryFace(),
     retryFace(formatHint('mp4')),

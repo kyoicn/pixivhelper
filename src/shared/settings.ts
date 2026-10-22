@@ -1,7 +1,7 @@
 // Settings schema, defaults, and read/merge/write across storage.sync and storage.local
 // (design-settings-model.md "Read / write algorithm").
 
-import { PATTERN_MAX_CHARS, SETTINGS_KEY } from './constants';
+import { PATTERN_MAX_CHARS, SETTINGS_KEY, UGOIRA_OUTPUTS } from './constants';
 import { createLogger } from './log';
 import { validatePattern } from './pattern';
 import type { Settings, UgoiraOutput } from './types';
@@ -23,7 +23,6 @@ export interface StoredSettings extends Settings {
 type PersistedSettings = Settings & { updatedAt: number };
 type SettingsArea = 'sync' | 'local';
 
-const UGOIRA_OUTPUTS: readonly UgoiraOutput[] = ['mp4', 'webm', 'zip'];
 const log = createLogger('settings');
 
 /**

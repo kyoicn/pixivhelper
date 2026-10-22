@@ -3,6 +3,7 @@
 // Payload validation (system.md §7 "Validation", "Sender checks") belongs in this module too.
 
 import type { ErrorCode, StartRequest, UgoiraState } from '../background/types';
+import { MAX_FOLDER_CHARS, MAX_PAGES_PER_WORK, OFFSCREEN_DOCUMENT_PATH } from './constants';
 import { isApiUrl, isArtworkId, isBytesUrl } from './pixiv-api';
 import type {
   ErrorCause,
@@ -200,10 +201,7 @@ export type ResponseFor<M extends Message> = M['type'] extends keyof ResponseMap
 // 'BAD_REQUEST' } and a warn log. Folders get only the shape check here: the SW re-checks echoed
 // folders with isSafeRelativeFolder() (pattern.ts).
 
-const MAX_PAGES = 200;
 const MAX_FRAME_EDGE = 16384;
-const MAX_FOLDER_LENGTH = 1024;
-const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 
 type Fields = Record<string, unknown>;
 type Check = (v: unknown) => boolean;
@@ -447,9 +445,14 @@ function isStartRequest(m: Fields): boolean {
   }
 }
 
-/** Non-empty, unique, 0-based page indexes below `total`, and `total` ≤ 200. */
+/** Non-empty, unique, 0-based page indexes below `total`, and `total` ≤ MAX_PAGES_PER_WORK. */
 function isRetryPages(pages: unknown, total: unknown): boolean {
-  if (!isCount(total) || total > MAX_PAGES || !Array.isArray(pages) || pages.length === 0) {
+  if (
+    !isCount(total) ||
+    total > MAX_PAGES_PER_WORK ||
+    !Array.isArray(pages) ||
+    pages.length === 0
+  ) {
     return false;
   }
   const seen = new Set<number>();
@@ -539,10 +542,10 @@ function isFrames(v: unknown): v is UgoiraState['frames'] {
   );
 }
 
-/** Shape only: non-empty, ≤ 1024 chars, relative. */
+/** Shape only: non-empty, ≤ MAX_FOLDER_CHARS, relative. */
 function isFolder(v: unknown): v is string {
   return (
-    typeof v === 'string' && v.length > 0 && v.length <= MAX_FOLDER_LENGTH && !v.startsWith('/')
+    typeof v === 'string' && v.length > 0 && v.length <= MAX_FOLDER_CHARS && !v.startsWith('/')
   );
 }
 

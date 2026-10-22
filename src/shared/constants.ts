@@ -1,5 +1,7 @@
 // Single source for hosts, limits, timings, colors and storage keys. Pure: no chrome.* access.
 
+import type { UgoiraOutput } from './types';
+
 // ── Origins and URLs ──
 export const PIXIV_ORIGIN = 'https://www.pixiv.net';
 export const PXIMG_ORIGIN = 'https://i.pximg.net';
@@ -25,8 +27,20 @@ export const RETRY_AFTER_CAP_MS = 30_000;
 /** Inactivity timeout: headers, then every body chunk. */
 export const STALL_TIMEOUT_MS = 30_000;
 
+// ── Extension pages ──
+/** The offscreen document, relative to the extension root (chrome.runtime.getURL). */
+export const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
+
+// ── Settings values ──
+/** Every ugoiraOutput value, in the options page's order. */
+export const UGOIRA_OUTPUTS: readonly UgoiraOutput[] = ['mp4', 'webm', 'zip'];
+
 // ── Limits ──
 export const MAX_IN_FLIGHT_PER_JOB = 5;
+/** Most pages a pixiv work has: bounds retry page lists and the badge hint while resolving. */
+export const MAX_PAGES_PER_WORK = 200;
+/** Longest relative download folder accepted (resolved, or echoed back by a retry). */
+export const MAX_FOLDER_CHARS = 1024;
 /** Folder pattern length in UTF-16 code units, as `<input maxlength>` counts. */
 export const PATTERN_MAX_CHARS = 200;
 /** Token value limit in UTF-8 bytes after sanitization. */

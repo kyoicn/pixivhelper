@@ -1,13 +1,12 @@
 // The SW's side of the offscreen document (design-offscreen-worker.md "Lifecycle"): one document
 // for the whole extension, created on demand and closed after a grace period once idle.
 
-import { OFFSCREEN_CLOSE_GRACE_MS } from '../shared/constants';
+import { OFFSCREEN_CLOSE_GRACE_MS, OFFSCREEN_DOCUMENT_PATH } from '../shared/constants';
 import { createLogger } from '../shared/log';
 import type { ResponseMap, SwToOffscreenMessage } from '../shared/messages';
 
 const log = createLogger('offscreen-client');
 
-const OFFSCREEN_URL = 'offscreen.html';
 const JUSTIFICATION =
   'Fetch pixiv originals into Blob URLs for chrome.downloads and encode ugoira videos with WebCodecs.';
 /** Chrome's rejection of sendMessage when the document has no listener (yet, or any more). */
@@ -28,13 +27,17 @@ export async function ensureOffscreen(): Promise<void> {
   cancelScheduledClose();
   const contexts = await chrome.runtime.getContexts({
     contextTypes: ['OFFSCREEN_DOCUMENT'],
-    documentUrls: [chrome.runtime.getURL(OFFSCREEN_URL)],
+    documentUrls: [chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH)],
   });
   if (contexts.length > 0) return;
   // BLOBS truthfully covers the Blob URL work; no reason exists for WebCodecs. Chrome imposes no
   // lifetime limit with it.
   creating ??= chrome.offscreen
-    .createDocument({ url: OFFSCREEN_URL, reasons: ['BLOBS'], justification: JUSTIFICATION })
+    .createDocument({
+      url: OFFSCREEN_DOCUMENT_PATH,
+      reasons: ['BLOBS'],
+      justification: JUSTIFICATION,
+    })
     .finally(() => {
       creating = null;
     });
