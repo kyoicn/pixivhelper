@@ -40,7 +40,7 @@ pixiv itself has no "download originals" action. Right-click "Save image" saves 
 - Download history, "already downloaded" markers, skip-if-exists.
 - Saving outside Chrome's Downloads folder (no File System Access API folder picker).
 - Novels and novel series.
-- Hiding or replacing Chrome's own download bubble.
+- Replacing Chrome's own download UI, or hiding it at any time other than while a job runs (4.1 #3) (per R-005).
 - Onboarding, a welcome page, or a popup of any kind.
 - Mobile Chrome and other browsers.
 
@@ -50,7 +50,7 @@ pixiv itself has no "download originals" action. Right-click "Save image" saves 
 
 1. **No persisted download history.** Users may download the same artwork as often as they like. Chrome's conflict handling renames duplicates (`" (1)"` suffix). Button state lives only in per-tab memory keyed by artwork ID and is cleared on any full page load (see 4.7.6).
 2. **Output goes through the Chrome downloads API.** All paths are relative to Chrome's Downloads folder. The only output setting the user controls is a subfolder pattern (4.4).
-3. **Chrome's download bubble is left alone.** It lists every file as it normally would.
+3. **Chrome's download UI is hidden while a job runs** (per R-005). From the moment the first file of a job is handed to Chrome until the last running job ends, for any reason (Saved, cancelled, failed, needs login, or Unavailable), the extension turns Chrome's download UI off with `chrome.downloads.setUiOptions({ enabled: false })`: no per-file fly-to-toolbar animation and no downloads button in Chrome's toolbar. When the last running job ends, it turns the UI back on, and Chrome's downloads bubble and `chrome://downloads` list the finished files as usual. `chrome://downloads` keeps listing every file while the UI is hidden. The setting is browser-wide, so a download the user starts themselves meanwhile also shows no animation; this side effect is accepted, and the hidden window is kept as short as possible: it never starts before the job's first file is handed to Chrome and ends as soon as the last running job ends. Whenever the background worker starts and no job is running, it turns the UI back on. This needs the `downloads.ui` permission (index, Privacy & security).
 4. **Ugoira is encoded in the browser with WebCodecs.** The output is MP4 (H.264) with pixiv's per-frame delays preserved. If H.264 can't be encoded, that download falls back to WebM. The frame zip (`<id>_ugoira.zip`) and `frames.json` are always saved. There is no extracted-frames folder (the script's `<id>_frames/` directory is dropped). ffmpeg.wasm was evaluated and rejected: about a 24 MB payload, and slower.
 5. **Concurrency.** Each artwork has at most 5 files handed to Chrome at once, matching the script's default `-j 5`. Artworks are not serialized against each other, so several can run at the same time.
 6. **Tab-independent jobs.** Closing the tab or navigating away never cancels a running download. Orchestration lives in the background service worker, and encoding runs in an offscreen document. Neither depends on the tab. If the user quits Chrome entirely, files already in Chrome's downloader behave like any Chrome download, and files not yet handed to Chrome are lost. v1 keeps no queue state across a Chrome restart, and this is accepted.
@@ -280,7 +280,7 @@ This is the core promise of the product. The user is looking at an illustration 
 
 2. **User action**: User clicks the button once (or focuses it with Tab and presses Enter or Space).
    - **System response**: The tab sends a start request for artwork `135882741` to the background service worker. The worker snapshots the settings, fetches metadata and the page list using the user's pixiv session, and resolves the folder to `pixiv/みずき-135882741`. It writes `metadata.json`, then hands the 12 originals to Chrome in page order, at most 5 at a time, with `uniquify` and the Referer requirement met.
-   - **User sees**: Within 100 ms the pill (same width, same blue) swaps its icon for a progress ring at 0 and its label for `0 / 12` in tabular digits. The toolbar icon shows a dark badge `12`. Chrome's own downloads button shows activity, and its bubble lists each file once its bytes are complete (`metadata.json` first, then `135882741_p0.jpg`, … as they land) (per R-004 S6).
+   - **User sees**: Within 100 ms the pill (same width, same blue) swaps its icon for a progress ring at 0 and its label for `0 / 12` in tabular digits. The toolbar icon shows a dark badge `12`. Chrome shows no download animation and no downloads button in its toolbar while the job runs, not even for the first file: the extension hides Chrome's download UI from the moment the job's first file (`metadata.json`) is handed to Chrome (4.1 #3) (per R-005).
    - **Details**: `aria-busy="true"`, `aria-label` `Downloading, 0 of 12 pages saved. Click to cancel.` The live region announces `Downloading 12 pages`. The Cancel face stays hidden until the pointer has left the button once, and clicks within 500 ms of this click are ignored (4.7.5).
 
 3. **User action**: User waits, or keeps browsing pixiv.
@@ -294,13 +294,13 @@ This is the core promise of the product. The user is looking at an illustration 
    - **Details**: The width is unchanged. Keyboard focus does not swap faces. The `aria-label` already says "Click to cancel."
 
 5. **User action** (optional): User clicks the busy button to cancel.
-   - **System response**: The worker stops handing this artwork's files to Chrome. Files still being fetched are dropped before they reach Chrome, so Chrome's bubble shows no "Canceled" entries for them (per R-004 S6). Files already completed stay on disk. The badge drops by this artwork's remaining count at once and disappears if nothing else is in flight.
+   - **System response**: The worker stops handing this artwork's files to Chrome. Files still being fetched are dropped before they reach Chrome, so neither `chrome://downloads` nor Chrome's downloads bubble shows "Canceled" entries for them (per R-004 S6). Files already completed stay on disk. The badge drops by this artwork's remaining count at once and disappears if nothing else is in flight. If no other job is running, the extension turns Chrome's download UI back on: Chrome's downloads button returns, and its bubble lists the files that completed, as usual (per R-005).
    - **User sees**: Within 300 ms the button returns to idle `Download · 12P`. No toast, no message, no error styling, because cancelling is not an error.
    - **Details**: The live region announces `Download cancelled`. The tab's memory for this artwork returns to idle.
 
 6. **User action**: User waits for the last file (no cancel).
    - **System response**: When the 12th original completes, the job ends, the worker notifies the tab, and the badge clears.
-   - **User sees**: Within 300 ms the button becomes **Saved**: white fill, 1.5 px `#0096FA` border, `#0096FA` text, checkmark icon, `Saved · 12P` (single page: `Saved`). Hovering gives only a faint `#e6f4fe` tint, and the text never changes. Tooltip: `Saved to Downloads/pixiv/みずき-135882741`. The toolbar badge is gone, and the action title returns to `Helper for Pixiv — click to open settings`. On disk, `Downloads/pixiv/みずき-135882741/` holds `metadata.json` and `135882741_p0.jpg` … `135882741_p11.jpg`. See `cuj-1-saved.html`.
+   - **User sees**: Within 300 ms the button becomes **Saved**: white fill, 1.5 px `#0096FA` border, `#0096FA` text, checkmark icon, `Saved · 12P` (single page: `Saved`). Hovering gives only a faint `#e6f4fe` tint, and the text never changes. Tooltip: `Saved to Downloads/pixiv/みずき-135882741`. The toolbar badge is gone, and the action title returns to `Helper for Pixiv — click to open settings`. Chrome's downloads button is back in its toolbar, and its bubble lists `metadata.json` and the 12 originals as usual (per R-005). On disk, `Downloads/pixiv/みずき-135882741/` holds `metadata.json` and `135882741_p0.jpg` … `135882741_p11.jpg`. See `cuj-1-saved.html`.
    - **Details**: `aria-busy` is removed. `aria-label` is `Saved 12 pages to Downloads/pixiv/みずき-135882741. Click to download again.` The live region announces `Saved 12 pages`. If any page failed after retries, the job ends in CUJ-5's error state instead.
 
 7. **User action**: User follows a link within pixiv to another artwork, then presses Back.
@@ -328,13 +328,16 @@ This is the core promise of the product. The user is looking at an illustration 
 - **Keyboard and screen reader**: Tab reaches the button in pixiv's own row order, next to Like (per R-004 S7). Enter and Space start, cancel, or re-download. The focus ring is 2 px `#0096FA` with a 3 px offset. Progress is announced at most every 5 s.
 - **pixiv dark theme**: the button is identical in every state, and only the focus ring becomes `#5fb9fb`. See `cuj-1-dark.html`.
 - **Non-artwork pixiv pages** (home, search, user profile, bookmarks, novels): no button is injected.
+- **Chrome's own download UI** (per R-005): hidden from the moment the job's first file is handed to Chrome until the last running job ends, whether it ends Saved, cancelled, or failed (4.1 #3). Then Chrome's downloads button returns, and its bubble and `chrome://downloads` list the finished files as usual. `chrome://downloads` lists every file of the job throughout.
+- **A download the user starts themselves while a job runs** (e.g. a PDF from another site) (per R-005): it shows no animation and no downloads button either, because Chrome's setting is browser-wide. It still completes, appears in `chrome://downloads`, and is listed in the bubble once the UI returns. The window is kept as short as possible: it never starts before the job's first file is handed to Chrome and ends as soon as the last running job ends.
+- **Background worker terminated mid-job** (per R-005): the job survives the restart (4.8), so the UI stays hidden until the last running job ends. Whenever the worker wakes and no job is running, it turns Chrome's download UI back on at once, so the UI is never left hidden with no job running.
 
 #### Mocks / Reference Designs
 
 Mocks for this CUJ:
 - `docs/ux/prd-000-mvp-mockups/cuj-1-initial.html`: idle button `Download · 12P` in the action row, no badge
-- `docs/ux/prd-000-mvp-mockups/cuj-1-downloading.html`: busy `7 / 12` with hover-to-Cancel, toolbar badge `5`, Chrome's downloads button active
-- `docs/ux/prd-000-mvp-mockups/cuj-1-saved.html`: Saved state `Saved · 12P` with the folder tooltip, badge gone
+- `docs/ux/prd-000-mvp-mockups/cuj-1-downloading.html`: busy `7 / 12` with hover-to-Cancel, toolbar badge `5`, no Chrome downloads button (Chrome's download UI hidden while the job runs, per R-005)
+- `docs/ux/prd-000-mvp-mockups/cuj-1-saved.html`: Saved state `Saved · 12P` with the folder tooltip, badge gone, Chrome's downloads button back in the toolbar (per R-005)
 - `docs/ux/prd-000-mvp-mockups/cuj-1-dark.html`: idle button on pixiv's dark theme, lighter focus ring
 
 #### Acceptance Criteria
@@ -351,6 +354,7 @@ Mocks for this CUJ:
 - Clicking `Saved · 12P` downloads all files again, and the duplicates appear as `135882741_p0 (1).jpg` … and `metadata (1).json` in the same folder.
 - Closing the tab mid-download does not stop the job: every remaining file still completes in `chrome://downloads` and on disk.
 - The toolbar badge shows the number of pages not yet complete during the job and disappears when it ends.
+- During a 12-page download Chrome's download bubble does not appear or animate, for any of the job's files including the first; after the job ends it is available again and lists `metadata.json` and the 12 originals (per R-005).
 - The button is reachable with Tab and activates with Enter and Space. It shows a 2 px `#0096FA` focus ring (`#5fb9fb` on pixiv's dark theme) and carries `aria-busy="true"` while busy.
 - On pixiv's dark theme the button's fill, text, and icon are identical to the light theme.
 - Changing the folder pattern while a job runs does not change where that job's remaining files land.
@@ -384,7 +388,7 @@ Ugoira is pixiv's animated format: a zip of still frames plus a per-frame delay 
 
 3. **User action**: User waits.
    - **System response**: The zip lands as `136004512_ugoira.zip`, and `frames.json` is written. The offscreen document decodes each frame in order and encodes it with its exact delay. The percentage moves from 40% to 100% as frames are encoded.
-   - **User sees**: The ring and percentage keep moving, for example `58%`. The toolbar badge stays at `1`, because the video is the one remaining file. Chrome's own downloads button is idle, because nothing of Chrome's is in flight during the encode. See `cuj-2-encoding.html`.
+   - **User sees**: The ring and percentage keep moving, for example `58%`. The toolbar badge stays at `1`, because the video is the one remaining file. Chrome shows no downloads button and no download animation: its download UI stays hidden from the job's first saved file until the job ends (4.1 #3) (per R-005). See `cuj-2-encoding.html`.
    - **Details**: `aria-label` is `Encoding MP4, 58 percent. Click to cancel.` The percentage updates at least once per second while frames are being encoded.
 
 4. **User action**: User hovers the busy button, and optionally clicks to cancel.
@@ -420,7 +424,7 @@ Ugoira is pixiv's animated format: a zip of still frames plus a per-frame delay 
 
 Mocks for this CUJ:
 - `docs/ux/prd-000-mvp-mockups/cuj-2-initial.html`: idle on an ugoira page, `Download · MP4`
-- `docs/ux/prd-000-mvp-mockups/cuj-2-encoding.html`: busy `58%` during the encode, toolbar badge `1`, Chrome's downloads button idle
+- `docs/ux/prd-000-mvp-mockups/cuj-2-encoding.html`: busy `58%` during the encode, toolbar badge `1`, no Chrome downloads button (hidden while the job runs, per R-005)
 
 #### Acceptance Criteria
 - On an illustType 2 page the idle label reads `Download · MP4`, `Download · WebM`, or `Download · ZIP`, matching the Ugoira output setting (or `WebM` when H.264 can't be encoded).
@@ -572,7 +576,7 @@ Downloads run in the background and outlive their tabs, so the user needs one gl
 
 2. **User action**: User switches to tab B and clicks `Download · 8P` while job A is still running.
    - **System response**: Job B starts right away. It is not queued behind A. Each job independently keeps at most 5 files in Chrome's downloader.
-   - **User sees**: Tab B's button shows its own progress only, for example `3 / 8`. The badge shows the sum of files still to land: 18 for A plus 5 for B gives `23`. Badge style: `#1f1f1f` background, white text. Hovering the icon shows `Helper for Pixiv — 23 files remaining across 2 downloads`. Chrome's own downloads button shows activity alongside it. See `cuj-4-initial.html`.
+   - **User sees**: Tab B's button shows its own progress only, for example `3 / 8`. The badge shows the sum of files still to land: 18 for A plus 5 for B gives `23`. Badge style: `#1f1f1f` background, white text. Hovering the icon shows `Helper for Pixiv — 23 files remaining across 2 downloads`. Chrome's own downloads button is not shown, because Chrome's download UI stays hidden while any job runs (per R-005). See `cuj-4-initial.html`.
    - **Details**: The badge counts down as files land from either job and updates within 1 s of each completion.
 
 3. **User action**: User stays on tab B until job B finishes.
@@ -596,7 +600,7 @@ Downloads run in the background and outlive their tabs, so the user needs one gl
 - **A job ends with failures**: its failed files leave the count (nothing is in flight for them). Its button shows CUJ-5's error state, and the badge keeps counting the other jobs.
 - **Tab closed mid-job**: the job keeps running and keeps counting in the badge until its files land.
 - **Same artwork downloading in two tabs**: two jobs, both counted (e.g. 12 + 12 = `24`), and the tooltip says `across 2 downloads`. The second run's files get `" (1)"` suffixes.
-- **Chrome's own downloads button**: it appears alongside our icon and lists each file once its bytes are complete (per R-004 S6). This is expected and deliberately not hidden. While the extension is still fetching files, and during an ugoira encode, Chrome's button can be idle while our badge still counts (`1` during an encode).
+- **Chrome's own downloads button** (per R-005): hidden while any job runs, so our badge is the only download indicator in the toolbar, and it returns when all jobs have ended. With two concurrent jobs it stays hidden until both have finished: when job B ends while job A still runs, it stays hidden, and it returns only when job A ends too (Saved, cancelled, or failed). Once it returns, its bubble lists the finished files of both jobs as usual.
 
 #### Mocks / Reference Designs
 
@@ -651,7 +655,7 @@ Downloads fail for reasons the user can fix (not logged in, connection dropped, 
 
 4. **User action**: User clicks `Download · 12P`. Pages 4, 9 and 11 fail even after 4 attempts each; the other 9 land.
    - **System response**: When no work is left in flight, the job ends with 9 saved and 3 failed. The tab remembers which 3 pages failed, and the job's resolved folder.
-   - **User sees**: An outlined red pill: white fill, 1.5 px `#d93025` border and text, warning-triangle icon, label `Retry · 3 failed`, same fixed width. Tooltip: `9 of 12 pages saved. 3 failed after 4 attempts each. Click to retry just those 3.` Hover: `#fdeceb` tint. No toolbar badge, because nothing is in flight. See `cuj-5-retry.html`.
+   - **User sees**: An outlined red pill: white fill, 1.5 px `#d93025` border and text, warning-triangle icon, label `Retry · 3 failed`, same fixed width. Tooltip: `9 of 12 pages saved. 3 failed after 4 attempts each. Click to retry just those 3.` Hover: `#fdeceb` tint. No toolbar badge, because nothing is in flight. Chrome's downloads button is back in its toolbar: the extension turns Chrome's download UI back on whenever the last running job ends, for any reason (Saved, cancelled, failed, needs login after a mid-job 403, or Unavailable) (per R-005). See `cuj-5-retry.html`.
    - **Details**: `aria-label` is `9 of 12 pages saved, 3 failed. Click to retry the failed pages.` The live region announces `3 pages failed`. With exactly 1 failure the tooltip is `11 of 12 pages saved. 1 failed after 4 attempts. Click to retry just that one.` (derived copy). The error state is remembered per artwork for the life of the document.
 
 5. **User action**: User clicks `Retry · 3 failed`.

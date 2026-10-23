@@ -29,7 +29,7 @@ It replaces a personal terminal script (`ref/pixiv-dl`), which needed cookie ext
 - Download history, deduplication, or library management.
 - Saving outside Chrome's Downloads folder.
 - Novels.
-- Replacing or hiding Chrome's download UI.
+- Replacing Chrome's download UI, or hiding it outside a running job (it is hidden only while a job runs, per R-005).
 - Mobile, Firefox, Safari, and other browsers.
 
 ## User personas
@@ -102,10 +102,11 @@ CUJ IDs are never reused across PRDs.
 - The extension never reads or stores the pixiv session cookie. It relies on the browser's own pixiv session for same-site requests.
 - The Referer header is set only on the extension's own requests to `i.pximg.net`, never on the user's browsing traffic.
 - **Target permissions:**
-  - permissions: `downloads`, `storage`, `offscreen`, `declarativeNetRequestWithHostAccess`
+  - permissions: `downloads`, `storage`, `offscreen`, `declarativeNetRequestWithHostAccess`, `downloads.ui` (per R-005)
+  - `downloads.ui` justification: "Hides Chrome's per-file download animation while a multi-page artwork saves, then restores it." It falls in the same "Manage your downloads" install-warning class as `downloads`, so it adds no new install warning (per R-005).
   - host permissions: `https://www.pixiv.net/*`, `https://i.pximg.net/*`
   - content script on `https://www.pixiv.net/*`
-  - explicitly not requested: `tabs`, `cookies`, `<all_urls>`, `webRequest`, `history`, `scripting`, `downloads.ui`
+  - explicitly not requested: `tabs`, `cookies`, `<all_urls>`, `webRequest`, `history`, `scripting` (`downloads.ui` is now requested, per R-005)
 
   Engineering may substitute an equivalent permission if an API demands it, with a written justification. It must never broaden host access.
 

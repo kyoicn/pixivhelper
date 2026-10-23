@@ -38,11 +38,11 @@ Impl reflects code on `main`; QA is from `docs/qa-report.md` (iteration 2, run `
 
 | CUJ | PRD | Priority | Impl | QA | PM |
 |-----|-----|----------|------|----|----|
-| CUJ-1: Download an illustration or manga from the artwork page | prd-000 | P0 | merged | PASS | Satisfied |
-| CUJ-2: Download an ugoira | prd-000 | P0 | in progress (QA: pill 176 px vs 164 px spec, carried spec conflict) | FAIL (LOW) | Satisfied |
+| CUJ-1: Download an illustration or manga from the artwork page | prd-000 | P0 | not started | — | — Spec changed per R-005 (Chrome's download UI hidden during jobs); prior verification no longer applies. |
+| CUJ-2: Download an ugoira | prd-000 | P0 | not started | — | — Spec changed per R-005 (Chrome's download UI hidden during jobs); prior verification no longer applies. |
 | CUJ-3: Configure the extension from the toolbar icon | prd-000 | P0 | in progress (QA: pasted newlines become spaces) | FAIL (LOW) | Caveats |
-| CUJ-4: Follow several downloads at once from the toolbar badge | prd-000 | P1 | merged | PASS | Satisfied |
-| CUJ-5: Recover when a download can't start or breaks | prd-000 | P0 | in progress (QA: outage residual, floating fallback ~3.02 s) | FAIL (2 LOW) | Caveats |
+| CUJ-4: Follow several downloads at once from the toolbar badge | prd-000 | P1 | not started | — | — Spec changed per R-005 (Chrome's download UI hidden during jobs); prior verification no longer applies. |
+| CUJ-5: Recover when a download can't start or breaks | prd-000 | P0 | not started | — | — Spec changed per R-005 (Chrome's download UI hidden during jobs); prior verification no longer applies. |
 
 **Column values:**
 - `Impl`: `not started` | `in progress` | `merged`
@@ -103,7 +103,7 @@ Iteration 2: 31 commits since `aea2be3` (100 files, +3698/-1252), in this order:
 Test status at QA: `npm run check` green; vitest 2810/2810 (62 files); e2e 110/111 in two runs (the one failure is QA's new paste-newline test, deterministic); live smoke 4/4 in 3 consecutive runs (about 24 s each); 0 skipped, 0 flaky. Content bundle 35.2 KB minified / 13.0 KB gzip (budget 40 / 15).
 
 ## Owner Queue
-Owner queue: 1 open (R-004, since 2026-10-23) → docs/owner-queue.md
+Owner queue: empty — nothing is waiting on the owner
 
 ## Known Issues & TODOs
 QA LOW findings (`docs/qa-report.md`, 0 critical / 0 high / 0 medium / 4 low):
@@ -111,6 +111,7 @@ QA LOW findings (`docs/qa-report.md`, 0 critical / 0 high / 0 medium / 4 low):
 2. `[LOW][BUG]` CUJ-5: 1 of 7 Retries during a sustained 500/503 still says "No connection" (Chromium throttling; options: per-URL/host last-5xx memory in the SW, or the job-level rule in system.md section 15 item 6; verify with `diagOutage.ts`, at least 3 replays).
 3. `[LOW][BUG]` CUJ-5: floating fallback lands at 3011-3023 ms (`src/content/mount.ts:213`; code-review W1; the first-route anchor alone does not fix the SPA case, or pm restates the AC as "at 3 s").
 4. `[LOW][VISUAL_DEVIATION]` CUJ-2: ugoira pill 176 px vs 164 px (spec conflict; pm `/spec-sync`).
+5. R-005 (hide Chrome's download UI during jobs, permission `downloads.ui`) is specified but not yet built — next dev cycle.
 
 Resolved in iteration 2: stale `Saved` beside a validation error; live smoke flake; the outage message now correct for 6 of 7 clicks; late metadata keeps a 99-page-or-fewer work at 164 px; lone `~`/`.` tokens no longer drop a folder level.
 

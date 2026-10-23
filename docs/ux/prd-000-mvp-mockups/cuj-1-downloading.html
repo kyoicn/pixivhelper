@@ -46,11 +46,7 @@
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#5f6368" stroke-width="2.4"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
       www.pixiv.net/artworks/135882741
     </div>
-    <!-- Chrome's own downloads button appears while files are in flight -->
-    <div class="relative w-7 h-7 flex items-center justify-center" title="Downloads in progress (Chrome)">
-      <svg width="24" height="24" viewBox="0 0 24 24" class="absolute inset-0 m-auto" style="transform:rotate(-90deg)"><circle cx="12" cy="12" r="10.5" fill="none" stroke="#dadce0" stroke-width="2"/><circle cx="12" cy="12" r="10.5" fill="none" stroke="#1a73e8" stroke-width="2" stroke-dasharray="65.97" stroke-dashoffset="27.7" stroke-linecap="round"/></svg>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1a73e8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v10"/><path d="m8 11 4 4 4-4"/><path d="M5 19h14"/></svg>
-    </div>
+    <!-- Chrome's download UI is hidden while a job runs (chrome.downloads.setUiOptions, R-005): no per-file animation, no bubble button. It returns when the last job ends. -->
     <!-- Extension toolbar icon: badge = files remaining across all active downloads -->
     <div class="relative" title="Helper for Pixiv — 5 files remaining">
       <div class="w-7 h-7 rounded-md bg-[#0096FA] flex items-center justify-center">

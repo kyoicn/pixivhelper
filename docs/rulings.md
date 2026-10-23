@@ -31,3 +31,10 @@ The build deliberately departs from prd-000 in 15 places (176 px ugoira pill, AA
 
 **Scope**: prd-000
 **Ruling**: Option A — approve all 15 as pm recommended. Twelve items record what the build already does; three change behaviour slightly: S3 the job-level outage rule ("No connection" only when pixiv answered nothing in that click), S5 a half-typed `{` is invalid and never autosaved, S15 the "Still using:" label stays on one line. pm amends the PRD and mocks; S3/S5/S15 become iteration-3 tasks. Owner's words: "GO WITH A". (2026-10-24)
+
+### R-005 · Hide Chrome's download UI while a job runs?
+
+Each file handed to Chrome triggers Chrome's fly-to-toolbar download animation; a 20-page manga produces 20 of them (owner observed this on first install, 2026-10-24). Options discussed: hide Chrome's download UI during jobs (`chrome.downloads.setUiOptions`, permission `downloads.ui`, no new install warning), one ZIP per artwork, direct folder writes via the File System Access API.
+
+**Scope**: prd-000
+**Ruling**: Option 1 — the extension disables Chrome's download UI from the moment the first file of a job is handed to Chrome until the last running job ends, then re-enables it; the worker re-enables it on boot whenever no job is running. The `downloads.ui` permission is added with the justification "hides Chrome's per-file download animation while a multi-page artwork saves, then restores it". Browser-wide side effect while active is accepted. The ZIP-per-artwork option and the folder-picker option remain future candidates. Owner's words: "ok go with option 1". (2026-10-24)
