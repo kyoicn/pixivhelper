@@ -65,7 +65,7 @@ interface FaceView {
  *   locale,
  *   onActivate() {
  *     const now = performance.now();
- *     const action = clickAction(entry, now, location.href);
+ *     const action = clickAction(entry, now, location.href, loggedIn);
  *     show(reduce(entry, { type: 'click', now })); // render (and announce) synchronously
  *     run(action); // job/start · job/cancel · location.assign(url) · nothing
  *   },
