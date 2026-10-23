@@ -24,3 +24,10 @@ CUJ-5 Part A showed the needs-login state only for `xRestrict ≥ 1`. On live pi
 
 **Scope**: prd-000
 **Ruling**: Option B. The extension respects pixiv's login requirement wherever pixiv imposes one: logged out plus any work pixiv withholds behind a login wall (R-18, R-18G, or the sensitive-content wall) shows `Log in to download`. Owner's words: "of course, respect whenever pixiv requires login." pm amends CUJ-5 Part A and the login copy; tl specifies the detection signal. (2026-10-23)
+
+### R-004 · Apply pm's prd-000 spec-sync batch (S1–S15)?
+
+The build deliberately departs from prd-000 in 15 places (176 px ugoira pill, AA contrast colours, outage diagnosis, …) so QA re-flagged them every run and the PRD could not close. Items and recommendations: docs/pm-review.md (iteration 2), priority 4.
+
+**Scope**: prd-000
+**Ruling**: Option A — approve all 15 as pm recommended. Twelve items record what the build already does; three change behaviour slightly: S3 the job-level outage rule ("No connection" only when pixiv answered nothing in that click), S5 a half-typed `{` is invalid and never autosaved, S15 the "Still using:" label stays on one line. pm amends the PRD and mocks; S3/S5/S15 become iteration-3 tasks. Owner's words: "GO WITH A". (2026-10-24)

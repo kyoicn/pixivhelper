@@ -80,11 +80,11 @@
     <section class="mt-12">
       <div class="flex items-baseline justify-between">
         <h2 class="text-[16px] font-semibold">Download folder</h2>
-        <span class="text-[12.5px] text-[#1a9f5a] opacity-0" aria-live="polite">Saved</span>
+        <span class="text-[12.5px] text-[#188038] dark:text-[#1a9f5a] opacity-0" aria-live="polite">Saved</span>
       </div>
       <p class="mt-1 text-[14px] text-[#5c6166] dark:text-[#9aa0a6] leading-relaxed">Inside your Downloads folder. Use tokens to name folders after the artwork.</p>
       <input class="field mono mt-4 w-full h-11 rounded-lg border-2 border-[#d93025] bg-white dark:bg-[#1f1f1f] px-4 text-[14px]" value="pixiv/{artst}-{id}" spellcheck="false" aria-label="Folder pattern" aria-invalid="true" aria-describedby="pattern-error">
-      <p id="pattern-error" class="mt-2 flex items-start gap-2 text-[13px] text-[#d93025]" role="alert">
+      <p id="pattern-error" class="mt-2 flex items-start gap-2 text-[13px] text-[#c5221f] dark:text-[#f28b82]" role="alert">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" class="mt-[1px] shrink-0"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><circle cx="12" cy="16.5" r=".9" fill="currentColor"/></svg>
         <span>Unknown token <span class="mono font-semibold">{artst}</span>. Available tokens: <span class="mono">{artist}</span>, <span class="mono">{id}</span>, <span class="mono">{title}</span>, <span class="mono">{userId}</span>.</span>
       </p>
@@ -95,11 +95,14 @@
         <button class="chip mono" title="Artwork title, shortened to stay a safe folder name">{title}</button>
         <button class="chip mono" title="Artist's numeric pixiv account ID; stable if the artist renames">{userId}</button>
       </div>
-      <div class="mt-4 flex items-center gap-2 text-[13px] text-[#5c6166] dark:text-[#9aa0a6]">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
-        <span>Still using:</span>
-        <span class="mono text-[#1f1f1f] dark:text-[#e8eaed]">pixiv/{artist}-{id}</span>
-        <span class="text-[#8a8f94]">— your last valid pattern stays in effect until this one is fixed.</span>
+      <!-- "Still using:" never breaks; the pattern and the sentence flow after it as running text (per R-004 S15). -->
+      <div class="mt-4 flex items-start gap-2 text-[13px] leading-5 text-[#5c6166] dark:text-[#9aa0a6]">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mt-[2px] shrink-0"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <p class="min-w-0">
+          <span class="whitespace-nowrap">Still using:</span>
+          <span class="mono text-[#1f1f1f] dark:text-[#e8eaed] [overflow-wrap:anywhere]">pixiv/{artist}-{id}</span>
+          <span class="text-[#5c6166] dark:text-[#8a8f94]">— your last valid pattern stays in effect until this one is fixed.</span>
+        </p>
       </div>
     </section>
 

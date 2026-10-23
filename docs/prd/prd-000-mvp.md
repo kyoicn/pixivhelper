@@ -62,6 +62,7 @@ pixiv itself has no "download originals" action. Right-click "Save image" saves 
 - Originals at `i.pximg.net` return 200 with `Referer: https://www.pixiv.net/` and 403 without. All-ages works need no cookie.
 - `GET https://www.pixiv.net/ajax/illust/{id}` works logged out for every work. It returns `pageCount`, `illustType` (0 illustration, 1 manga, 2 ugoira), `xRestrict` (0 all ages, 1 R-18, 2 R-18G), `userName`, and `userId`.
 - `GET /ajax/illust/{id}/pages` is refused when logged out if `xRestrict ≥ 1`.
+- Logged out, `GET /ajax/illust/{id}` returns `urls.original: null` for every work pixiv withholds behind a login wall (R-18, R-18G, or an all-ages work behind the sensitive-content wall), and an image URL for every work pixiv shows. For walled all-ages works, `/pages` and `ugoira_meta` still answer normally while logged out, so nothing downstream refuses them. Probed 2026-10-23 on 7 rendered works and all 150 works of that day's logged-out daily rankings (per R-004 S12).
 - `GET /ajax/illust/{id}/ugoira_meta` returns `originalSrc` (the original-size frame zip) and `frames` (`[{file, delay}]`, delay in ms).
 - pixiv's page HTML embeds `"isLoggedIn":false` or `"isLoggedIn":true`.
 - pixiv is a single-page app. Moving between artworks does not reload the document.
@@ -122,8 +123,8 @@ Tokens are case-sensitive. `{ID}` is an unknown token.
    4. Trim leading and trailing `.`, `_` and space.
    5. Truncate to at most **60 UTF-8 bytes** without splitting a character, then trim `._ ` again. (60 bytes is 20 kanji or kana.)
    6. If the result is empty, use `unknown`.
-2. **Extension-only addition to the script's rules:** also remove `* ? " < > |` from token values. Chrome's downloads API rejects a path segment that contains any of them, on every platform. The script ran only on macOS and never hit this. (assumption — confirm)
-3. Literal text in the pattern is used as typed. It is validated when the user enters it (CUJ-3). Empty segments (`a//b`) and a trailing `/` are dropped silently.
+2. **Extension-only addition to the script's rules:** also remove `* ? " < > |` from token values. Chrome's downloads API rejects a path segment that contains any of them, on every platform. The script ran only on macOS and never hit this. Chrome's further path rules are applied by the path-safety pass in step 3 (per R-004 S8).
+3. Literal text in the pattern is used as typed, except where Chrome's path rules require a change; the preview shows the exact result (per R-004 S8). A final Chrome path-safety pass runs on every whole folder segment (literal text and token values together): it removes characters Chrome refuses in a folder name (e.g. a pasted tab or a zero-width joiner), trims a leading or trailing space, `.` or `~`, and adjusts names Chrome refuses (e.g. `CON` → `_CON`, `My.url` → `My.url_`). Literal text is validated when the user enters it (CUJ-3). Empty segments (`a//b`) and a trailing `/` are dropped silently.
 
 Examples:
 - `pixiv/{artist}-{id}` with artist `みずき` and id `135882741` → `pixiv/みずき-135882741`
@@ -152,7 +153,7 @@ This applies to every request: API calls, originals, and the frame zip.
 | Retried | HTTP 429, 500, 502, 503, 504; network errors; no response within 30 s |
 | Not retried | HTTP 403, which means the session or Referer was rejected, not a transient fault. Other 4xx codes are not retried either. |
 | Wait before retry *n* (n = 0, 1, 2) | 1.5 × 2ⁿ s + random 0–0.5 s, i.e. about 1.5 s, 3 s, 6 s |
-| `Retry-After` | If the failed response has `Retry-After` (seconds), wait `min(Retry-After, 30)` s instead of the backoff. If the download mechanism engineering chooses cannot see the header, the backoff alone applies. (assumption — confirm) |
+| `Retry-After` | If the failed response has `Retry-After` (seconds), wait `min(Retry-After, 30)` s instead of the backoff. This holds for every request, including originals and the frame zip (per R-004 S14). |
 
 A file that still fails after 4 attempts counts as **failed** (CUJ-5).
 
@@ -161,7 +162,7 @@ A file that still fails after 4 attempts counts as **failed** (CUJ-5).
 - **Where:** in the offscreen document, independent of any tab.
 - **Order:** `metadata.json` (if enabled) → fetch the frame zip (progress by bytes) → save `<id>_ugoira.zip` and `frames.json` → decode and encode each frame → save the video.
 - **Codecs:** MP4 is H.264 (AVC) in an MP4 container. WebM is VP9 in a WebM container. (assumption — confirm VP9 over VP8)
-- **Codec availability:** when the button is first rendered on an ugoira page, the extension asks WebCodecs whether H.264 can be encoded at this work's dimensions. The answer is cached for the browser session. If H.264 can't be encoded and the setting is MP4, this download uses WebM, and the button hint, the Saved label, and the file extension all say WebM. If neither H.264 nor VP9 can be encoded, the job behaves as ZIP only and the hint says ZIP. (assumption — confirm)
+- **Codec availability:** when the button is first rendered on an ugoira page, the extension asks WebCodecs whether H.264 and VP9 can be encoded at this work's dimensions. The answer is cached for the browser session. If H.264 can't be encoded and the setting is MP4, this download uses WebM, and the button hint, the Saved label, and the file extension all say WebM. Likewise, if the setting is WebM and VP9 can't be encoded but H.264 can, this download uses MP4, and everything says MP4 (per R-004 S10). If neither H.264 nor VP9 can be encoded, the job behaves as ZIP only and the hint says ZIP (per R-004 S10).
 - **Timing:** frame *i* is shown at timestamp Σ(delay₀ … delayᵢ₋₁) ms and lasts delayᵢ ms. Total duration equals the sum of all delays. No frame is dropped, duplicated, or re-timed. Mixed delays (e.g. 40, 40, 500, 40) are kept exactly at millisecond precision. This matches the script's variable-frame-rate ffmpeg concat.
 - **Dimensions:** the frame width and height, each rounded down to an even number (601×451 → 600×450). This matches the script's `scale=trunc(iw/2)*2:trunc(ih/2)*2`.
 - **Quality target:** no visible blocking or banding at 100% zoom compared with the source frames. The reference is the script's libx264 `-crf 18` output.
@@ -173,16 +174,16 @@ A file that still fails after 4 attempts counts as **failed** (CUJ-5).
 
 #### 4.7.1 Placement
 - Inserted into pixiv's artwork action row, inside the right-aligned group, **immediately before pixiv's like button**, with the row's own gap between controls (12 px in the mocks).
-- Appears within **500 ms** of pixiv rendering the action row. If the artwork metadata has not arrived by then, the button appears in the idle state with no hint (`Download`). The hint, or the needs-login state, is applied when the metadata arrives. The width does not change. (assumption — confirm)
+- Appears within **500 ms** of pixiv rendering the action row. If the artwork metadata has not arrived by then, the button appears in the idle state with no hint (`Download`). The hint, or the needs-login state, is applied when the metadata arrives. The width does not change, except in the single widen-once case of 4.7.2 (an ugoira, or a work of 100+ pages) (per R-004 S1).
 - There is exactly one button per page at any time. If pixiv re-renders the action row (SPA navigation, React re-render), the button is re-inserted within 500 ms and keeps its state. It is never duplicated.
-- **Redesign fallback (CUJ-5):** if the action row can't be found within 3 s of the artwork page rendering, the button floats at the bottom-right of the artwork area.
+- **Redesign fallback (CUJ-5):** if the action row can't be found within 3 s of the artwork page loading (the extension starts once the page's HTML has been parsed) or of pixiv's in-app navigation to it (the URL change), the button floats at the bottom-right of the artwork area. The 3 s is measured to the floating pill appearing on screen, so the time needed to place it counts inside the 3 s (per R-004 S4).
 - Appears only on artwork pages: `https://www.pixiv.net/artworks/<id>` and locale-prefixed variants such as `https://www.pixiv.net/en/artworks/<id>`. No button on any other pixiv page.
 
 #### 4.7.2 Geometry & typography (all states)
 - Height 40 px, fully rounded pill, horizontal padding 12 px, 8 px gap between icon and text, `white-space: nowrap`, does not shrink.
 - Icon 18 × 18 px.
 - Label: 14 px semibold, system font stack. Hint (the part after `·`): 13 px regular at 85% opacity. The `·` separator is at 60% opacity. Counters and percentages use `font-variant-numeric: tabular-nums`.
-- **Fixed width:** within the active locale, the width equals the widest label the button can show for this artwork (every state, using the artwork's real page count). In English this is **164 px** for works up to 99 pages. The width is locked when the button first renders and never changes between states, so the action row never shifts. Works with 100+ pages (pixiv allows up to 200) may get a wider button. If the page count is unknown at first render, the button starts at the 2-digit width and may widen once, when the metadata arrives and before any interaction. (assumption — confirm) Translations should keep every label within the idle label's width wherever possible.
+- **Fixed width:** within the active locale, the width equals the widest label the button can show for this artwork (every state, using the artwork's real page count). In English this is **164 px** for illustrations and manga up to 99 pages, and **176 px** for every ugoira, because `Download · WebM` is a label an ugoira's button can reach (the output follows the setting and codec support) (per R-004 S1). The width is locked when the button first renders and never changes between states or when Ugoira output changes, so the action row never shifts. Works with 100+ pages (pixiv allows up to 200) may get a wider button (170 px in English at 200 pages). If the metadata is unknown at first render, the button starts at the 2-digit illustration width (164 px in English) and may widen once, when the metadata arrives and before any interaction (per R-004 S1). If the user clicks an ugoira before its metadata arrives, the width stays provisional, so a WebM hint may be cut with an ellipsis (`Saved · We…`); this is accepted, because it needs a click inside the metadata latency window (per R-004 S1). Translations should keep every label within the idle label's width wherever possible.
 - Background transitions take 120 ms. The progress ring moves over 300 ms ease.
 
 #### 4.7.3 State table
@@ -196,9 +197,9 @@ A file that still fails after 4 attempts counts as **failed** (CUJ-5).
 | **Saved** | Fill white, 1.5 px `#0096FA` border, `#0096FA` text, no shadow | Checkmark | `Saved · 12P` / `Saved` (single page) / `Saved · MP4` / `Saved · WebM` / `Saved · ZIP` | Fill `#e6f4fe`; label unchanged | `Saved to Downloads/<resolved folder>`, e.g. `Saved to Downloads/pixiv/みずき-135882741` | Run the whole job again |
 | **Needs login** | Fill white, 1.5 px `#c4c7c5` border, `#3c4043` text, no shadow | none | `Log in to download` | Fill `#f5f7f9`, border `#8a8f94` | `Opens pixiv login and returns you here` | Go to pixiv login (CUJ-5) |
 | **Error** | Fill white, 1.5 px `#d93025` border, `#d93025` text (hint at full opacity), no shadow | Warning triangle | `Retry · 3 failed`, `Retry`, `Retry · MP4`, `Retry · WebM` (CUJ-5) | Fill `#fdeceb` | Cause-specific (CUJ-5) | Retry (CUJ-5) |
-| **Unavailable** | Fill `#f1f3f4`, no border, `#80868b` text, no shadow (assumption — confirm; not mocked) | none | `Unavailable` | No change; cursor `not-allowed` | `This work is no longer available.` | Nothing (`aria-disabled="true"`; still focusable so the tooltip and label can be reached) |
+| **Unavailable** | Fill `#f1f3f4`, no border, `#5f6368` text (5.44:1), no shadow (not mocked; per R-004 S2) | none | `Unavailable` | No change; cursor `not-allowed` | `This work is no longer available.` | Nothing (`aria-disabled="true"`; still focusable so the tooltip and label can be reached) |
 
-The busy tooltip is `Cancel download` in every busy state. `cuj-2-encoding.html` shows `Cancel`, and this PRD's string takes precedence. (assumption — confirm)
+The busy tooltip is `Cancel download` in every busy state, as in every mock (per R-004 S15).
 
 #### 4.7.4 Focus, theme, motion
 - Focus ring: 2 px solid `#0096FA`, 3 px offset, shown on `:focus-visible` only.
@@ -207,7 +208,7 @@ The busy tooltip is `Cancel download` in every busy state. `cuj-2-encoding.html`
 
 #### 4.7.5 Progress semantics
 - **Illust/manga:** the counter shows `<completed pages> / <total pages>`. It starts at `0 / <total>` within 100 ms of the click and goes up by one each time Chrome reports an original as complete. The ring fraction equals completed ÷ total.
-- **Ugoira:** a single integer percentage covering the whole job. It starts at `0%`. The frame-zip fetch maps to 0–40% by bytes received, and the encode maps to 40–100% by frames encoded. (assumption — confirm the 40/60 split) With **ZIP only**, the zip fetch maps to 0–100%. The percentage is rounded down, never decreases, and never shows `100%` before the last file has landed. If the zip size is unknown (no Content-Length), the label holds at `0%` and the ring shows a 25% arc that rotates once per second until the encode phase starts. Under reduced motion the arc stays still.
+- **Ugoira:** a single integer percentage covering the whole job. It starts at `0%`. The frame-zip fetch maps to 0–40% by bytes received, and the encode maps to 40–100% by frames encoded. (assumption — confirm the 40/60 split) With **ZIP only**, the zip fetch maps to 0–100%. The percentage is rounded down and never decreases. The busy label never shows `100%`; the button turns Saved when the last file lands (per R-004 S13). If the zip size is unknown (no Content-Length), the label holds at `0%` and the ring shows a 25% arc that rotates once per second until the encode phase starts. Under reduced motion the arc stays still.
 - The busy state's Cancel face is suppressed until the pointer has left the button once after the starting click, so the user sees progress rather than "Cancel" right after clicking. Clicks within 500 ms of the starting click are ignored, which guards against double-clicks. (assumption — confirm)
 
 #### 4.7.6 Per-tab state memory
@@ -220,16 +221,16 @@ The busy tooltip is `Cancel download` in every busy state. `cuj-2-encoding.html`
 - The button is a real `<button type="button">`, reachable with Tab. Enter and Space activate it.
 - `aria-label` per state (exact strings in Appendix A), e.g. `Download all 12 original images of this artwork`, `Downloading, 7 of 12 pages saved. Click to cancel.`, `Saved 12 pages to Downloads/pixiv/みずき-135882741. Click to download again.`
 - When busy, the button has `aria-busy="true"`. A polite live region announces the start (`Downloading 12 pages`), progress at most once every 5 s, and always the end state (`Saved 12 pages`, `3 pages failed`, `Download cancelled`).
-- Contrast: white on `#0096FA` and `#0096FA` on white are about **3.1:1**. That passes WCAG for UI components and large text but falls short of the 4.5:1 AA threshold for 14 px text. This is accepted deliberately for parity with pixiv's own primary buttons, which use the same pair. (assumption — confirm) Every other state passes 4.5:1.
+- Contrast: white on `#0096FA` and `#0096FA` on white are about **3.1:1**. That passes WCAG for UI components and large text but falls short of the 4.5:1 AA threshold for 14 px text. This is accepted deliberately for parity with pixiv's own primary buttons, which use the same pair (per R-004 S2). Every other state's text passes 4.5:1 at rest, including Unavailable (`#5f6368` on `#f1f3f4`, 5.44:1). Hover tints are exempt, as in the index's "Contrast" rule: they show only under the pointer, never change the label, and the accessible name carries the meaning, e.g. the error hover (`#d93025` on `#fdeceb`, 4.18:1) and the Saved hover (`#0096FA` on `#e6f4fe`, 2.78:1) (per R-004 S2).
 
 ### 4.8 Toolbar icon & badge
 - **Click** always opens the settings page in a full tab (CUJ-3), whether or not downloads are running. There is no popup.
-- **Badge text:** the number of files still to land across every job in flight. An illustration or manga job counts its image pages not yet complete (`metadata.json` never counts). An ugoira job counts **1** from start to finish: the video, or the zip with ZIP only. (assumption — confirm that the ugoira job counts 1 during its zip-fetch phase too) Counts of 1000 or more show `999+`. With nothing in flight, the badge is hidden (empty text).
+- **Badge text:** the number of files still to land across every job in flight. An illustration or manga job counts its image pages not yet complete (`metadata.json` never counts). An ugoira job counts **1** from start to finish, including its zip-fetch phase: the video, or the zip with ZIP only (per R-004 S11). Counts of 1000 or more show `999+`. With nothing in flight, the badge is hidden (empty text). The same holds whenever the counted total is 0, e.g. a job that retries only `metadata.json`, or a job clicked before its metadata arrived while it is still resolving: the badge is hidden and the action title is the idle one (per R-004 S11).
 - **Badge style:** background `#1f1f1f`, text `#FFFFFF`.
 - **Action title (tooltip)** (product name per R-002):
-  - Nothing in flight: `Helper for Pixiv — click to open settings`
-  - One job: `Helper for Pixiv — 5 files remaining` (singular: `Helper for Pixiv — 1 file remaining`)
-  - Two or more jobs: `Helper for Pixiv — 23 files remaining across 2 downloads`
+  - Nothing in flight, or 0 files counted: `Helper for Pixiv — click to open settings` (per R-004 S11)
+  - One job with files left: `Helper for Pixiv — 5 files remaining` (singular: `Helper for Pixiv — 1 file remaining`)
+  - Two or more jobs with files left: `Helper for Pixiv — 23 files remaining across 2 downloads`. "Across N downloads" counts only jobs that still have files to land (per R-004 S11).
 - The badge updates within 1 s of any file completing, any job starting, or any job being cancelled or failing.
 - **Service-worker restarts:** in-flight job state (queued files, completed and failed counts, originating tab) survives a service-worker restart (for example in session-scoped extension storage). The badge is recomputed within 1 s of the restart. State does not survive quitting Chrome (4.1 #6).
 
@@ -279,7 +280,7 @@ This is the core promise of the product. The user is looking at an illustration 
 
 2. **User action**: User clicks the button once (or focuses it with Tab and presses Enter or Space).
    - **System response**: The tab sends a start request for artwork `135882741` to the background service worker. The worker snapshots the settings, fetches metadata and the page list using the user's pixiv session, and resolves the folder to `pixiv/みずき-135882741`. It writes `metadata.json`, then hands the 12 originals to Chrome in page order, at most 5 at a time, with `uniquify` and the Referer requirement met.
-   - **User sees**: Within 100 ms the pill (same width, same blue) swaps its icon for a progress ring at 0 and its label for `0 / 12` in tabular digits. The toolbar icon shows a dark badge `12`. Chrome's own downloads button shows activity, and its bubble lists files as they start (`metadata.json`, `135882741_p0.jpg`, …).
+   - **User sees**: Within 100 ms the pill (same width, same blue) swaps its icon for a progress ring at 0 and its label for `0 / 12` in tabular digits. The toolbar icon shows a dark badge `12`. Chrome's own downloads button shows activity, and its bubble lists each file once its bytes are complete (`metadata.json` first, then `135882741_p0.jpg`, … as they land) (per R-004 S6).
    - **Details**: `aria-busy="true"`, `aria-label` `Downloading, 0 of 12 pages saved. Click to cancel.` The live region announces `Downloading 12 pages`. The Cancel face stays hidden until the pointer has left the button once, and clicks within 500 ms of this click are ignored (4.7.5).
 
 3. **User action**: User waits, or keeps browsing pixiv.
@@ -293,7 +294,7 @@ This is the core promise of the product. The user is looking at an illustration 
    - **Details**: The width is unchanged. Keyboard focus does not swap faces. The `aria-label` already says "Click to cancel."
 
 5. **User action** (optional): User clicks the busy button to cancel.
-   - **System response**: The worker stops handing this artwork's files to Chrome. Any of its files currently downloading in Chrome are cancelled, and Chrome lists them as "Canceled". (assumption — confirm) Files already completed stay on disk. The badge drops by this artwork's remaining count at once and disappears if nothing else is in flight.
+   - **System response**: The worker stops handing this artwork's files to Chrome. Files still being fetched are dropped before they reach Chrome, so Chrome's bubble shows no "Canceled" entries for them (per R-004 S6). Files already completed stay on disk. The badge drops by this artwork's remaining count at once and disappears if nothing else is in flight.
    - **User sees**: Within 300 ms the button returns to idle `Download · 12P`. No toast, no message, no error styling, because cancelling is not an error.
    - **Details**: The live region announces `Download cancelled`. The tab's memory for this artwork returns to idle.
 
@@ -324,7 +325,7 @@ This is the core promise of the product. The user is looking at an illustration 
 - **Network drops mid-job**: each affected file follows the retry policy (4.5.2). If some files still fail, the job ends in CUJ-5's `Retry · N failed`.
 - **Pattern changed in settings mid-job**: the running job keeps its snapshot folder. The next click uses the new pattern.
 - **pixiv re-renders the action row**: the button is re-inserted within 500 ms with the same state, never duplicated.
-- **Keyboard and screen reader**: Tab reaches the button in DOM order (after pixiv's Share/More, before Like). Enter and Space start, cancel, or re-download. The focus ring is 2 px `#0096FA` with a 3 px offset. Progress is announced at most every 5 s.
+- **Keyboard and screen reader**: Tab reaches the button in pixiv's own row order, next to Like (per R-004 S7). Enter and Space start, cancel, or re-download. The focus ring is 2 px `#0096FA` with a 3 px offset. Progress is announced at most every 5 s.
 - **pixiv dark theme**: the button is identical in every state, and only the focus ring becomes `#5fb9fb`. See `cuj-1-dark.html`.
 - **Non-artwork pixiv pages** (home, search, user profile, bookmarks, novels): no button is injected.
 
@@ -373,7 +374,7 @@ Ugoira is pixiv's animated format: a zip of still frames plus a per-frame delay 
 
 1. **User action**: User opens the ugoira's artwork page.
    - **System response**: The content script fetches metadata, sees `illustType` 2, asks the extension which output is effective (setting plus the H.264 availability check, 4.6), and inserts the button.
-   - **User sees**: The same 164 × 40 px blue pill in the same place, labelled `Download · MP4` (or `Download · WebM`, or `Download · ZIP` for ZIP only). See `cuj-2-initial.html`.
+   - **User sees**: The same 40 px tall blue pill in the same place, at the 4.7.2 width (176 px in English, because `Download · WebM` is a label this button can reach) (per R-004 S1), labelled `Download · MP4` (or `Download · WebM`, or `Download · ZIP` for ZIP only). See `cuj-2-initial.html`.
    - **Details**: `aria-label` is `Download this ugoira as MP4, with its frame zip and metadata`. With metadata off: `Download this ugoira as MP4, with its frame zip`. With ZIP only: `Download this ugoira's frame zip`. While the button is idle, the hint updates within 1 s if the user changes Ugoira output in settings in another tab.
 
 2. **User action**: User clicks the button.
@@ -398,7 +399,7 @@ Ugoira is pixiv's animated format: a zip of still frames plus a per-frame delay 
 
 6. **Variant: ZIP only.**
    - **System response**: There is no encode step. The job ends once the zip and `frames.json` have landed.
-   - **User sees**: `0%` → `100%` by zip bytes, then `Saved · ZIP`.
+   - **User sees**: `0%` rising with zip bytes, then `Saved · ZIP`. The label never shows `100%` (4.7.5) (per R-004 S13).
 
 7. **Variant: H.264 not encodable in this browser** (setting is MP4).
    - **System response**: This download encodes VP9 WebM instead (4.6).
@@ -423,6 +424,7 @@ Mocks for this CUJ:
 
 #### Acceptance Criteria
 - On an illustType 2 page the idle label reads `Download · MP4`, `Download · WebM`, or `Download · ZIP`, matching the Ugoira output setting (or `WebM` when H.264 can't be encoded).
+- In English, on an ugoira whose metadata arrived before the first click, the button is 176 px wide in idle, busy, Cancel-hover, and Saved states, and its width does not change across any transition or when Ugoira output changes (per R-004 S1).
 - While busy, the label is an integer percentage that never decreases, never shows `100%` before the last file lands, and updates at least once per second during the encode.
 - The toolbar badge shows `1` for the whole ugoira job and disappears when it ends.
 - After completion with MP4, the folder contains exactly `136004512_ugoira.zip`, `frames.json`, `136004512.mp4`, and `metadata.json` (when enabled). No extracted-frames folder exists.
@@ -467,7 +469,7 @@ The product's positioning is "three settings, not thirty". Users come here once,
 
 3. **User action**: User edits the pattern, e.g. clears it and types `pixiv/{artist}/{title}`.
    - **System response**: Validation runs about 400 ms after the last keystroke. If valid, the pattern is saved immediately.
-   - **User sees**: The preview updates to `Downloads/pixiv/みずき/雨上がりの渋谷/135882741_p0.jpg`. A green (`#1a9f5a`) check icon and `Saved` (12.5 px) appear at the right end of the **Download folder** heading row. They stay for 2 s, then fade out over 300 ms.
+   - **User sees**: The preview updates to `Downloads/pixiv/みずき/雨上がりの渋谷/135882741_p0.jpg`. A green check icon and `Saved` (12.5 px; `#188038`, dark: `#1a9f5a`) (per R-004 S2) appear at the right end of the **Download folder** heading row. They stay for 2 s, then fade out over 300 ms.
    - **Details**: Saving happens per valid change, with no Save button and no toast. `Saved` sits in a polite live region. Under reduced motion it disappears without the fade.
 
 4. **User action**: User places the caret in the field and clicks the `{id}` chip.
@@ -477,16 +479,16 @@ The product's positioning is "three settings, not thirty". Users come here once,
 
 5. **User action**: User mistypes a token: `pixiv/{artst}-{id}`.
    - **System response**: Validation fails, nothing is saved, and the last valid pattern stays in effect for downloads.
-   - **User sees**: The field gets a 2 px `#d93025` border. Below it, a red 13 px line with an info icon reads `Unknown token {artst}. Available tokens: {artist}, {id}, {title}, {userId}.` The preview line is replaced by `Still using: pixiv/{artist}-{id} — your last valid pattern stays in effect until this one is fixed.` (the pattern in monospace). No `Saved` appears. See `cuj-3-error.html`.
+   - **User sees**: The field gets a 2 px `#d93025` border. Below it, a red 13 px line (`#c5221f`, dark: `#f28b82`) (per R-004 S2) with an info icon reads `Unknown token {artst}. Available tokens: {artist}, {id}, {title}, {userId}.` The preview line is replaced by `Still using: pixiv/{artist}-{id} — your last valid pattern stays in effect until this one is fixed.` (the pattern in monospace; the trailing sentence in `#5c6166`, dark: `#8a8f94`) (per R-004 S2). The `Still using:` label never breaks across lines; the pattern and the trailing sentence flow after it as running text, so the pattern breaks only when it is longer than the line (per R-004 S15). No `Saved` appears. See `cuj-3-error.html`.
    - **Details**: The field gets `aria-invalid="true"` and `aria-describedby` pointing to the message, which has `role="alert"`. Only the first applicable message is shown, checked in this order:
      1. Empty after trimming whitespace → `Enter a folder pattern.`
      2. Starts with `/` or is an absolute path (e.g. `C:`, `~/`) → `Must be a relative path inside Downloads.`
      3. Contains `\` → `Use "/" between folders.`
      4. Contains a `..` segment → `Can't contain "..".`
-     5. A `{…}` that is not one of the four tokens → `Unknown token {artst}. Available tokens: {artist}, {id}, {title}, {userId}.` (naming the first unknown token)
-     6. Literal text contains `: * ? " < > |` → `Can't contain : * ? " < > |.` (assumption — confirm; this rule and its copy are not in the mocks)
+     5. A `{…}` that is not one of the four tokens, or a `{` that is never closed → `Unknown token {artst}. Available tokens: {artist}, {id}, {title}, {userId}.` (naming the first offending fragment, left to right). A `{` is unclosed when another `{` or the end of the pattern comes before any `}`; the message then names the fragment from that `{` up to that point, e.g. `pixiv/{user` → `Unknown token {user. Available tokens: {artist}, {id}, {title}, {userId}.` (per R-004 S5)
+     6. Literal text contains `: * ? " < > |` → `Can't contain : * ? " < > |.` (not in the mocks; per R-004 S9)
 
-     Stray `{` or `}` with no matching pair are literal characters.
+     A `}` that closes no `{` is a literal character. Because an unclosed `{` is invalid, a pause mid-token (`pixiv/{user`) is never autosaved (per R-004 S5).
 
 6. **User action**: User fixes the typo.
    - **System response**: About 400 ms after typing stops, validation passes and the pattern is saved.
@@ -537,6 +539,8 @@ Mocks for this CUJ:
 - With the default pattern, the preview reads `Preview: Downloads/pixiv/みずき-135882741/135882741_p0.jpg`.
 - Typing `pixiv/{artst}-{id}` shows, within about 400 ms of the last keystroke, a 2 px red border, the exact unknown-token message, and the exact "Still using" line. A download started now still uses the last valid pattern.
 - Each validation case in step 5 shows its exact message.
+- Typing `pixiv/{user` and pausing shows `Unknown token {user. Available tokens: {artist}, {id}, {title}, {userId}.` and saves nothing: no `Saved` appears, and reloading the settings page shows the last valid pattern. A pattern with a lone `}` (e.g. `pixiv/a}b`) is valid and saved (per R-004 S5).
+- In the error state, the `Still using:` label renders on a single line in all four locales, and the default pattern `pixiv/{artist}-{id}` after it is not broken across lines (per R-004 S15).
 - A valid change to any setting is saved without a Save button. Within about 400 ms (pattern) or immediately (other settings), `Saved` with a green check appears beside that section's heading and fades after 2 s.
 - Reloading the settings page shows the most recently saved values.
 - Changing a setting while a download runs does not change that download's folder, format, or files. The next download uses the new values.
@@ -592,7 +596,7 @@ Downloads run in the background and outlive their tabs, so the user needs one gl
 - **A job ends with failures**: its failed files leave the count (nothing is in flight for them). Its button shows CUJ-5's error state, and the badge keeps counting the other jobs.
 - **Tab closed mid-job**: the job keeps running and keeps counting in the badge until its files land.
 - **Same artwork downloading in two tabs**: two jobs, both counted (e.g. 12 + 12 = `24`), and the tooltip says `across 2 downloads`. The second run's files get `" (1)"` suffixes.
-- **Chrome's own downloads button**: it appears and animates alongside our icon while Chrome has files in flight. This is expected and deliberately not hidden. During an ugoira encode Chrome's button is idle while our badge shows `1`.
+- **Chrome's own downloads button**: it appears alongside our icon and lists each file once its bytes are complete (per R-004 S6). This is expected and deliberately not hidden. While the extension is still fetching files, and during an ugoira encode, Chrome's button can be idle while our badge still counts (`1` during an encode).
 
 #### Mocks / Reference Designs
 
@@ -631,7 +635,7 @@ Downloads fail for reasons the user can fix (not logged in, connection dropped, 
 **Part A: pre-emptive needs-login (known before any click)**
 
 1. **User action**: Logged out, user opens a work pixiv withholds behind a login requirement: an R-18 or R-18G work, or an all-ages work behind pixiv's sensitive-content wall, `This work may contain sensitive content. Please log in to view this work.` (per R-003).
-   - **System response**: At render time the extension has the work's metadata (`xRestrict` 1) and the page's `"isLoggedIn":false`. Because the page is logged out and pixiv withholds the work behind a login requirement (R-18, R-18G, or pixiv's sensitive-content wall), it renders the needs-login state instead of idle (per R-003). The signal that detects the sensitive-content wall is specified in the design docs.
+   - **System response**: At render time the extension has the work's metadata (`xRestrict` ≥ 1, or no image URLs in pixiv's answer, 4.2) and the page's `"isLoggedIn":false` (per R-004 S12). Because the page is logged out and pixiv withholds the work behind a login requirement (R-18, R-18G, or pixiv's sensitive-content wall), it renders the needs-login state instead of idle (per R-003). The signal that detects the sensitive-content wall is specified in the design docs.
    - **User sees**: In the usual spot, a white pill with a 1.5 px `#c4c7c5` border, `#3c4043` text, **no icon**, and the label `Log in to download`. Hover: fill `#f5f7f9`, border `#8a8f94`. Tooltip: `Opens pixiv login and returns you here`. There is no other text anywhere on the page from the extension. See `cuj-5-initial.html`.
    - **Details**: `aria-label` is `Log in to pixiv to download this work.` (per R-003). Same fixed width as every other state.
 
@@ -659,24 +663,24 @@ Downloads fail for reasons the user can fix (not logged in, connection dropped, 
 
      | Cause | Detection | Tooltip |
      |---|---|---|
-     | No connection | Network errors or `navigator.onLine === false` after retries, with 0 pages saved | `No connection. Retry when you're back online.` |
+     | No connection | 0 pages saved, and either `navigator.onLine === false`, or pixiv answered nothing in this click: no request of this click's job (to `www.pixiv.net` or `i.pximg.net`) got any HTTP response, and every failure is a network error (per R-004 S3) | `No connection. Retry when you're back online.` |
      | pixiv refused the work | HTTP 401/403 or a pixiv error body on `/pages` or `ugoira_meta` while logged in (e.g. R-18 display off in pixiv settings, which can't be detected in advance) | `pixiv refused this work. If you're logged in, check your R-18 setting on pixiv.` |
-     | pixiv server failure | 5xx after 4 attempts, with 0 pages saved | `pixiv isn't responding. Retry in a few minutes.` (derived copy — confirm) |
-     | Downloads folder not writable | Chrome reports a file-system error (no space, access denied, name too long) on every file | `Chrome couldn't save to your Downloads folder. Check free space and try again.` (derived copy — confirm) |
+     | pixiv server failure | 0 pages saved, no other cause in this table applies, and pixiv answered at least one request of this click's job (any HTTP status, including the artwork API's 200) or a request timed out. The extension's own internal failures also land here (per R-004 S3, S10) | `pixiv isn't responding. Retry in a few minutes.` (per R-004 S9) |
+     | Downloads folder not writable | Chrome reports a file-system error (no space, access denied, name too long), or a dismissed Save dialog, for every failed file (per R-004 S10) | `Chrome couldn't save to your Downloads folder. Check free space and try again.` (per R-004 S9) |
 
-   - **Details**: Clicking `Retry` runs the whole job again with the current settings. `aria-label` is `Download failed. <tooltip text> Click to retry.`
+   - **Details**: Clicking `Retry` runs the whole job again with the current settings. `aria-label` is `Download failed. <tooltip text> Click to retry.` The "No connection" rule is judged per click on purpose (per R-004 S3). During a long pixiv outage Chrome may stop sending repeated requests and refuse them locally, so none of a click's image requests reaches pixiv. Because pixiv's artwork API answered earlier in the same click, the tooltip still reads `pixiv isn't responding. Retry in a few minutes.`, never "No connection", on every Retry. Accepted cost: if pixiv's API answers and then every image connection fails while `navigator.onLine` stays true, the tooltip also reads "pixiv isn't responding…".
 
 7. **User action**: The work was deleted after the page loaded, and the user clicks Download.
    - **System response**: `/ajax/illust/{id}` returns 404 or a pixiv "not found" error body.
-   - **User sees**: The button becomes `Unavailable`: fill `#f1f3f4`, `#80868b` text, no border, no icon, no hover change, `not-allowed` cursor. Tooltip: `This work is no longer available.` If the 404 already happens at render time, the button renders as Unavailable immediately.
+   - **User sees**: The button becomes `Unavailable`: fill `#f1f3f4`, `#5f6368` text (per R-004 S2), no border, no icon, no hover change, `not-allowed` cursor. Tooltip: `This work is no longer available.` If the 404 already happens at render time, the button renders as Unavailable immediately.
    - **Details**: `aria-disabled="true"`, `aria-label` `This work is no longer available.` The button stays focusable, and clicking it does nothing.
 
 8. **User action**: On an ugoira, the zip lands but the encode fails.
    - **System response**: No video is written. The zip and `frames.json` stay.
    - **User sees**: The red error pill with the label `Retry · MP4` (or `Retry · WebM`). Tooltip: `Frames saved as ZIP. Video encoding failed. Click to retry the encode, or choose ZIP only in settings.`
-   - **Details**: Clicking it fetches the frame zip again into memory without saving a second copy, then runs only the encode and writes only the video (`0%` → `100%`). (assumption — confirm)
+   - **Details**: Clicking it fetches the frame zip again into memory without saving a second copy, then runs only the encode and writes only the video. (assumption — confirm) The label restarts at `0%` and, as everywhere, never shows `100%` (4.7.5) (per R-004 S13).
 
-9. **User action**: Mid-job, originals start returning 403 (e.g. the pixiv session expired).
+9. **User action**: Mid-job, originals or the ugoira frame zip start returning 403 (e.g. the pixiv session expired) (per R-004 S10).
    - **System response**: 403 is not retried. The job stops handing new files to Chrome, and files already saved stay.
    - **User sees**: The button drops back to `Log in to download` (needs-login style). Clicking it goes through steps 2–3. After returning, the button is a normal idle `Download · 12P`, and a click runs the whole job again (Chrome uniquifies the files that already landed).
 
@@ -685,17 +689,19 @@ Downloads fail for reasons the user can fix (not logged in, connection dropped, 
 **Part C: page-redesign fallback**
 
 11. **User action**: User opens an artwork after pixiv has changed its page structure so the action row can't be found.
-    - **System response**: If no action row is found within 3 s of the artwork page rendering, the button is inserted as a floating pill instead.
+    - **System response**: If no action row is found within 3 s of the artwork page loading or of pixiv's in-app navigation to it, the button is inserted as a floating pill instead. The 3 s is measured to the pill appearing; placing it counts inside the 3 s (4.7.1) (per R-004 S4).
     - **User sees**: The same pill, in every state, positioned 16 px from the right and bottom edges of the artwork image area, above the image, with a `0 2px 8px rgba(0,0,0,.24)` shadow. If the artwork area also can't be found, the pill is fixed 24 px from the bottom-right of the viewport. (assumption — confirm: inset, shadow, and viewport fallback are not mocked)
     - **Details**: If the action row appears later, the button moves into it and keeps its state. Downloads work exactly as in CUJ-1 and CUJ-2.
 
 #### Edge Cases & Error States
 - **All-ages work while logged out**: if pixiv shows the work to logged-out visitors, there is no needs-login state and downloads work normally, because originals need only the Referer. If pixiv hides it behind its sensitive-content wall (`This work may contain sensitive content. Please log in to view this work.`), the button shows `Log in to download` exactly as on an R-18 work, even though the originals would download with the Referer alone: the extension respects pixiv's login requirement wherever pixiv imposes one (per R-003).
 - **Logged in elsewhere after this page loaded** (e.g. logged in from another tab): this page still says logged out, so the button still shows `Log in to download`. Clicking it goes to pixiv login, which redirects straight back because the session already exists, and the reloaded page shows `Download · 68P`.
-- **Logged out in another tab after this page loaded**: the button shows `Download`. The click is refused and ends in `Retry` with the "pixiv refused this work" tooltip.
+- **Logged out in another tab after this page loaded**: this page still says logged in, so the button shows `Download`. On an R-18 or R-18G work the click is refused and ends in `Retry` with the "pixiv refused this work" tooltip. On a walled all-ages work the download proceeds: pixiv showed the work when this page loaded and still serves it to this session (per R-004 S12; revisit after the release checklist's logged-in stale-page probe).
+- **Clicked before the metadata arrived** (logged out, on a walled or R-18 work): the button briefly shows its busy ring, then becomes `Log in to download`. Nothing is fetched beyond pixiv's artwork API: no page list, no `ugoira_meta`, no image (per R-004 S12).
 - **Partial failure, then the user changes the folder pattern before clicking Retry**: the retry still writes into the original job's folder, so the artwork is never split across folders.
 - **Partial failure, then reload**: the failure memory is cleared and the button is idle. A click runs the whole job again, and the existing pages get `" (1)"` duplicates. This is accepted, because there is no persisted history (4.1 #1).
-- **Only `metadata.json` failed** (pages all landed): the button shows `Retry` with the tooltip `All 12 pages saved. metadata.json couldn't be saved. Click to retry it.` (derived copy — confirm). The retry writes only `metadata.json`.
+- **Only `metadata.json` failed** (pages all landed): the button shows `Retry` with the tooltip `All 12 pages saved. metadata.json couldn't be saved. Click to retry it.` (per R-004 S9). The retry writes only `metadata.json`. On an ugoira whose zip, `frames.json` and video all landed but `metadata.json` failed, the button shows `Retry` with the `Chrome couldn't save to your Downloads folder. Check free space and try again.` tooltip, and Retry runs the whole job again; there is no ugoira-specific copy (per R-004 S10).
+- **Ugoira video encoded, but Chrome couldn't save it**: the zip and `frames.json` stay, and the button shows `Retry` with the `Chrome couldn't save to your Downloads folder. Check free space and try again.` tooltip. Retry runs the whole job again (per R-004 S10).
 - **Rate limiting (429 with `Retry-After: 120`)**: wait at most 30 s per retry (4.5.2). After 4 attempts the file counts as failed.
 - **Floating fallback on pixiv's dark theme**: same styling as the in-row button, with the `#5fb9fb` focus ring.
 - **Screen reader**: each error state's `aria-label` contains the full cause, so it doesn't rely on the hover tooltip. The live region announces the failure once.
@@ -714,20 +720,21 @@ Mocks for this CUJ:
 - When some pages fail after 4 attempts, the button shows `Retry · 3 failed` (red outline, warning triangle, same width), and the tooltip reads exactly `9 of 12 pages saved. 3 failed after 4 attempts each. Click to retry just those 3.`
 - Clicking `Retry · 3 failed` downloads only the 3 failed pages (no other file of the artwork appears again in `chrome://downloads`), into the same folder, and ends in `Saved · 12P` when they succeed.
 - With the network disconnected, clicking Download ends in `Retry` with the tooltip `No connection. Retry when you're back online.`
+- During a sustained pixiv outage (every image request answered 500 or 503), every click ends in `Retry` with the tooltip `pixiv isn't responding. Retry in a few minutes.`, including the 7th consecutive Retry; none reads `No connection…` (per R-004 S3).
 - A logged-in account with R-18 display off in pixiv settings, clicking Download on an R-18 work, ends in `Retry` with the tooltip `pixiv refused this work. If you're logged in, check your R-18 setting on pixiv.`
 - A work deleted after page load ends in a gray `Unavailable` button with the tooltip `This work is no longer available.`, and clicking it does nothing.
 - On an ugoira whose encode fails, the zip and `frames.json` exist on disk, no video file exists, and the button shows `Retry · MP4` with the exact encode-failure tooltip. Clicking it produces only the video file.
 - A 403 on originals mid-job leaves the already-saved files in place and returns the button to `Log in to download`.
 - No error state shows a toolbar badge unless another job is in flight.
 - Cancelling never produces red styling or any message.
-- With pixiv's action row removed (simulated by deleting it in DevTools before navigation), the button appears as a floating pill at the bottom-right of the artwork area within 3 s and downloads normally.
+- With pixiv's action row removed (simulated by deleting it in DevTools before navigation), the button appears as a floating pill at the bottom-right of the artwork area within 3 s of the page loading or of the in-app navigation to it, measured to the pill appearing, and downloads normally (per R-004 S4).
 - HTTP 403 responses are never retried, while 429/500/502/503/504 and network errors are retried up to 4 attempts in total (observable as repeated requests in the extension's network log).
 
 ---
 
 ## Appendix A: Copy deck
 
-English is canonical. Strings marked **(derived)** were not mocked or given in discovery. They follow the discovery copy's voice and need owner confirmation. Variables are in `<angle brackets>`.
+English is canonical. Strings marked **(derived)** were not mocked or given in discovery. They follow the discovery copy's voice and are confirmed as written (per R-004 S9). Translations of every string still need native review before release. Variables are in `<angle brackets>`.
 
 ### Download button
 
@@ -767,16 +774,25 @@ English is canonical. Strings marked **(derived)** were not mocked or given in d
 | `aria_idle_ugoira_nometa` (derived) | `Download this ugoira as <format>, with its frame zip` |
 | `aria_idle_ugoira_zip` (derived) | `Download this ugoira's frame zip` |
 | `aria_busy_pages` | `Downloading, <done> of <total> pages saved. Click to cancel.` |
+| `aria_busy_pages_one` (derived; per R-004 S9) | `Downloading, <done> of 1 page saved. Click to cancel.` |
 | `aria_busy_frames` (derived) | `Downloading frames, <p> percent. Click to cancel.` |
 | `aria_busy_encode` | `Encoding <format>, <p> percent. Click to cancel.` |
 | `aria_saved_pages` | `Saved <n> pages to Downloads/<folder>. Click to download again.` |
+| `aria_saved_pages_one` (derived; per R-004 S9) | `Saved 1 page to Downloads/<folder>. Click to download again.` |
 | `aria_saved_ugoira` (derived) | `Saved <format> to Downloads/<folder>. Click to download again.` |
 | `aria_login` (per R-003) | `Log in to pixiv to download this work.` |
 | `aria_partial` | `<saved> of <total> pages saved, <failed> failed. Click to retry the failed pages.` |
 | `aria_failed` (derived) | `Download failed. <cause tooltip> Click to retry.` |
 | `live_start` (derived) | `Downloading <n> pages` |
+| `live_start_one` (derived; per R-004 S9) | `Downloading 1 page` |
+| `live_start_ugoira` (derived; per R-004 S9) | `Downloading ugoira` |
+| `live_progress_pages` (derived; per R-004 S9) | `<done> of <total> pages saved` |
+| `live_progress_percent` (derived; per R-004 S9) | `<p> percent` |
 | `live_saved` (derived) | `Saved <n> pages` |
+| `live_saved_one` (derived; per R-004 S9) | `Saved 1 page` |
+| `live_saved_ugoira` (derived; per R-004 S9) | `Saved <format>` |
 | `live_failed` (derived) | `<n> pages failed` |
+| `live_failed_one` (derived; per R-004 S9) | `1 page failed` |
 | `live_cancelled` (derived) | `Download cancelled` |
 
 ### Toolbar
@@ -784,7 +800,8 @@ English is canonical. Strings marked **(derived)** were not mocked or given in d
 | ID | English |
 |---|---|
 | `action_title_idle` (per R-002) | `Helper for Pixiv — click to open settings` |
-| `action_title_one` (per R-002) | `Helper for Pixiv — <n> files remaining` / `Helper for Pixiv — 1 file remaining` |
+| `action_title_one` (per R-002) | `Helper for Pixiv — <n> files remaining` |
+| `action_title_one_single` (per R-002; derived; per R-004 S9) | `Helper for Pixiv — 1 file remaining` |
 | `action_title_many` (per R-002) | `Helper for Pixiv — <n> files remaining across <jobs> downloads` |
 
 ### Settings page

@@ -91,8 +91,8 @@
           <button class="icon-btn" title="More"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>
         </div>
         <div class="ml-auto flex items-center gap-3">
-          <!-- INJECTED BY EXTENSION: needs-login state (xRestrict >= 1 and page says logged out). Known before any click. -->
-          <button class="ph-btn needs-login" aria-label="Log in to pixiv to download this R-18 work" title="Opens pixiv login and returns you here">
+          <!-- INJECTED BY EXTENSION: needs-login state (page says logged out, and xRestrict >= 1 or no image URLs in pixiv's answer; PRD §4.2, per R-004 S12). Known before any click. -->
+          <button class="ph-btn needs-login" aria-label="Log in to pixiv to download this work." title="Opens pixiv login and returns you here">
             <span>Log in to download</span>
           </button>
           <button class="icon-btn" title="Like"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5c1 1.3 2.1 2 3.5 2s2.5-.7 3.5-2"/><circle cx="9" cy="10" r=".8" fill="currentColor"/><circle cx="15" cy="10" r=".8" fill="currentColor"/></svg></button>

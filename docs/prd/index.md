@@ -74,12 +74,13 @@ CUJ IDs are never reused across PRDs.
 
 ### Accessibility
 - Every interactive element the extension adds is a real, native, focusable control: `<button type="button">`, `role="switch"`, and segmented buttons with `aria-pressed` in a `role="group"`. Nothing is a clickable `<div>`.
-- Everything works by keyboard alone. Enter and Space activate buttons. Tab order follows the visual order.
+- Everything works by keyboard alone. Enter and Space activate buttons. Tab order follows the visual order on the extension's own pages. The injected Download button takes its place in pixiv's own row order, next to Like (per R-004 S7).
 - Visible focus rings appear on `:focus-visible`: 2 px `#0096FA`, 3 px offset on the injected button, and `#5fb9fb` on pixiv's dark theme.
 - The injected button uses `aria-busy="true"` while working, and a polite live region announces start, throttled progress (at most every 5 s), and the end state. Every state has an `aria-label` that carries the full meaning, including error causes, so nothing depends on hover tooltips.
 - On the options page, the invalid field gets `aria-invalid="true"` and `aria-describedby` points to a `role="alert"` message. `Saved` confirmations sit in a polite live region.
 - `prefers-reduced-motion: reduce` turns off the progress-ring transitions, the indeterminate rotation, and the `Saved` fade.
-- **Contrast:** pixiv blue `#0096FA` against white is about 3.1:1. It is used for the idle and busy fill and the Saved text, and is accepted for parity with pixiv's own primary buttons. (assumption — confirm) Every other text/background pair the extension introduces must meet WCAG 2.1 AA (4.5:1).
+- **Contrast:** pixiv blue `#0096FA` against white is about 3.1:1. It is used for the idle and busy fill and the Saved text, and is accepted for parity with pixiv's own primary buttons (per R-004 S2). Every other text/background pair the extension introduces must meet WCAG 2.1 AA (4.5:1) at rest; the colours specified in PRD-000 (§4.7.3, CUJ-3) pass it (per R-004 S2).
+- **Contrast exemption, hover tints:** a background tint shown only under the pointer, which never changes the label and whose meaning the accessible name already carries, may fall below 4.5:1, e.g. the error hover (`#d93025` on `#fdeceb`, 4.18:1) and the Saved hover (`#0096FA` on `#e6f4fe`, 2.78:1) (per R-004 S2).
 
 ### Internationalization
 - **Locales:** `en` (default), `ja`, `zh_CN`, `zh_TW`, via Chrome's `_locales/<locale>/messages.json`. This includes the extension name and description in the manifest.
@@ -124,7 +125,7 @@ CUJ IDs are never reused across PRDs.
 
 | Area | Requirement |
 |---|---|
-| Injection latency | The Download button appears within **500 ms** of pixiv rendering the artwork's action row. Fallback: a floating button within **3 s** if the row can't be found. |
+| Injection latency | The Download button appears within **500 ms** of pixiv rendering the artwork's action row. Fallback: if the row can't be found, a floating button appears within **3 s** of the artwork page loading or of pixiv's in-app navigation to it, measured to the pill appearing (per R-004 S4). |
 | Interaction latency | Busy feedback within **100 ms** of a click. State changes (Saved, idle after cancel, error) within **300 ms** of the triggering event. Toolbar badge updates within **1 s**. |
 | Tab independence | Closing the tab, reloading it, or navigating away never cancels a running download. Orchestration runs in the background service worker and encoding in an offscreen document. In-flight job state survives service-worker restarts. Quitting Chrome loses files not yet handed to Chrome, which is accepted for v1. |
 | Concurrency | At most **5 files per artwork** in Chrome's downloader at once. Different artworks run concurrently and are not serialized. |
