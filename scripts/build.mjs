@@ -1,7 +1,7 @@
 // Builds the extension: esbuild bundles plus static files.
 //
 //   node scripts/build.mjs           dev build → dist/ (inline sourcemaps, __DEBUG__ = true)
-//   node scripts/build.mjs --prod    prod build → dist/ (unminified, no sourcemaps, __DEBUG__ = false)
+//   node scripts/build.mjs --prod    prod build → dist/ (syntax-minified only, no sourcemaps, __DEBUG__ = false)
 //   node scripts/build.mjs --watch   rebuild on change (combinable with --prod or --e2e)
 //   node scripts/build.mjs --e2e     e2e build → dist-e2e/ (__RETRY_TIME_SCALE__ = 0.01, __TEST_HOOKS__ = true)
 //   --define:NAME=VALUE              override __DEBUG__, __RETRY_TIME_SCALE__ or __TEST_HOOKS__
@@ -90,6 +90,9 @@ function esbuildOptions({ prod, watch: watching }, defines, outdir) {
     platform: 'browser',
     target: 'chrome116',
     sourcemap: prod ? false : 'inline',
+    // Drops the dead `if (false)` test-hook branches from the shipped bundle (ENG-007). Whitespace
+    // and identifiers stay unminified so the bundle remains readable for store review.
+    minifySyntax: prod,
     define: Object.fromEntries(Object.entries(defines).map(([k, v]) => [k, JSON.stringify(v)])),
     outdir,
     logLevel: watching ? 'info' : 'warning',

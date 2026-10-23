@@ -28,6 +28,9 @@ jobs:
 
       - run: npm run size
 
+      # The shipped bundle must carry no test-hook code or hook names (ENG-007).
+      - run: npm run build:prod && ! grep -qE 'testHook|__hfpTest|await:(registry|resolver|handoff)' dist/*.js
+
       - run: python3 -I scripts/gen-golden.py --check
 
       - run: npx playwright install --with-deps chromium

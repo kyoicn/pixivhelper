@@ -4,9 +4,7 @@
 // storage after a restart.
 
 import { JOB_KEY_PREFIX } from '../shared/constants';
-// Imported under another name: the unminified prod bundle keeps the dead `if (false)` call text,
-// and it must not mention __testHook (design-test-harness.md).
-import { __testHook as testHook } from '../shared/test-hooks';
+import { __testHook } from '../shared/test-hooks';
 import type { JobRecord } from '../shared/job';
 
 /**
@@ -143,7 +141,7 @@ export function createRegistry({ storage, run }: RegistryOptions): Registry {
       return enqueue(async () => {
         jobs.set(job.jobId, job);
         index(job);
-        if (__TEST_HOOKS__) await testHook('await:registry.create');
+        if (__TEST_HOOKS__) await __testHook('await:registry.create');
         await write(job);
       });
     },
@@ -160,9 +158,9 @@ export function createRegistry({ storage, run }: RegistryOptions): Registry {
         const effects = fn(job);
         if (job.phase === 'ended') forget(jobId);
         else index(job);
-        if (__TEST_HOOKS__) await testHook('await:registry.persist');
+        if (__TEST_HOOKS__) await __testHook('await:registry.persist');
         await persist(job, options);
-        if (__TEST_HOOKS__) await testHook('await:registry.effects');
+        if (__TEST_HOOKS__) await __testHook('await:registry.effects');
         // Started under the lock, so runners start in mutation order; awaited outside it, so a
         // runner can call mutate without deadlocking.
         return { effectsDone: run(job, effects) };
