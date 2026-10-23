@@ -263,6 +263,11 @@ export class FakePixiv {
       ],
     });
     const server = new FakePixiv(pems.private, pems.cert);
+    // A zip is built synchronously and cached per process; built on its first request, the 1080p
+    // fixture's would outlast dist-e2e's 300 ms stall timeout and fail that download (ENG-009).
+    for (const work of WORKS) {
+      if (work.illustType === 2) ugoiraZip(work);
+    }
     await new Promise<void>((resolve, reject) => {
       server.#server.once('error', reject);
       server.#server.listen(port, '127.0.0.1', () => resolve());
