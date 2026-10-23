@@ -417,8 +417,9 @@ test.describe('CUJ-1: download an illustration or manga', { tag: '@cuj1' }, () =
     const page = await openArtwork(harness, EXAMPLE.id);
     await waitForText(page, 'Download · 12P');
     const hold = server.hold(pagesOf(EXAMPLE, range(5, 11)));
-    const clickedAt = Date.now();
     await clickButton(page);
+    // After the click: the guard runs from the page's click, not from before its dispatch.
+    const clickedAt = Date.now();
     await waitForText(page, '5 / 12');
     await expect.poll(() => hold.held).toBe(5);
     await harness.downloads.waitForFile(`${FOLDER}/${fileName(EXAMPLE, 4)}`);

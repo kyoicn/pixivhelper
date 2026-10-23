@@ -190,8 +190,9 @@ test.describe('CUJ-4: follow several downloads from the toolbar badge', { tag: '
 
     const tabA = await openArtwork(harness, EXAMPLE.id);
     await waitForText(tabA, 'Download · 12P');
-    const startedA = Date.now();
     await clickButton(tabA);
+    // After the click: the guard runs from the page's click, not from before its dispatch.
+    const startedA = Date.now();
     await waitForText(tabA, '4 / 12');
 
     const tabB = await openArtwork(harness, TAB_B.id);

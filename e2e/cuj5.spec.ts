@@ -855,8 +855,10 @@ test.describe('CUJ-5: recover when a download can’t start or breaks', { tag: '
     await clickButton(page);
     await settle(page, 'Retry · 1 failed');
     const hold = server.hold(pagesOf(EXAMPLE, [11]));
-    const startedAt = Date.now();
     await clickButton(page);
+    // After the click, not before: the guard runs from the page's click, which lands after
+    // buttonCenter's round trip; timed from before it, the cancel click can land at 480-499 ms.
+    const startedAt = Date.now();
     await waitForText(page, '11 / 12');
     await expect.poll(() => hold.held).toBe(1);
     await hoverButton(page, false);
