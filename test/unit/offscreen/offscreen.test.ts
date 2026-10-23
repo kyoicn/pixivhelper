@@ -379,7 +379,7 @@ describe('off/fetchBytes', () => {
     ]);
   });
 
-  it('off/fetchBytes: an exception at the task boundary becomes an off/failed', async () => {
+  it('off/fetchBytes: an exception at the task boundary becomes an internal off/failed', async () => {
     vi.spyOn(URL, 'createObjectURL').mockImplementationOnce(() => {
       throw new Error('out of memory');
     });
@@ -391,7 +391,7 @@ describe('off/fetchBytes', () => {
         target: 'sw',
         type: 'off/failed',
         taskId: 't1',
-        failure: { kind: 'network', detail: 'exception', attempts: 1 },
+        failure: { kind: 'internal', detail: 'exception', attempts: 1 },
       },
     ]);
   });
@@ -464,6 +464,21 @@ describe('off/fetchZip', () => {
     await expect(blobAt(lastEventFor('z').blobUrl)).resolves.toEqual({
       type: 'application/zip',
       bytes: ZIP_BYTES,
+    });
+  });
+
+  it('off/fetchZip: an exception at the task boundary becomes an internal off/failed', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockImplementationOnce(() => {
+      throw new Error('out of memory');
+    });
+    fetchMock.mockResolvedValueOnce(new Response(ZIP_BYTES));
+    deliver(fetchZip('z', true));
+    await until(() => expect(eventsFor('z').at(-1)).toMatchObject({ type: 'off/failed' }));
+    expect(eventsFor('z').at(-1)).toEqual({
+      target: 'sw',
+      type: 'off/failed',
+      taskId: 'z',
+      failure: { kind: 'internal', detail: 'exception', attempts: 1 },
     });
   });
 

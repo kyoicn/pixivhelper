@@ -31,12 +31,17 @@ export type FailureKind =
   | 'disk' // chrome.downloads interrupt FILE_* or "Invalid filename"
   | 'dismissed' // interrupt USER_CANCELED (Save As dialog dismissed) — never retried
   | 'encode' // zip parse / decode / encoder / muxer error
+  // The extension's own plumbing failed: an offscreen command refused or undeliverable, an
+  // off/ready without a blob URL, an exception at an offscreen task boundary, or no context
+  // answered an API call.
+  | 'internal'
   | 'aborted'; // our own cancel
 export interface Failure {
   kind: FailureKind;
-  status?: number;
+  status?: number; // kind 'http' (and pixivError when known): the status of the final attempt
+  lastStatus?: number; // kind 'network' | 'timeout' only: the last 429/5xx an EARLIER attempt of the same request got (system.md §9)
   detail?: string;
-  attempts: number;
+  attempts: number; // fetches: attempts made (1..4); encode: encoder passes
 }
 
 export type JobMode = 'full' | 'retryPages' | 'retryEncode' | 'retryMetadata';

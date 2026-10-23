@@ -218,6 +218,7 @@ const FAILURE_KINDS: Record<FailureKind, true> = {
   disk: true,
   dismissed: true,
   encode: true,
+  internal: true,
   aborted: true,
 };
 const ERROR_CAUSES: Record<ErrorCause, true> = {
@@ -529,6 +530,7 @@ function isFailure(v: unknown): v is Failure {
     isKeyOf(v.kind, FAILURE_KINDS) &&
     isCount(v.attempts) &&
     isOptional(v, 'status', isCount) &&
+    isOptional(v, 'lastStatus', isCount) &&
     isOptional(v, 'detail', (d) => typeof d === 'string')
   );
 }

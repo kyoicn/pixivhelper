@@ -20,12 +20,19 @@ function failures(job: JobRecord): Failure[] {
   return job.apiFailure ? [job.apiFailure.failure, ...list] : list;
 }
 
-// Row 8: the cause of a job that saved nothing.
+/**
+ * A network failure that never got an answer. One after a 429/5xx on the same request
+ * (`lastStatus`, Chromium throttling) means pixiv was failing, not the connection.
+ */
+const isUnanswered = (f: Failure): boolean => f.kind === 'network' && f.lastStatus === undefined;
+
+// Row 8: the cause of a job that saved nothing. `internal`, `timeout`, throttled network
+// failures and every HTTP status read as `server` (system.md §10 "Why `internal` reads as `server`").
 function errorCause(list: Failure[], navigatorOnLine: boolean): ErrorCause {
   if (list.length > 0 && list.every((f) => f.kind === 'disk' || f.kind === 'dismissed')) {
     return 'disk';
   }
-  if (!navigatorOnLine || (list.length > 0 && list.every((f) => f.kind === 'network'))) {
+  if (!navigatorOnLine || (list.length > 0 && list.every(isUnanswered))) {
     return 'offline';
   }
   return 'server';

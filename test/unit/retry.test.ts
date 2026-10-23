@@ -165,6 +165,67 @@ describe('fetchWithRetry: network errors', () => {
   });
 });
 
+describe('fetchWithRetry: lastStatus (Chromium throttling after 429/5xx)', () => {
+  it('fetchWithRetry: 503 then three network errors keeps network and adds lastStatus 503', async () => {
+    fetchMock
+      .mockResolvedValueOnce(statusResponse(503))
+      .mockRejectedValue(new TypeError('Failed to fetch'));
+    const result = await fetchWithRetry(URL_, { responseType: 'bytes', sleep });
+    expect(result).toEqual({
+      ok: false,
+      failure: { kind: 'network', lastStatus: 503, attempts: 4 },
+    });
+  });
+
+  it('fetchWithRetry: a timeout after a 429 keeps timeout and adds lastStatus 429', async () => {
+    vi.useFakeTimers();
+    fetchMock
+      .mockResolvedValueOnce(statusResponse(429))
+      .mockImplementation(() => new Promise<Response>(() => undefined));
+    const pending = fetchWithRetry(URL_, { responseType: 'bytes', sleep });
+    await vi.advanceTimersByTimeAsync(3 * 30_000);
+    await expect(pending).resolves.toEqual({
+      ok: false,
+      failure: { kind: 'timeout', lastStatus: 429, attempts: 4 },
+    });
+  });
+
+  it('fetchWithRetry: lastStatus is the most recent 429/5xx', async () => {
+    fetchMock
+      .mockResolvedValueOnce(statusResponse(429))
+      .mockResolvedValueOnce(statusResponse(502))
+      .mockRejectedValue(new TypeError('Failed to fetch'));
+    const result = await fetchWithRetry(URL_, { responseType: 'bytes', sleep });
+    expect(result).toEqual({
+      ok: false,
+      failure: { kind: 'network', lastStatus: 502, attempts: 4 },
+    });
+  });
+
+  it('fetchWithRetry: network errors on every attempt carry no lastStatus', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    const result = await fetchWithRetry(URL_, { responseType: 'bytes', sleep });
+    expect(result).toEqual({ ok: false, failure: { kind: 'network', attempts: 4 } });
+  });
+
+  it('fetchWithRetry: a final http failure carries its status, not lastStatus', async () => {
+    fetchMock
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValue(statusResponse(503));
+    const result = await fetchWithRetry(URL_, { responseType: 'bytes', sleep });
+    expect(result).toEqual({ ok: false, failure: { kind: 'http', status: 503, attempts: 4 } });
+  });
+
+  it('fetchWithRetry: 403 still ends after 1 attempt with no lastStatus', async () => {
+    respondAlways(() => statusResponse(403));
+    const result = await fetchWithRetry(URL_, { responseType: 'bytes', sleep });
+    expect([result, fetchMock.mock.calls.length]).toEqual([
+      { ok: false, failure: { kind: 'http', status: 403, attempts: 1 } },
+      1,
+    ]);
+  });
+});
+
 describe('fetchWithRetry: delays', () => {
   it('fetchWithRetry: backoff is 1.5·2ⁿ s with zero jitter', async () => {
     respondAlways(() => statusResponse(500));

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FileTask, JobRecord } from '../../src/shared/job';
-import type { CapsGetResponse } from '../../src/shared/messages';
+import { isForTarget, type CapsGetResponse } from '../../src/shared/messages';
+import type { Failure } from '../../src/shared/types';
 import type { ChromeFake } from '../fakes/chrome';
 import {
   API,
@@ -82,6 +83,24 @@ function seedJob(tabId: number, extra: Partial<JobRecord>): void {
     ...extra,
   };
   fake.storage.session.seed({ [`job:${job.jobId}`]: job });
+}
+
+/** Every distinct file failure the SW writes to a job record in storage.session, in order. */
+function recordFailures(): Failure[] {
+  const seen = new Set<string>();
+  const failures: Failure[] = [];
+  fake.storage.session.onChanged.addListener((changes) => {
+    for (const change of Object.values(changes)) {
+      const record = change.newValue as JobRecord | undefined;
+      for (const file of record?.files ?? []) {
+        const key = `${record?.jobId}:${file.idx}`;
+        if (!file.failure || seen.has(key)) continue;
+        seen.add(key);
+        failures.push(file.failure);
+      }
+    }
+  });
+  return failures;
 }
 
 async function driveToEnd(tab: ContentTab): Promise<void> {
@@ -187,5 +206,40 @@ describe('sw: handlers end to end', () => {
     await settle(tab.send({ type: 'job/start', mode: 'full', artworkId: ID, expectedFiles: 3 }));
     await driveToEnd(tab);
     expect(tab.ended()?.outcome?.type).toBe('error');
+  });
+
+  it('sw: a refused offscreen command fails its file internal, and the job reads server, not offline', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    new ScriptedOffscreen(fake, { refuse: ['off/fetchBytes'] });
+    const failures = recordFailures();
+    await bootSw();
+    const tab = new ContentTab(fake, ARTWORK_URL, api());
+    await settle(tab.send({ type: 'job/start', mode: 'full', artworkId: ID, expectedFiles: 3 }));
+    await driveToEnd(tab);
+    expect([failures.map((f) => f.kind), tab.ended()?.outcome]).toEqual([
+      ['internal', 'internal', 'internal'],
+      { type: 'error', cause: 'server' },
+    ]);
+  });
+
+  it('sw: an undeliverable offscreen command fails its file internal', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    new ScriptedOffscreen(fake);
+    const sendMessage = fake.api.runtime.sendMessage;
+    const deliver = sendMessage.getMockImplementation();
+    sendMessage.mockImplementation((message: unknown) =>
+      isForTarget(message, 'offscreen') && message.type === 'off/fetchBytes'
+        ? Promise.reject(new Error('The message port closed before a response was received.'))
+        : (deliver?.(message) ?? Promise.resolve(undefined)),
+    );
+    const failures = recordFailures();
+    await bootSw();
+    const tab = new ContentTab(fake, ARTWORK_URL, api());
+    await settle(tab.send({ type: 'job/start', mode: 'full', artworkId: ID, expectedFiles: 3 }));
+    await driveToEnd(tab);
+    expect([new Set(failures.map((f) => f.kind)), tab.ended()?.outcome]).toEqual([
+      new Set(['internal']),
+      { type: 'error', cause: 'server' },
+    ]);
   });
 });

@@ -64,7 +64,7 @@ export function onOffReady(job: JobRecord, idx: number, event: OffReadyEvent): E
     return settle(job);
   }
   if (event.blobUrl === undefined) {
-    settleFile(file, 'failed', { kind: 'network', detail: 'no blob', attempts: 1 });
+    settleFile(file, 'failed', { kind: 'internal', detail: 'no blob', attempts: 1 });
     return settle(job, [{ type: 'release', taskIds: [event.taskId] }]);
   }
   file.state = 'saving';

@@ -343,6 +343,58 @@ describe('classifyOutcome', () => {
       const dropped = job({ apiFailure: { endpoint: 'pages', failure: fail('network') } });
       expect(classifyOutcome(dropped, ONLINE)).toEqual({ type: 'error', cause: 'offline' });
     });
+
+    // QA iteration 1 (CUJ-5): Chromium throttled the later attempts during a sustained 503.
+    it('classifyOutcome: network failures after a 503 on every page (lastStatus) are server', () => {
+      const throttled: Failure = { kind: 'network', lastStatus: 503, attempts: 4 };
+      const down = pagesJob(allPages(throttled));
+      expect(classifyOutcome(down, ONLINE)).toEqual({ type: 'error', cause: 'server' });
+    });
+
+    it('classifyOutcome: one throttled network failure among plain ones is server', () => {
+      const throttled: Failure = { kind: 'network', lastStatus: 503, attempts: 4 };
+      const mixed = pagesJob({ ...allPages(fail('network')), 0: throttled });
+      expect(classifyOutcome(mixed, ONLINE)).toEqual({ type: 'error', cause: 'server' });
+    });
+
+    it('classifyOutcome: a timeout after a 429 (lastStatus) is server', () => {
+      const throttled: Failure = { kind: 'timeout', lastStatus: 429, attempts: 4 };
+      const down = pagesJob(allPages(throttled));
+      expect(classifyOutcome(down, ONLINE)).toEqual({ type: 'error', cause: 'server' });
+    });
+
+    it('classifyOutcome: navigator offline beats throttled network failures', () => {
+      const throttled: Failure = { kind: 'network', lastStatus: 503, attempts: 4 };
+      const down = pagesJob(allPages(throttled));
+      expect(classifyOutcome(down, OFFLINE)).toEqual({ type: 'error', cause: 'offline' });
+    });
+
+    it('classifyOutcome: internal failures on every page are server', () => {
+      const broken = pagesJob(allPages(fail('internal')));
+      expect(classifyOutcome(broken, ONLINE)).toEqual({ type: 'error', cause: 'server' });
+    });
+
+    it('classifyOutcome: any internal failure among network failures is server', () => {
+      const mixed = pagesJob({ ...allPages(fail('network')), 6: fail('internal') });
+      expect(classifyOutcome(mixed, ONLINE)).toEqual({ type: 'error', cause: 'server' });
+    });
+
+    it('classifyOutcome: an API internal failure (no context answered) is server', () => {
+      const broken = job({
+        kind: 'unknown',
+        apiFailure: { endpoint: 'illust', failure: fail('internal') },
+      });
+      expect(classifyOutcome(broken, ONLINE)).toEqual({ type: 'error', cause: 'server' });
+    });
+
+    it('classifyOutcome: an ugoira whose zip failed internally is server', () => {
+      const broken = ugoiraJob({
+        zip: fail('internal'),
+        framesJson: 'skipped',
+        video: 'skipped',
+      });
+      expect(classifyOutcome(broken, ONLINE)).toEqual({ type: 'error', cause: 'server' });
+    });
   });
 
   describe('row 9: ugoira error disk', () => {

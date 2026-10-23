@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { serializeJson } from '../../src/shared/metadata';
 import type { ChromeFake } from '../fakes/chrome';
 import {
@@ -172,6 +172,21 @@ describe('sw: ugoira job (CUJ-2)', () => {
       [`${FOLDER}/metadata.json`, `${FOLDER}/${ID}_ugoira.zip`, `${FOLDER}/frames.json`],
       { type: 'encodeFailed', folder: FOLDER, format: 'mp4' },
     ]);
+  });
+
+  it('sw: a refused off/encode fails the video as encode: zip kept, Retry · MP4 (encodeFailed)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { tab } = await runJob({ refuse: ['off/encode'] });
+    expect([savedFiles(fake), tab.ended()?.outcome]).toEqual([
+      [`${FOLDER}/metadata.json`, `${FOLDER}/${ID}_ugoira.zip`, `${FOLDER}/frames.json`],
+      { type: 'encodeFailed', folder: FOLDER, format: 'mp4' },
+    ]);
+  });
+
+  it('sw: a refused off/fetchZip fails the zip internal and ends server, not offline', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { tab } = await runJob({ refuse: ['off/fetchZip'] });
+    expect(tab.ended()?.outcome).toEqual({ type: 'error', cause: 'server' });
   });
 
   it('sw: a 403 on the zip ends needs-login', async () => {

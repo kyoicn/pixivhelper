@@ -143,6 +143,12 @@ describe('transitions: off/ready', () => {
     expect(record.files[0]?.state).toBe('failed');
   });
 
+  it('off/ready: a file to save without a blob URL fails internal, not network', () => {
+    const record = job([page(0, 'fetching', { taskId: 't0' })]);
+    onOffReady(record, 0, ready('t0'));
+    expect(record.files[0]?.failure).toEqual({ kind: 'internal', detail: 'no blob', attempts: 1 });
+  });
+
   it('off/ready: an event for a file that already failed only releases the task', () => {
     const record = job([page(0, 'failed', { taskId: 't0' })]);
     expect(onOffReady(record, 0, ready('t0', BLOB))).toEqual([

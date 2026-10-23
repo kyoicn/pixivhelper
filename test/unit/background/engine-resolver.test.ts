@@ -372,13 +372,13 @@ describe('resolver: API failures', () => {
     });
   });
 
-  it('resolve: no tab and no offscreen answer is a network failure', async () => {
+  it('resolve: no tab and no offscreen answer is an internal failure, not network', async () => {
     const d = { ...deps(), apiFetchJson: () => Promise.reject(new Error('off/fetchJson failed')) };
     expect(await resolve(job(full(MANGA)), d)).toEqual({
       ok: false,
       apiFailure: {
         endpoint: 'illust',
-        failure: { kind: 'network', detail: 'off/fetchJson failed', attempts: 1 },
+        failure: { kind: 'internal', detail: 'off/fetchJson failed', attempts: 1 },
       },
     });
   });

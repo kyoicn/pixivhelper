@@ -171,7 +171,13 @@ export function createEngine(): Engine {
       detail = errorMessage(error);
     }
     log.warn('offscreen did not take', role, detail);
-    const failure = { kind: role === 'video' ? 'encode' : 'network', detail, attempts: 0 } as const;
+    // The extension's own plumbing failed, not the network (system.md §10). A video keeps
+    // `encode`: its zip landed, so `Retry · MP4` is the right next action.
+    const failure = {
+      kind: role === 'video' ? 'encode' : 'internal',
+      detail,
+      attempts: 0,
+    } as const;
     await registry.mutate(job.jobId, (record) =>
       onOffFailed(record, idx, { target: 'sw', type: 'off/failed', taskId, failure }),
     );

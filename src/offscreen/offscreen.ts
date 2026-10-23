@@ -212,13 +212,16 @@ function reportFailed(task: Task, failure: Failure): void {
   emit({ target: 'sw', type: 'off/failed', taskId: task.taskId, failure });
 }
 
-/** The Failure for an exception at the task boundary; encode errors carry their own detail. */
+/**
+ * The Failure for an exception at the task boundary; encode errors carry their own detail. Any
+ * other task's exception is a bug, not a fetch outcome (fetchWithRetry never throws): `internal`.
+ */
 function failureOf(kind: TaskKind, error: unknown): Failure {
   if (kind === 'encode') {
     const detail = error instanceof EncodeError ? error.detail : 'encoder';
     return { kind: 'encode', detail, attempts: 1 };
   }
-  return { kind: 'network', detail: 'exception', attempts: 1 };
+  return { kind: 'internal', detail: 'exception', attempts: 1 };
 }
 
 /**

@@ -251,7 +251,10 @@ async function fetchCaps(work: WorkInfo, deps: ResolverDeps): Promise<CodecCaps>
   }
 }
 
-/** A transport error (no tab and no offscreen answer) counts as a network failure. */
+/**
+ * A transport error (neither the tab nor the offscreen document answered) is `internal`: no
+ * context could make the request, which says nothing about the user's connection (system.md §10).
+ */
 async function fetchJson(
   job: JobRecord,
   url: string,
@@ -263,7 +266,7 @@ async function fetchJson(
     return {
       ok: false,
       failure: {
-        kind: 'network',
+        kind: 'internal',
         detail: error instanceof Error ? error.message : String(error),
         attempts: 1,
       },

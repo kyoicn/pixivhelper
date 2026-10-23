@@ -44,7 +44,8 @@ type BodyResult = { ok: true; parts: Bytes[]; loaded: number } | { ok: false; de
 /**
  * Fetches `url` with up to MAX_ATTEMPTS attempts. 429/500/502/503/504, network errors and 30 s
  * inactivity are retried after `Retry-After` (positive seconds, capped at 30 s) or a jittered
- * exponential backoff; every other outcome is final. Never throws.
+ * exponential backoff; every other outcome is final. A final network or timeout failure that
+ * follows a 429/5xx answer carries that status as `lastStatus` (system.md §9). Never throws.
  */
 export async function fetchWithRetry<R extends ResponseType>(
   url: string,
@@ -53,6 +54,8 @@ export async function fetchWithRetry<R extends ResponseType>(
   const random = opts.random ?? Math.random;
   const sleep = opts.sleep ?? abortableSleep;
   const label = logLabel(url);
+  // Only a 429/5xx can precede a further attempt, so any status an attempt got qualifies.
+  let lastStatus: number | undefined;
   for (let n = 0; ; n++) {
     if (opts.signal?.aborted) return { ok: false, failure: { kind: 'aborted', attempts: n } };
     const attempts = n + 1;
@@ -65,8 +68,9 @@ export async function fetchWithRetry<R extends ResponseType>(
     const outcome = failure.kind === 'http' ? String(failure.status) : failure.kind;
     if (!isRetryable(failure) || attempts === MAX_ATTEMPTS) {
       log.debug(`${label} attempt ${attempts}/${MAX_ATTEMPTS}: ${outcome}, giving up`);
-      return { ok: false, failure };
+      return { ok: false, failure: withLastStatus(failure, lastStatus) };
     }
+    if (failure.kind === 'http') lastStatus = failure.status;
     const delayMs = (result.retryAfterMs ?? backoffMs(n, random)) * __RETRY_TIME_SCALE__;
     log.debug(
       `${label} attempt ${attempts}/${MAX_ATTEMPTS}: ${outcome}, retry in ${Math.round(delayMs)} ms`,
@@ -202,6 +206,16 @@ function decode<R extends ResponseType>(
     return { ok: false, failure: { kind: 'pixivError', status }, retryAfterMs: null };
   }
   return { ok: true, value: json as ResponseValues[R], status };
+}
+
+/**
+ * Chromium refuses an extension's repeated requests to a URL that keeps answering 5xx, and fetch
+ * reports that as a plain TypeError: the earlier answer tells "pixiv failed, then the browser
+ * stopped asking" from "nothing answered" (system.md §9, §10 row 8).
+ */
+function withLastStatus(failure: Failure, lastStatus: number | undefined): Failure {
+  const unanswered = failure.kind === 'network' || failure.kind === 'timeout';
+  return unanswered && lastStatus !== undefined ? { ...failure, lastStatus } : failure;
 }
 
 function isRetryable(failure: Failure): boolean {
