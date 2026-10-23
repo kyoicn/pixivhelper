@@ -18,8 +18,7 @@ import {
   type UgoiraMeta,
 } from '../shared/pixiv-api';
 import { createLogger } from '../shared/log';
-// Imported under another name: the prod bundle must not mention __testHook.
-import { __testHook as testHook } from '../shared/test-hooks';
+import { __testHook } from '../shared/test-hooks';
 import type { RetryResult, UgoiraOutput, WorkInfo } from '../shared/types';
 import type { Effect } from './registry';
 import { settle } from './scheduler';
@@ -240,7 +239,7 @@ async function fetchIllust(
   job: JobRecord,
   deps: ResolverDeps,
 ): Promise<Step<{ work: WorkInfo; body: Record<string, unknown> }>> {
-  if (__TEST_HOOKS__) await testHook('await:resolver.illust');
+  if (__TEST_HOOKS__) await __testHook('await:resolver.illust');
   const raw = await fetchJson(job, illustUrl(job.artworkId), deps);
   const parsed = parseIllust(raw);
   if (!parsed.ok) return failed('illust', parsed.failure);
@@ -249,19 +248,19 @@ async function fetchIllust(
 }
 
 async function fetchPages(job: JobRecord, deps: ResolverDeps): Promise<Step<string[]>> {
-  if (__TEST_HOOKS__) await testHook('await:resolver.pages');
+  if (__TEST_HOOKS__) await __testHook('await:resolver.pages');
   const parsed = parsePages(await fetchJson(job, pagesUrl(job.artworkId), deps));
   return parsed.ok ? parsed : failed('pages', parsed.failure);
 }
 
 async function fetchUgoiraMeta(job: JobRecord, deps: ResolverDeps): Promise<Step<UgoiraMeta>> {
-  if (__TEST_HOOKS__) await testHook('await:resolver.ugoiraMeta');
+  if (__TEST_HOOKS__) await __testHook('await:resolver.ugoiraMeta');
   const parsed = parseUgoiraMeta(await fetchJson(job, ugoiraMetaUrl(job.artworkId), deps));
   return parsed.ok ? parsed : failed('ugoira_meta', parsed.failure);
 }
 
 async function fetchCaps(work: WorkInfo, deps: ResolverDeps): Promise<CodecCaps> {
-  if (__TEST_HOOKS__) await testHook('await:resolver.caps');
+  if (__TEST_HOOKS__) await __testHook('await:resolver.caps');
   try {
     return await deps.getCaps(work.width, work.height);
   } catch (error) {

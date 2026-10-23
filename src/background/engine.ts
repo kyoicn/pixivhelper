@@ -8,8 +8,7 @@ import { createLogger } from '../shared/log';
 import type { JobCancelResponse, OffscreenToSwEvent, OffTaskSnapshot } from '../shared/messages';
 import { classifyOutcome } from '../shared/outcome';
 import { readSettings } from '../shared/settings';
-// Imported under another name: the prod bundle must not mention __testHook.
-import { __testHook as testHook } from '../shared/test-hooks';
+import { __testHook } from '../shared/test-hooks';
 import type { JobOutcome, JobView } from '../shared/types';
 import { createBadgeRenderer, type BadgeRenderer } from './badge';
 import { getCaps, probePending } from './caps';
@@ -190,7 +189,7 @@ export function createEngine(): Engine {
       return;
     }
     const { blobUrl } = file;
-    if (__TEST_HOOKS__) await testHook('await:handoff.download');
+    if (__TEST_HOOKS__) await __testHook('await:handoff.download');
     let downloadId: number;
     try {
       downloadId = await chrome.downloads.download(downloadOptions(job, file));
