@@ -112,6 +112,19 @@ const savedSections = (): Section[] =>
     (section) => $(`#${section} .saved`).textContent === 'Saved',
   );
 
+/** Holds `area`'s next write until the returned function is called; then it stores as usual. */
+function holdNextWrite(area: ReturnType<typeof createArea>): () => void {
+  const write = area.set.getMockImplementation();
+  let release = (): void => {};
+  area.set.mockImplementationOnce(
+    (items: Record<string, unknown>) =>
+      new Promise<void>((resolve) => {
+        release = () => resolve(write?.(items));
+      }),
+  );
+  return () => release();
+}
+
 /** The user edits the field: focus, new value, input event. */
 function type(value: string): void {
   field().focus();
@@ -471,6 +484,86 @@ describe('options page: folder pattern', () => {
     $('[data-token="{title}"]').click();
     await advance(SETTINGS_DEBOUNCE_MS);
     expect(stored()?.folderPattern).toBe('pixiv/{artist}-{id}{title}');
+  });
+});
+
+// QA iteration 1, CUJ-3: a Saved from the previous valid save stayed beside the error.
+describe('options page: no Saved beside a validation error', () => {
+  const folderSaved = (): HTMLElement => $('#folder .saved');
+
+  beforeEach(async () => {
+    await initOptionsPage();
+  });
+
+  it('error: a valid save, then an invalid edit within 2 s, empties the folder Saved as the error renders', async () => {
+    $('[data-token="{id}"]').click();
+    await advance(SETTINGS_DEBOUNCE_MS);
+    type('pixiv/{artst}-{id}');
+    await advance(SETTINGS_DEBOUNCE_MS);
+    expect([errorBox().hidden, folderSaved().textContent, folderSaved().style.opacity]).toEqual([
+      false,
+      '',
+      '0',
+    ]);
+  });
+
+  it('error: the folder Saved is already empty when the error box appears', async () => {
+    $('[data-token="{id}"]').click();
+    await advance(SETTINGS_DEBOUNCE_MS);
+    let savedWhenShown: string | null = null;
+    new MutationObserver(() => {
+      savedWhenShown ??= folderSaved().textContent;
+    }).observe(errorBox(), { attributes: true, attributeFilter: ['hidden'] });
+    type('pixiv/{artst}-{id}');
+    await advance(SETTINGS_DEBOUNCE_MS);
+    expect(savedWhenShown).toBe('');
+  });
+
+  it('error: a write that resolves after the field turned invalid does not flash Saved', async () => {
+    const release = holdNextWrite(storage.sync);
+    type('pixiv/{title}');
+    await advance(SETTINGS_DEBOUNCE_MS);
+    type('pixiv/{artst}-{id}');
+    await advance(SETTINGS_DEBOUNCE_MS);
+    release();
+    await advance();
+    expect([errorBox().hidden, savedSections()]).toEqual([false, []]);
+  });
+
+  it('error: a write that resolves after the field turned invalid is still stored', async () => {
+    const release = holdNextWrite(storage.sync);
+    type('pixiv/{title}');
+    await advance(SETTINGS_DEBOUNCE_MS);
+    type('pixiv/{artst}-{id}');
+    await advance(SETTINGS_DEBOUNCE_MS);
+    release();
+    await advance();
+    expect([stored()?.folderPattern, lineText('#preview')]).toEqual([
+      'pixiv/{title}',
+      'Still using: pixiv/{title} — your last valid pattern stays in effect until this one is fixed.',
+    ]);
+  });
+
+  it('error: a write that resolves once the field is valid again still flashes Saved', async () => {
+    const release = holdNextWrite(storage.sync);
+    type('pixiv/{title}');
+    await advance(SETTINGS_DEBOUNCE_MS);
+    type('pixiv/{artst}-{id}');
+    await advance(SETTINGS_DEBOUNCE_MS);
+    type('pixiv/{title}');
+    await advance(SETTINGS_DEBOUNCE_MS);
+    release();
+    await advance();
+    expect(savedSections()).toEqual(['folder']);
+  });
+
+  it('error: leaves the Ugoira output and metadata Saved alone', async () => {
+    $('[data-value="webm"]').click();
+    $('#meta').click();
+    await advance();
+    type('pixiv/{artst}-{id}');
+    await advance(SETTINGS_DEBOUNCE_MS);
+    expect([errorBox().hidden, savedSections()]).toEqual([false, ['ugoira', 'metadata']]);
   });
 });
 

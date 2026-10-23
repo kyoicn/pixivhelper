@@ -7,6 +7,8 @@ import { t } from '../shared/i18n';
 export interface SavedIndicator {
   /** Shows the check and `Saved` for SAVED_VISIBLE_MS, then fades out; a re-flash restarts it. */
   flash(): void;
+  /** Hides it at once, without a fade, and cancels a pending hide or clear. */
+  clear(): void;
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -36,11 +38,15 @@ export function createSavedIndicator(el: HTMLElement): SavedIndicator {
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
   let clearTimer: ReturnType<typeof setTimeout> | undefined;
 
+  const hideNow = (): void => {
+    el.style.transition = 'none';
+    el.style.opacity = '0';
+    el.replaceChildren();
+  };
+
   const hide = (): void => {
     if (matchMedia(REDUCED_MOTION_QUERY).matches) {
-      el.style.transition = 'none';
-      el.style.opacity = '0';
-      el.replaceChildren();
+      hideNow();
       return;
     }
     el.style.transition = `opacity ${SAVED_FADE_MS}ms`;
@@ -48,14 +54,22 @@ export function createSavedIndicator(el: HTMLElement): SavedIndicator {
     clearTimer = setTimeout(() => el.replaceChildren(), SAVED_FADE_MS);
   };
 
+  const cancel = (): void => {
+    clearTimeout(hideTimer);
+    clearTimeout(clearTimer);
+  };
+
   return {
     flash() {
-      clearTimeout(hideTimer);
-      clearTimeout(clearTimer);
+      cancel();
       el.replaceChildren(checkIcon(), t('opt_saved'));
       el.style.transition = 'none';
       el.style.opacity = '1';
       hideTimer = setTimeout(hide, SAVED_VISIBLE_MS);
+    },
+    clear() {
+      cancel();
+      hideNow();
     },
   };
 }

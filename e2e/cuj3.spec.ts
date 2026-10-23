@@ -18,7 +18,10 @@
 //   e2e/cuj2.spec.ts (tasks 4.1 and 4.3), not here.
 // - `Reset to defaults` restores all three defaults immediately: "reset: …" (2 tests).
 // - Footer: Reset, Report an issue, the version and the privacy line: "footer: …".
-// - Dark OS → dark page; light → light: "theme: …" (2 tests).
+// - Dark OS → dark page; light → light: "theme: …" (2 tests), incl. the Saved, validation-message
+//   and "Still using" text colours, which follow system.md §11.5 (WCAG AA) rather than the mocks.
+// - Step 5 "No `Saved` appears": a Saved from a valid save made just before never shows beside
+//   the error (QA iteration 1 regression): "saved: … invalid edit within 2 s …".
 // - Chrome in Japanese, Simplified or Traditional Chinese → every string in that language:
 //   "locale: …" (ja, zh_CN, zh_TW, plus en).
 // - Every control reachable and operable by keyboard alone, in the PRD tab order: "keyboard: …".
@@ -101,6 +104,12 @@ interface Recorder {
   lastInput: number;
   lastClick: number;
   errorShown: number;
+}
+/** A moment the folder Saved had content while the validation message was shown. */
+interface Overlap {
+  at: number;
+  saved: string;
+  opacity: string;
 }
 
 function rgb(hex: string): string {
@@ -225,6 +234,40 @@ async function record(page: Page): Promise<void> {
 
 function recorded(page: Page): Promise<Recorder> {
   return page.evaluate(() => (window as unknown as { __rec: Recorder }).__rec);
+}
+
+/**
+ * Records each state in which the folder Saved has content while the validation message is shown.
+ * Every change to either element is checked, so no such state can go unseen.
+ */
+async function watchSavedBesideError(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const saved = document.querySelector<HTMLElement>('#folder .saved');
+    const errorBox = document.querySelector<HTMLElement>('#pattern-error');
+    if (!saved || !errorBox) throw new Error('no folder Saved or #pattern-error');
+    const overlaps: Overlap[] = [];
+    (window as unknown as { __overlaps: Overlap[] }).__overlaps = overlaps;
+    const observer = new MutationObserver(() => {
+      if (!errorBox.hidden && saved.textContent !== '') {
+        overlaps.push({
+          at: performance.now(),
+          saved: saved.textContent ?? '',
+          opacity: saved.style.opacity,
+        });
+      }
+    });
+    observer.observe(saved, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+    });
+    observer.observe(errorBox, { attributes: true, attributeFilter: ['hidden'] });
+  });
+}
+
+function savedBesideError(page: Page): Promise<Overlap[]> {
+  return page.evaluate(() => (window as unknown as { __overlaps: Overlap[] }).__overlaps);
 }
 
 /** Waits until `section`'s Saved has appeared, faded and cleared, and returns its events. */
@@ -687,6 +730,8 @@ test.describe('CUJ-3: configure the extension from the toolbar icon', { tag: '@c
       harness,
     }) => {
       const page = await openOptions(harness);
+      // The Saved green differs by scheme (the "theme: …" tests check both).
+      await page.emulateMedia({ colorScheme: 'light' });
       const ui = controls(page);
       await record(page);
 
@@ -695,7 +740,7 @@ test.describe('CUJ-3: configure the extension from the toolbar icon', { tag: '@c
       let rec = await recorded(page);
       expect((rec.saved.ugoira[0]?.at ?? Infinity) - rec.lastClick).toBeLessThanOrEqual(LATE_MS);
       expect(await computed(ui.saved('ugoira'), ['color', 'font-size'])).toEqual([
-        rgb('#1a9f5a'),
+        rgb('#188038'),
         '12.5px',
       ]);
       await expect(ui.segment('webm')).toHaveAttribute('aria-pressed', 'true');
@@ -714,6 +759,37 @@ test.describe('CUJ-3: configure the extension from the toolbar icon', { tag: '@c
 
       const ugoira = await savedCycle(page, 'ugoira');
       expect(ugoira.map((e) => e.opacity)).toEqual(['1', '0', '0']);
+    });
+
+    test('saved: a valid save, then an invalid edit within 2 s: no Saved beside Download folder while the error shows', async ({
+      harness,
+    }) => {
+      // QA iteration 1, CUJ-3: the chip's Saved stayed up to 2 s beside the error (step 5: "No
+      // `Saved` appears").
+      const page = await openOptions(harness);
+      const ui = controls(page);
+      await record(page);
+      await watchSavedBesideError(page);
+
+      await ui.chip('{id}').click();
+      await expect(ui.saved('folder')).toHaveText('Saved');
+      await ui.field.fill('pixiv/{artst}-{id}');
+      await expect(ui.errorBox).toBeVisible();
+
+      expect(await textOf(ui.saved('folder'))).toBe('');
+      // The error came while the chip's Saved would still have been on screen.
+      const rec = await recorded(page);
+      const shown = rec.saved.folder.find((e) => e.text === 'Saved');
+      expect(shown).toBeDefined();
+      expect(rec.errorShown - (shown?.at ?? 0)).toBeLessThan(SAVED_VISIBLE_MS);
+      // Past the time the old Saved would have faded out and cleared.
+      await page.waitForTimeout(SAVED_VISIBLE_MS + SAVED_FADE_MS + LATE_MS);
+      await expect(ui.errorBox).toBeVisible();
+      expect(await textOf(ui.errorText)).toBe(UNKNOWN_ARTST);
+      expect(await textOf(ui.saved('folder'))).toBe('');
+      expect(await savedBesideError(page)).toEqual([]);
+      // The chip's valid pattern stays stored; the invalid edit never is.
+      expect((await stored(harness)).sync?.folderPattern).toBe(`${DEFAULT_PATTERN}{id}`);
     });
   });
 
@@ -886,6 +962,9 @@ test.describe('CUJ-3: configure the extension from the toolbar icon', { tag: '@c
         segHover: '#f5f7f9',
         switchOff: '#bdc1c6',
         rule: '#e3e6ea',
+        saved: '#188038',
+        errorText: '#c5221f',
+        stillUsing: '#5c6166',
       },
       dark: {
         page: '#121212',
@@ -897,6 +976,9 @@ test.describe('CUJ-3: configure the extension from the toolbar icon', { tag: '@c
         segHover: '#2a2f35',
         switchOff: '#5f6368',
         rule: '#2a2f35',
+        saved: '#1a9f5a',
+        errorText: '#f28b82',
+        stillUsing: '#8a8f94',
       },
     } as const;
 
@@ -944,6 +1026,24 @@ test.describe('CUJ-3: configure the extension from the toolbar icon', { tag: '@c
         await expect(ui.metaSwitch).toHaveAttribute('aria-checked', 'false');
         expect(await computed(ui.metaSwitch, ['background-color'])).toEqual([
           rgb(colors.switchOff),
+        ]);
+        await expect(ui.saved('metadata')).toHaveText('Saved');
+        expect(await computed(ui.saved('metadata'), ['color'])).toEqual([rgb(colors.saved)]);
+
+        await ui.field.fill('pixiv/{artst}-{id}');
+        await expect(ui.errorBox).toBeVisible();
+        // The message and its icon (currentColor) take the text colour; the border keeps the
+        // PRD red in both schemes (a non-text component, 3:1).
+        for (const part of [ui.errorText, ui.errorBox.locator('svg')]) {
+          expect(await computed(part, ['color'])).toEqual([rgb(colors.errorText)]);
+        }
+        expect(await computed(ui.field, ['border-top-width', 'border-top-color'])).toEqual([
+          '2px',
+          rgb('#d93025'),
+        ]);
+        expect(await textOf(ui.preview)).toBe(stillUsing(DEFAULT_PATTERN));
+        expect(await computed(ui.preview.locator('.muted'), ['color'])).toEqual([
+          rgb(colors.stillUsing),
         ]);
       });
     }
