@@ -1,6 +1,6 @@
 # Options Page
 
-> Last updated: 2026-10-22 18:08:04 (UTC+9)
+> Last updated: 2026-10-23 02:21:28 (UTC-7)
 > Serves: prd-000 — CUJ-3 (all steps and edge cases), CUJ-2 step 1 / CUJ-3 step 7 (hint reactivity, via storage), R-001 (Report-an-issue URL), R-002 (product name)
 
 ## Overview
@@ -97,12 +97,13 @@ interface PageState {
 | page bg / text | `#f6f7f9` / `#1f1f1f` | `#121212` / `#e8eaed` |
 | help text | `#5c6166` | `#9aa0a6` |
 | field bg / border | `#fff` / 1px `#d0d5db` | `#1f1f1f` / `#3a3f45` |
-| field invalid | 2px `#d93025` | same |
+| field invalid (border) | 2px `#d93025` (a non-text component: 3:1 suffices) | same |
 | chip bg / border / hover | `#fff` / `#d0d5db` / border+text `#0096FA`, fill `#f0f8ff` | `#1f1f1f` / `#3a3f45` / fill `#102a3f` |
 | segment bg / border / hover / selected | `#fff` / `#d0d5db` / `#f5f7f9` / `#0096FA` + white 600 | `#1f1f1f` / `#3a3f45` / `#2a2f35` / same |
 | switch on / off | `#0096FA` knob right / `#bdc1c6` knob left | same / `#5f6368` |
-| saved | `#1a9f5a`, 12.5 px, check icon | same |
-| error text | `#d93025`, 13 px, info icon | same |
+| saved | **`#188038`**, 12.5 px, check icon (4.68:1 on `#f6f7f9`; the PRD's `#1a9f5a` is 3.19:1) | `#1a9f5a` (5.49:1 on `#121212`) |
+| error text (validation message) | **`#c5221f`**, 13 px, info icon (5.41:1; the PRD's `#d93025` is 4.45:1) | **`#f28b82`** (7.84:1; `#d93025` would be 3.93:1) |
+| "Still using" trailing sentence (`— your last valid pattern stays in effect …`) | **`#5c6166`** (5.84:1; the mock's `#8a8f94` is 3.04:1) | `#8a8f94` (5.74:1) |
 | links, focus ring | `#0096FA`; focus 2 px `#0096FA` on `:focus-visible` | same |
 | footer rule | `#e3e6ea` | `#2a2f35` |
 
@@ -131,12 +132,12 @@ Fonts: system stack (as the mocks), mono `ui-monospace, SFMono-Regular, Menlo, C
 flowchart TD
   I[input event] --> T[clear + start 400 ms debounce]
   T --> V{validatePattern value}
-  V -- error --> E["field.aria-invalid=true · aria-describedby=pattern-error<br/>show first message (role=alert) · 2px red border<br/>preview → 'Still using: lastValidPattern — …'<br/>nothing stored"]
+  V -- error --> E["folder Saved indicator cleared at once<br/>field.aria-invalid=true · aria-describedby=pattern-error<br/>show first message (role=alert) · 2px red border<br/>preview → 'Still using: lastValidPattern — …'<br/>nothing stored"]
   V -- ok --> P["clear error · preview = 'Preview: Downloads/' + resolveFolder(value, SAMPLE) + '/135882741_p0.jpg'"]
   P --> C{value === persisted.folderPattern?}
   C -- yes --> X["done: no write, no Saved"]
   C -- no --> W["writeSettings({...persisted, folderPattern: value})"]
-  W -- ok --> S["persisted ← new · lastValidPattern ← value · flash Saved (folder)"]
+  W -- ok --> S["persisted ← new · lastValidPattern ← value · lastOwnWriteAt ← updatedAt<br/>flash Saved (folder) only if the field shows no error now"]
   W -- not ok --> N["keep the value in the field · warn log · no Saved"]
 ```
 
@@ -168,6 +169,20 @@ flowchart TD
 
 Re-flashing resets both timers. Each indicator is `aria-live="polite"`, so screen readers hear "Saved" (index a11y).
 
+```ts
+// src/options/saved.ts
+export interface SavedIndicator {
+  flash(): void;   // as above
+  clear(): void;   // cancels both timers, empties the element and sets opacity 0 at once (no fade)
+}
+```
+
+**An error always clears the folder section's `Saved` (CUJ-3 step 5: "No `Saved` appears").** In iteration 1 a valid save followed within 2 s by a typo showed the green `✓ Saved` next to the red error (QA iteration 1, CUJ-3 LOW bug), because the indicator ran on its own timer and `showError` never touched it. A `Saved` beside `Unknown token` invites the user to believe the typo was stored, exactly the ambiguity the step forbids. Two rules close it:
+1. `showError()` calls `folderSaved.clear()` before it renders the message. Clearing has no fade: the error and the indicator are never visible together, not even for 300 ms.
+2. A `writeSettings` that resolves **after** the field became invalid does not flash: the folder flash runs only if `error === null` when the write resolves. (The write itself still counts: storage holds the earlier valid pattern, and "Still using" names it.)
+
+Clearing empties a polite live region, which announces nothing, so screen-reader users hear the `role="alert"` error alone. The other two sections' indicators are untouched (their values did not change).
+
 #### Reset to defaults (CUJ-3 step 9)
 1. Compute the sections whose value differs from `DEFAULT_SETTINGS`.
 2. Cancel any pending debounce; clear any validation error.
@@ -191,7 +206,7 @@ There is no confirmation (PRD).
 - Chips are `<button type="button">`. The segmented control is `role="group"` with `aria-pressed` buttons. The switch is `role="switch"` + `aria-checked`. Reset is a `<button>`; Report is an `<a>`.
 - The DOM order equals the PRD tab order: field → 4 chips → MP4 → WebM → ZIP only → switch → Reset to defaults → Report an issue.
 - Every control shows a 2 px `#0096FA` `:focus-visible` ring. Help text is linked via `aria-describedby` on each section's primary control.
-- Contrast: all pairs in the token table meet 4.5:1 except selected-segment white on `#0096FA` (3.1:1), which the PRD accepts (index "Contrast").
+- Contrast: all text pairs in the token table meet 4.5:1 except selected-segment white on `#0096FA` (3.1:1), which the PRD accepts (index "Contrast"). Three PRD/mock values did not (saved green, validation red in light and dark, the "Still using" gray); the design follows the index's 4.5:1 rule with the values in the Styles table, and pm syncs CUJ-3 steps 3 and 5 and the `cuj-3-*` mocks ([system.md §11.5](system.md), §15 item 7).
 
 ## Data Flow
 
@@ -235,8 +250,8 @@ sequenceDiagram
 - **Performance:** the page is static; validation and preview take < 1 ms per debounce. Bundle < 15 KB.
 - **i18n:** every string comes from `_locales` (keys in PRD Appendix A "Settings page"). Placeholder parts are styled via `splitOnPlaceholder` ([system.md §11.4](system.md)). The layout must not clip in any locale: the segmented control widths are intrinsic, and the column wraps.
 - **Testing:**
-  - Unit (happy-dom, fake timers): debounce timing; each validation message rendered with the right ARIA; "Still using" shows the last valid pattern; chip insertion at caret, with a selection, never-focused append and the 200-char guard; reset's changed-section detection; cross-tab update rules (invalid-draft and typing exemptions; own-echo suppression).
-  - E2E: real page in Chromium in light and dark (`emulateMedia`) × 4 locales (launch flag `--lang`), keyboard-only walkthrough in PRD tab order, reload persistence, two-tab sync ([design-test-harness.md](design-test-harness.md)).
+  - Unit (happy-dom, fake timers): debounce timing; each validation message rendered with the right ARIA; "Still using" shows the last valid pattern; a valid save then an invalid edit within 2 s leaves the folder indicator empty the moment the error renders; a write that resolves after the field turned invalid does not flash; `clear()` cancels a pending fade; chip insertion at caret, with a selection, never-focused append and the 200-char guard; reset's changed-section detection; cross-tab update rules (invalid-draft and typing exemptions; own-echo suppression).
+  - E2E: real page in Chromium in light and dark (`emulateMedia`) × 4 locales (launch flag `--lang`), keyboard-only walkthrough in PRD tab order, reload persistence, two-tab sync ([design-test-harness.md](design-test-harness.md)); regression for the CUJ-3 bug: insert a chip (valid, saves), then within 2 s type `pixiv/{artst}-{id}` → no `Saved` beside Download folder while the error shows; computed colours of the Saved, error and "Still using" texts in light and dark equal the Styles table.
 
 ## Dependencies & Integration Points
 

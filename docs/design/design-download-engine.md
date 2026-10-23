@@ -1,7 +1,7 @@
 # Download Engine (service worker)
 
-> Last updated: 2026-10-22 18:08:04 (UTC+9)
-> Serves: prd-000 — CUJ-1 (pipeline, cancel, re-download), CUJ-2 (ugoira job orchestration), CUJ-3 (toolbar click → settings tab), CUJ-4 (badge/title), CUJ-5 (retry modes, outcome classification)
+> Last updated: 2026-10-23 02:21:28 (UTC-7)
+> Serves: prd-000 — CUJ-1 (pipeline, cancel, re-download), CUJ-2 (ugoira job orchestration), CUJ-3 (toolbar click → settings tab), CUJ-4 (badge/title), CUJ-5 (retry modes, outcome classification, login-wall check at resolve per R-003)
 
 ## Overview
 
@@ -61,8 +61,10 @@ flowchart TB
 
 ### Data Model
 
+The job model and request protocol live in **`src/shared/job.ts`** (they were in `src/background/types.ts` in iteration 1). The pure shared modules (`outcome.ts`, `progress.ts`, `messages.ts`, `pixiv-api.ts`) and the content script's button model operate on them, and `src/shared` must not import the SW's directory ([system.md §4](system.md) layering rule, D11). The move is a pure refactor (ENG-008).
+
 ```ts
-// src/background/types.ts (extends src/shared/types.ts)
+// src/shared/job.ts (extends src/shared/types.ts)
 export type FileRole = 'metadata' | 'page' | 'zip' | 'framesJson' | 'video';
 export type FileState =
   | 'queued'    // waiting for deps / a slot
@@ -86,6 +88,8 @@ export interface FileTask {
   blobUrl?: string;
   downloadId?: number;
   failure?: Failure;
+  text?: string;                  // metadata.json text, built when the file is dispatched (the same mutation drops
+                                  // job.metaBody); kept while in flight so a re-queue after a restart can dispatch again
 }
 
 export interface UgoiraState {
@@ -116,7 +120,7 @@ export interface JobRecord {
   pagesOffset: number;            // pages already saved before this run (retryPages: total − requested)
   files: FileTask[];
   ugoira: UgoiraState | null;
-  stopReason: null | 'cancelled' | 'forbidden';
+  stopReason: null | 'cancelled' | 'forbidden';   // forbidden: first byte 403, or the resolver's login-wall check (R-003)
   apiFailure: { endpoint: 'illust' | 'pages' | 'ugoira_meta'; failure: Failure } | null;
 }
 ```
@@ -140,7 +144,9 @@ All envelopes follow [system.md §7](system.md). `ErrorCode = 'BAD_REQUEST' | 'N
 
 ```ts
 export type StartRequest =
-  | { mode: 'full'; artworkId: string; expectedFiles: number }                       // expectedFiles: pageCount, or 1 for ugoira
+  | { mode: 'full'; artworkId: string; expectedFiles: number;                        // expectedFiles: pageCount, or 1 for ugoira
+      loggedIn: boolean | null }                                                     // the page's login marker (R-003 check at resolve);
+                                                                                     // the guard accepts exactly true | false | null, else BAD_REQUEST
   | { mode: 'retryPages'; artworkId: string; folder: string; pages: number[]; total: number }  // pages: 0-based, unique, < total ≤ 200
   | { mode: 'retryEncode'; artworkId: string; folder: string; format: 'mp4' | 'webm' }
   | { mode: 'retryMetadata'; artworkId: string; folder: string };
@@ -192,7 +198,19 @@ export const ready = (async () => {
 
 All changes to a `JobRecord` go through `registry.mutate(jobId, fn)`:
 1. Mutations are serialized through one global promise chain, so concurrent event handlers can never interleave and lose an update.
-2. `fn` mutates the in-memory record and returns a list of **effects**, such as `{ dispatch: idx }`, `{ download: idx }`, `{ abort: taskIds }`, `{ release: taskIds }`, `{ push: true }`, `{ badge: true }`, `{ finalize: true }`.
+2. `fn` mutates the in-memory record and returns a list of **effects** (`src/background/registry.ts`):
+
+   ```ts
+   export type Effect =
+     | { type: 'dispatch'; idx: number }                              // send the file's offscreen command
+     | { type: 'download'; idx: number }                              // hand the file's blob URL to chrome.downloads
+     | { type: 'abort'; taskIds: string[] }                           // off/abort
+     | { type: 'release'; taskIds: string[]; keepRetained?: boolean } // off/release
+     | { type: 'cancelDownload'; downloadIds: number[] }              // chrome.downloads.cancel (Chrome removes the partial file)
+     | { type: 'push'; throttle?: boolean }                           // job/update to the origin tab; throttle for byte progress
+     | { type: 'badge' }                                              // re-render the toolbar badge and title
+     | { type: 'finalize' };                                          // classify, push the final view, release the job's tasks
+   ```
 3. The record is written to `storage.session` (or deleted when ended).
 4. Effects run only after the write resolves.
 
@@ -216,8 +234,8 @@ stateDiagram-v2
 `resolve(job)` is idempotent. If the SW dies during `resolving`, hydration simply calls it again.
 
 1. `snapshot = readSettings()` was taken at `job/start`, not here, so a re-run after restart still uses the click-time settings (PRD §4.1 #8).
-2. API calls go through `apiFetchJson(job.originTabId, url)`: first `tabs.sendMessage(tab, api/fetchJson)`, and if that throws (no receiving end, tab closed) then `off/fetchJson`. The `RetryResult` is parsed by `pixiv-api.ts`:
-   - `parseIllust(body) → WorkInfo` (+ raw body kept for `metadata.json`);
+2. API calls go through `apiFetchJson(job.originTabId, url)`: first `tabs.sendMessage(tab, api/fetchJson)`, and if that throws (no receiving end, tab closed) then `off/fetchJson`. If that also throws (the offscreen document did not answer), the call fails with `{ kind: 'internal', detail }`: no context could make the request, which says nothing about the user's connection ([system.md §10](system.md) "Why `internal` reads as `server`"). The `RetryResult` is parsed by `pixiv-api.ts`:
+   - `parseIllust(body) → WorkInfo`, including `withheld` ([system.md §8.5](system.md)) (+ raw body kept for `metadata.json`);
    - `parsePages(body) → string[]` (`urls.original` per page, page order);
    - `parseUgoiraMeta(body) → { originalSrc, frames }`.
 
@@ -229,9 +247,17 @@ stateDiagram-v2
 | `full`, illustType 0/1 | `/ajax/illust/{id}`, `/pages` | `metadata` (if `saveMetadata`), then `page` × N with names = URL basenames |
 | `full`, illustType 2 | `/ajax/illust/{id}`, `/ugoira_meta`; `caps` for body width×height | `metadata` (if enabled), `zip` (`save: true`), `framesJson` (deps: zip), `video` (deps: zip, framesJson; only if effective format ≠ `zip`) |
 | `retryPages` | `/pages` | `page` × requested indexes (no metadata) |
-| `retryEncode` | `/ugoira_meta`; `caps` | `zip` (`save: false`), `video` (deps: zip) |
+| `retryEncode` | `/ajax/illust/{id}` (frame size: the codec-probe key, so the encoder gets the same codec string as the first run), `/ugoira_meta`; `caps` | `zip` (`save: false`), `video` (deps: zip) |
 | `retryMetadata` | `/ajax/illust/{id}` | `metadata` |
 
+3a. **Login-wall check (R-003), `full` mode only.** Right after `/ajax/illust` parses, and before `/pages` or `ugoira_meta` is called: if `requiresLogin(work, request.loggedIn)` ([system.md §8.5](system.md)), the resolution is `{ ok: false, loginRequired: true }`; `applyResolution` sets `stopReason = 'forbidden'` and finalizes, and the classifier yields `needsLogin` (§10 row 4). No byte request is ever made. This is the same predicate the content script applies at render time; it matters when the user clicked before the render-time metadata arrived (`pending`), or after the render fetch failed. Retry modes skip the check: they exist only after a `full` job of the same document passed it.
+
+   ```ts
+   export type Resolution =
+     | { ok: true; plan: Plan }
+     | { ok: false; apiFailure: ApiFailure }
+     | { ok: false; loginRequired: true };   // R-003: page logged out and pixiv withholds the work
+   ```
 4. **Folder:** `full` mode calls `resolveFolder(snapshot.folderPattern, { artist: userName, id, title, userId })` ([design-settings-model.md](design-settings-model.md)). Retry modes use `request.folder` after re-validating it with `isSafeRelativeFolder()`, so a retry writes into the original job's folder (PRD CUJ-5 step 5 and edge case).
 5. **Effective ugoira format:** `effectiveFormat(snapshot.ugoiraOutput, caps)` (shared, also used by the button):
    - `zip` → `zip`;
@@ -241,7 +267,7 @@ stateDiagram-v2
    It is stored in `snapshot.effectiveFormat`.
 6. Persist with `phase = 'transferring'`, then pump.
 
-Failure in resolving → `apiFailure` is set and the job finalizes (classifier rows 2, 3 and 8 in [system.md §10](system.md)).
+Failure in resolving → `apiFailure` is set and the job finalizes (classifier rows 2, 3 and 8 in [system.md §10](system.md)); a login-wall stop finalizes through row 4.
 
 #### `metadata.json` construction (src/shared/metadata.ts)
 
@@ -301,6 +327,8 @@ pump(job):
 |---|---|---|
 | `off/ready { blobUrl }` (save) | `fetching → saving` (blobUrl stored, persisted **before** the call) | `downloads.download({ url: blobUrl, filename: folder + '/' + name, conflictAction: 'uniquify', saveAs: false })` → store `downloadId` (persist). If the call throws ("Invalid filename" etc.) → `failed{disk}`. |
 | `off/ready` (zip with `save: false`) | `fetching → done` | pump |
+| `off/ready` without `blobUrl` for a file that must be saved | `fetching → failed{ internal, detail: 'no blob' }` | release, pump |
+| Dispatch refused (`{ ok: false }` ack) or undeliverable (`sendMessage` rejects after the one `ensureOffscreen` resend) | `fetching → failed{ internal }` for every role except `video`, which fails `{ encode }` (the zip landed, so `Retry · MP4` is the right next action, §10 row 5) | release, pump |
 | `off/progress` | update `ugoira.zipLoaded/zipTotal/encDone`; recompute percent (monotonic) | throttled `job/update` push (≤ 4/s) |
 | `off/failed { failure }` | `fetching → failed` | if `failure.status === 403` and role ∈ {page, zip}: `stopReason = 'forbidden'` (no new dispatches; in-flight files finish, PRD CUJ-5 step 9). Release task; pump. |
 | `downloads.onChanged` `state: complete` | `saving → done` | `off/release` (with `keepRetained: true` for a `zip` file whose `video` is still pending), pump, badge, push |
@@ -313,8 +341,8 @@ Events for unknown task or download IDs (job already ended or cancelled) → `of
 `job/cancel` runs in one mutation:
 - set `stopReason = 'cancelled'`;
 - mark every `queued` file `skipped`;
-- collect `taskIds` of `fetching`/`ready` files → `off/abort`;
-- `saving` files with a `downloadId` → `chrome.downloads.cancel(id)` (Chrome removes the partial file);
+- collect `taskIds` of `fetching`/`ready` files → effect `abort` (`off/abort`);
+- `saving` files with a `downloadId` → effect `cancelDownload` (`chrome.downloads.cancel(id)`; Chrome removes the partial file). A download whose id arrives after the cancel (Chrome started it while the cancel mutation ran) is cancelled by the hand-off path itself, because `onDownloadStarted` finds the job ended;
 - finalize immediately with outcome `cancelled`.
 
 Already completed files stay on disk (PRD CUJ-1 step 5). An in-progress encode is aborted, and because the video is only handed to Chrome after `finalize()`, no partial video can exist (PRD §4.6). The button returns to idle within 300 ms because the push happens right after the persist, with no waiting for abort confirmations.
@@ -360,12 +388,15 @@ remaining(job) =
 : job.kind === 'pages'             ? count(files, role === 'page' && state ∈ {queued, fetching, ready, saving})
 : job.kind === 'ugoira'            ? 1                                   // PRD §4.8: 1 for the whole job
 : 0;
-total = Σ remaining(job) over running jobs;  jobs = number of running jobs
+total = Σ remaining(job) over running jobs
+jobs  = number of running jobs with remaining(job) > 0          // "across N downloads" counts only jobs with files left
 badgeText  = total === 0 ? '' : total >= 1000 ? '999+' : String(total)
-title      = jobs === 0 ? t('action_title_idle')
+title      = total === 0 ? t('action_title_idle')               // nothing counted → idle title, never "0 files remaining"
            : jobs === 1 ? (total === 1 ? t('action_title_one_single') : t('action_title_one', total))
            :              t('action_title_many', total, jobs)
 ```
+
+- **Zero counted files** (code review W1, PM item 5i). A lone `retryMetadata` job, or a `full` job clicked before its metadata arrived (`expectedFiles` 0) while it resolves, is running but counts 0. The first design then titled the icon "Helper for Pixiv — 0 files remaining" while the badge was hidden. The badge already treats 0 as "nothing in flight" (PRD §4.8: "With nothing in flight, the badge is hidden"), so the title follows the badge: `total === 0` → `action_title_idle`, and the job count in `action_title_many` counts only jobs that contribute files. The title and the badge therefore always tell the same story. PRD §4.8 does not define this case; it is listed for pm ([system.md §15](system.md) item 8).
 
 - `metadata.json`, `frames.json` and the zip never count separately (PRD §4.8). A `retryMetadata` job contributes 0, so the badge stays hidden unless another job runs.
 - Failed and skipped files leave the count immediately (CUJ-4 "A job ends with failures").
@@ -522,9 +553,16 @@ sequenceDiagram
 - **Performance:** per-file overhead is 2 messages + 1 `storage.session` write + 1 download call (~2–5 ms). A 200-page job therefore spends < 1 s of SW CPU in total. Badge rendering is O(jobs × files), recomputed ≤ 20×/s.
 - **Observability:** `info` at job start/end with `jobId`, `artworkId`, `mode`, `kind`, outcome, counts, duration; `debug` per file transition. `chrome://extensions` → Errors shows `warn`/`error`.
 - **Testing:**
-  - Unit: scheduler pump (cap, order, deps, stop on 403, cancel), `classifyOutcome` (one case per row plus precedence conflicts), badge/title math including `999+` and singular, `buildMetadata`/`serializeJson` against golden vectors, `effectiveFormat` truth table.
+  - Unit: scheduler pump (cap, order, deps, stop on 403, cancel), `classifyOutcome` (one case per row plus precedence conflicts; row 8 cases: all `network` without `lastStatus` → offline, a `network` failure with `lastStatus` 503 → server, any `internal` → server, `navigator.onLine === false` → offline, all `disk`/`dismissed` → disk; row 4 via `stopReason 'forbidden'` with no failed file), badge/title math including `999+`, singular, a lone 0-count job (idle title, empty badge) and "across N" counting only jobs with files left, `buildMetadata`/`serializeJson` against golden vectors, `effectiveFormat` truth table.
+  - Resolver: `full` with `loggedIn: false` on a withheld body → `loginRequired`, and the fake API saw no `/pages` or `ugoira_meta` call; `loggedIn: true` or `null` on the same body → proceeds; `retryEncode` calls `/ajax/illust` before `ugoira_meta`; a transport error from both the tab and the offscreen fallback → `apiFailure` with `kind: 'internal'`.
   - Integration (Vitest + `test/fakes/chrome.ts`): full job runs with a fake offscreen; SW restart is simulated by discarding the module instance and re-importing with the same fake `storage.session`/`downloads` at every await point of a scripted job; concurrent jobs; cancel races (`off/ready` after cancel).
   - E2E: [design-test-harness.md](design-test-harness.md).
+
+## Migration / Rollout (iteration 2 changes)
+
+- **Persisted shape.** `StartRequest.full` gains `loggedIn`, and `Failure` gains `kind: 'internal'` and `lastStatus`. Both are persisted inside `JobRecord`s in `storage.session`, which Chrome clears when the extension is updated or reloaded, so no record written by the iteration-1 code is ever read by the new code: no migration and no version bump of `JobRecord.v`. The resolver reads `request.loggedIn ?? null`, so even a hydrated record without the field would skip the check (never needs-login), the safe reading; incoming `job/start` messages are validated strictly (above).
+- **Type move (ENG-008)** is compile-time only.
+- **Rollback** is a plain revert of the commits: none of the changes writes new storage keys or permissions.
 
 ## Dependencies & Integration Points
 
@@ -537,6 +575,7 @@ sequenceDiagram
 
 ## Open Questions & Risks
 
-- **ENG-002 gates this chapter's byte path:** DNR rule matching on offscreen fetches, and blob URL hand-off to `chrome.downloads` from the SW. If `initiatorDomains` with the extension ID does not match, use the `tabIds: [-1]` fallback ([system.md §8.2](system.md)).
+- **Byte path verified** (ENG-002): the DNR rule as written matches offscreen fetches and nothing else, and `chrome.downloads.download(blobUrl)` from the SW saves a blob created in the offscreen document ([system.md §8.2](system.md)). No fallback rule is implemented.
 - **"Ask where to save each file" on:** `saveAs: false` may still prompt per file. A dismissed dialog → `dismissed` → counted as failed and not retried (PRD CUJ-1 edge). Verify on real Chrome during QA.
-- **Derived mappings** awaiting pm confirmation are listed in [system.md §15](system.md).
+- **Derived mappings** awaiting pm confirmation are listed in [system.md §15](system.md): §10 rows 4, 8, 9; the 0-count title (item 8); the pending-click login-wall stop (item 9d).
+- **Stale logged-in page** (user logged out in another tab): the resolver does not treat a withheld body as a refusal while the page claims to be logged in, so a walled all-ages work downloads in that case ([system.md §8.5](system.md) miss 2). Revisit after a logged-in live check.

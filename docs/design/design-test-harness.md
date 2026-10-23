@@ -1,6 +1,6 @@
 # Test Strategy & QA Harness
 
-> Last updated: 2026-10-22 18:08:04 (UTC+9)
+> Last updated: 2026-10-23 02:21:28 (UTC-7)
 > Serves: prd-000 — every CUJ's acceptance criteria (CUJ-1 … CUJ-5); PRD Goal 2 (parity with `ref/pixiv-dl`)
 
 ## Overview
@@ -92,7 +92,9 @@ Every await point in `registry.mutate`, the resolver and the hand-off is enumera
 - `__RETRY_TIME_SCALE__ = 0.01`: backoff, `Retry-After` cap and the 30 s stall timeout are multiplied, so 1.5 s → 15 ms and 30 s → 300 ms;
 - `__TEST_HOOKS__ = true`.
 
-`scripts/build.mjs` refuses to set either define for `build`/`build:prod`, and a unit test asserts the prod bundle contains no `__testHook` references. Ratios between attempts stay exactly the PRD's, so backoff is asserted as ratios.
+`scripts/build.mjs` refuses to set either define for `build`/`build:prod`. The prod bundle must contain no hook code at all: `build:prod` uses esbuild `minifySyntax` so dead `if (false)` hook branches are dropped, and CI greps `dist/*.js` for `testHook`, `__hfpTest` and hook names (ENG-007; in iteration 1 the guard passed only because the hook was imported under an alias, and 8 dead calls remained). Ratios between attempts stay exactly the PRD's, so backoff is asserted as ratios.
+
+**Bundle budget.** `npm run size` (ENG-010) minifies `src/content/content.ts` with the prod defines and fails above 40 KB minified or 15 KB gzip ([system.md §11.6](system.md)). It runs in CI after `npm run check`.
 
 #### Fake pixiv server (`e2e/server/`)
 - Node `https` server on an ephemeral port, with a certificate generated at startup by **`selfsigned` ^5.5** (devDependency), so no keys are committed. Requests are routed by `Host`.
@@ -102,6 +104,8 @@ Every await point in `registry.mutate`, the resolver and the hand-off is enumera
   - `/` and `/users/:id`: non-artwork pages.
 
   `/pages` and `ugoira_meta` for `xRestrict ≥ 1` require the cookie `PHPSESSID=fake-session` and return `{ error: true }` otherwise. A per-work flag `r18Hidden` returns `{ error: true }` even when logged in (CUJ-5 "R-18 display off").
+
+  **Login walls mirror live pixiv (R-003, [system.md §8.5](system.md)).** `/ajax/illust` sends `sl` 6 for `xRestrict ≥ 1`, 4 for a work flagged `sensitiveWall`, else 2. For a logged-out request it sends every `urls` key as `null` when the work is R-18/R-18G **or** `sensitiveWall`; logged in, the URLs are present. `/pages` and `ugoira_meta` of a `sensitiveWall` work answer normally while logged out, exactly as pixiv does, so a test proves the extension, not the server, withholds the download. The artwork page of a `sensitiveWall` work, logged out, replaces the image with pixiv's wall text (`This work may contain sensitive content.` … `Please log in to view this work.`); the action row stays.
 - **`i.pximg.net`**: `/img-original/…` and `/img-zip-ugoira/…`. It **returns 403 unless `Referer` is exactly `https://www.pixiv.net/`**, which proves the DNR rule end to end, and serves `Content-Length` unless the fixture disables it.
 - **`accounts.pixiv.net`**: `/login?return_to=…`: a button that sets `PHPSESSID=fake-session` on `.pixiv.net` and redirects to `return_to` (CUJ-5 steps 2–3).
 - **Fixture page HTML:**
@@ -117,6 +121,7 @@ Every await point in `registry.mutate`, the resolver and the hand-off is enumera
 | 135882743 | 200-page manga (tiny images) | badge 200, cap 5, 3-digit width |
 | 135882744 | artist `  Sora / 空 :: 2nd  ` and an artist with ZWJ emoji | sanitization + Chrome-safety on disk |
 | 145892669 | 68 pages, `xRestrict` 1 | needs-login, login round-trip |
+| 135882745 | 4-page illust, `xRestrict` 0, `sensitiveWall: true` (`sl` 4) | R-003: logged-out needs-login on an all-ages walled work, pending-click resolver stop, login round-trip → `Download · 4P` |
 | 136004512 | ugoira 600×600, 48 frames, JPEG | CUJ-2 example |
 | 136004513 | ugoira delays 40,40,500,40 | timing exactness |
 | 136004514 | ugoira 601×451 | even-dimension crop |
@@ -126,6 +131,8 @@ Every await point in `registry.mutate`, the resolver and the hand-off is enumera
 | 136120877 | 8 pages, artist そら | CUJ-4 tab B |
 | 199999999 | deleted (404) | Unavailable |
 
+- **Zip prebuild (ENG-009).** `FakePixiv.start()` builds every ugoira fixture's frame zip before it listens. In iteration 1 the zip was built synchronously on its first request; for 136004517 (1920×1080, 300 frames) that took ~1.5 s, longer than the e2e build's 300 ms stall timeout, so specs had to call `warmZip()` first. Prebuilding costs the same ~2 s once per server start and removes the trap for every new spec.
+- **Holding a response:** `server.hold(match)` returns a handle; matching requests wait until `release()`. Specs use it to keep files in flight (cancel, concurrency, SW restart) and to delay `/ajax/illust` (late-metadata width, pending-click login check).
 - **Fault injection:** the server object is in-process, so specs call `server.fault({ match, responses })`. Supported responses:
   - `{ status }`, `{ status: 429, retryAfter }`, `{ delayHeadersMs }`, `{ stallAfterBytes }`, `{ reset: true }` (socket destroy → network error);
   - sequences such as `[503, 503, 200]`, consumed per attempt.
@@ -158,7 +165,8 @@ Helpers:
 
 | PRD AC | Check |
 |---|---|
-| CUJ-1: one button, left of like, ≤ 500 ms after the row renders | Fixture renders the row 300 ms after load. Assert one `hfp-download`, `nextElementSibling` is the like control, and the time from the row's `performance.mark` to the host connecting is ≤ 500 ms. |
+| CUJ-1: one button, left of like, ≤ 500 ms after the row renders | Fixture renders the row 300 ms after load, as `flex-direction: row-reverse` like live pixiv. Assert one `hfp-download`, its `previousElementSibling` is the like wrapper (row-reverse: DOM after = screen left), the host's right edge is left of Like's left edge, and the time from the row's `performance.mark` to the host connecting is ≤ 500 ms. |
+| CUJ-1: 164 px when metadata is late | `server.hold('/ajax/illust/135882741')`; the row renders first; width 164 px before and after release (`candidates(null)` = 99-page faces) |
 | CUJ-1: 164 px in idle/busy/cancel-hover/saved (en, ≤ 99 pages) | `getBoundingClientRect().width` of the host in each state, including after `hover` |
 | CUJ-1: folder contents and sizes | `downloads.files()` equals `metadata.json` + `135882741_p0…p11.*`, each size = fixture `Content-Length` |
 | CUJ-1: `metadata.json` 12 keys in order, literal non-ASCII, `\n` kept | parse key order; raw bytes contain `みずき`, not `\u` escapes |
@@ -173,20 +181,26 @@ Helpers:
 | CUJ-5: 403 never retried; 429/5xx up to 4 attempts; `Retry-After` honored (capped) | `server.log` attempt counts; inter-attempt gaps match `1.5·2ⁿ·scale` ± jitter, or `min(RA, 30)·scale` |
 | CUJ-5: offline | every byte request `{ reset: true }` → `Retry` + `tip_offline` |
 | CUJ-5: needs-login round-trip, refused, Unavailable, encode failure, 403 mid-job, floating fallback ≤ 3 s | fixtures 145892669 (logged out / login), `r18Hidden`, 199999999, 136004516, fault 403 on p5, `__fake.removeRow()` |
+| CUJ-5 (R-003): logged out, all-ages work behind the sensitive-content wall → `Log in to download` before any click, same styling and tooltip as R-18, accessible name `Log in to pixiv to download this work.`; login → `Download · 4P` | fixture 135882745 logged out, then the fake login; plus a click while `/ajax/illust` is held → `Log in to download`, and `server.log` shows no `/pages` and no `i.pximg.net` request for 135882745 |
+| CUJ-5 step 6: "pixiv isn't responding" after throttled attempts | Unit-level (`retry.test.ts`: 503 then three `TypeError`s → `{ kind: 'network', lastStatus: 503 }`; `outcome.test.ts`: such a failure → `server`). The e2e build cannot reproduce Chromium's throttling deterministically (×0.01 backoff makes it throttle on the first job); QA's replay against the dev build (`docs/qa-artifacts/iter1-20-23-42/walk-scripts/diagOutage.ts`, 7 Retry clicks against a sustained 503) is the end-to-end check |
 
 ### L4: Live smoke (`e2e/live/smoke.spec.ts`, `@live`)
 - Uses the dev build, no host mapping, real network.
-- Picks the first all-ages illust from `https://www.pixiv.net/ranking.php?mode=daily&content=illust&format=json`, which works logged out.
-- Asserts:
+- **Navigation waits for `domcontentloaded`, never `load`.** pixiv's `load` event waits on ads and trackers and took 43–119 s in QA's iteration-1 replicas, which made the 180 s test time out in 2 of 5 runs while the extension saved in 4–10 s after the button appeared (QA LOW FLAKY). Every `page.goto` in `e2e/live/` passes `{ waitUntil: 'domcontentloaded' }`; the button and file waits that follow carry their own timeouts.
+- **Work selection** from `https://www.pixiv.net/ranking.php?mode=daily&content=illust&format=json`, checking each entry's logged-out `/ajax/illust` body:
+  - *download case:* the first entry with `xRestrict === 0`, `illustType === 0`, ≤ 5 pages **and `urls.original` a string** (pixiv shows it logged out). Without the `urls` filter the smoke would pick a walled work about one time in five (31 of 150 ranking works were walled on 2026-10-23), which now correctly shows `Log in to download`;
+  - *login-wall case (R-003):* the first entry with `xRestrict === 0` and `urls.original === null`. The ranking's own `is_masked: true` marks the same works.
+- Asserts, download case:
   - the button is placed in the real action row (validates `pixiv-dom.ts`);
   - the job saves every page, with each file's size equal to the `Content-Length` from a Node `HEAD` request that sends `Referer: https://www.pixiv.net/`;
   - `metadata.json` has the 12 keys.
+- Asserts, login-wall case: before any click the button reads `Log in to download` with `aria-label` `Log in to pixiv to download this work.`; clicking it navigates to `https://accounts.pixiv.net/login?return_to=` + the encoded artwork URL. This is the drift alarm for the [system.md §8.5](system.md) signal: if pixiv ever stops withholding URLs for walled works, this case fails before a release ships. No account is needed. The case is skipped with a logged reason if the day's ranking has no walled all-ages entry.
 
-Run before every release and after any `pixiv-dom.ts` change.
+Run before every release and after any `pixiv-dom.ts` or `pixiv-api.ts` change. (A live all-ages ugoira walk, MP4 and ZIP only, is a PM iteration-1 recommendation for the same suite; it also needs no account.)
 
 ### QA role usage
 - `npm run qa:fake`: builds `dist-e2e`, starts the fake server, launches headed Chromium with the extension and a persistent profile at `.qa/profile` (git-ignored), and prints fixture URLs and the downloads dir. The QA agent attaches Playwright via the printed CDP endpoint (or uses the harness API directly) to walk CUJs and inject faults through a small REPL (`server.fault(...)`).
-- `npm run qa:live`: headed Chromium with the dev build against real pixiv. A human may log in to cover the R-18 paths that need a real account.
+- `npm run qa:live`: headed Chromium with the dev build against real pixiv. A human may log in to cover the R-18 paths that need a real account. The logged-in checks that no agent can run (no account; credentials are never committed) are listed in L5 and are the owner's to run before release.
 - QA reports cite the spec or fixture used, so failures are reproducible.
 
 ### L5: Manual release checklist (`docs/release-checklist.md`, created with ENG-006)
@@ -195,6 +209,7 @@ Branded Chrome stable on macOS and Windows:
 - H.264 hardware encode of 136004512-equivalent live ugoira;
 - MP4 plays in QuickTime, Windows Photos/Media Player and VLC; WebM plays in Chrome and VLC;
 - "Ask where to save each file" on: behavior matches the PRD's known limitation;
+- **logged in** (owner's session, `npm run qa:live`): the action-row placement and like detection on the logged-in DOM; pixiv's dark theme (`html[data-theme="dark"]`) and the `#5fb9fb` focus ring; an R-18 download after a real login (CUJ-5 AC 2); R-18 display off → `Retry` + `tip_refused` (CUJ-5 AC 7); and, for the deferred R-003 stale-page case ([system.md §8.5](system.md) miss 2), whether `/ajax/illust` returns a non-null `urls.original` for every work the logged-in viewer can see (an `sl` 4 all-ages work, an R-18 work with display on) and `null` with R-18 display off;
 - each of the 4 locales renders without clipping;
 - store listing assets present.
 
@@ -252,10 +267,12 @@ sequenceDiagram
 
 - **devDependencies:** `vitest@^5`, `happy-dom@^21`, `@playwright/test@^1.64`, `selfsigned@^5.5`, `typescript@~6.0.3`, `eslint@^10`, `typescript-eslint@^8.72`, `prettier@^3`, `@types/chrome@^0.3`, `esbuild@^0.28`.
 - **System tools:** `python3` ≥ 3.10 (golden), `ffprobe`/`ffmpeg` (optional; `@ffprobe` specs skip without them).
-- **ENG backlog:** ENG-001 (scaffold incl. test runners), ENG-002 (platform spike + live DOM capture → fixture source), ENG-003 (golden generator), ENG-004 (L3 harness), ENG-005 (CI), ENG-006 (packaging + release checklist).
+- **ENG backlog:** done in iteration 1: ENG-001 (scaffold incl. test runners), ENG-002 (platform spike + live DOM capture → fixture source), ENG-003 (golden generator), ENG-004 (L3 harness), ENG-005 (CI). Open: ENG-006 (packaging + release checklist, incl. the L5 list above), ENG-007 (prod bundle free of test hooks, CI), ENG-009 (fake-server zip prebuild), ENG-010 (content bundle size budget, CI).
 
 ## Open Questions & Risks
 
 - **`--host-resolver-rules` port mapping and `Browser.setDownloadBehavior: default` are verified by ENG-004.** Fallback for ports: bind the fake server to 443 via `authbind`/`setcap` on CI.
 - **macOS UI-locale switching** via `-AppleLanguages` is less reliable than Linux `--lang`. If it fails, 4-locale UI checks run on Linux only.
 - **H.264 in CI:** if the CfT Linux build has no usable H.264 encoder (the probe returns `avc: null`), MP4 assertions are skipped there and covered by L5. WebM is always covered.
+- **`e2e/README.md` CUJ-5 mapping** still says "next iteration"; `e2e/cuj5.spec.ts` (QA, iteration 1) owns those rows now and the README must point to it (QA recommendation 6).
+- **Chromium extension-request throttling** affects the e2e build: with the ×0.01 time scale, repeated 500/503 answers get later attempts refused locally on the first job. Specs keep using 502/504 for exhausted-retry scenarios (QA iteration 1). `--disable-extensions-http-throttling` in the launcher would lift this, but would also hide the very behavior §9's `lastStatus` rule exists for, so it is not added.

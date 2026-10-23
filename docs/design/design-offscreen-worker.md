@@ -1,6 +1,6 @@
 # Offscreen Worker (bytes & ugoira encoding)
 
-> Last updated: 2026-10-22 18:08:04 (UTC+9)
+> Last updated: 2026-10-23 02:21:28 (UTC-7)
 > Serves: prd-000 — CUJ-1 (original bytes), CUJ-2 (zip, frames.json, in-browser video), CUJ-5 (encode-failure retry, byte-level failures)
 
 ## Overview
@@ -121,7 +121,7 @@ The SW sends `off/release { taskIds: [zipTaskId], keepRetained: true }` when the
 
 #### Byte fetch (fetch-bytes.ts)
 
-`fetchWithRetry` implements [system.md §9](system.md) exactly. Body handling:
+`fetchWithRetry` implements [system.md §9](system.md) exactly. Originals use `responseType: 'bytes'` (a typed `Blob`); the ugoira zip uses `responseType: 'rawBytes'` (a `Uint8Array` preallocated from `Content-Length`, so the retained zip bytes exist once). Body handling:
 
 ```ts
 const reader = res.body!.getReader();
@@ -207,7 +207,7 @@ flowchart TD
 | Quality | `new Quality('very-high')`. With quantizer support (Chrome ≥ ~119 encoders), mediabunny encodes at QP 16 for H.264 (CRF-18-class) and its "best" VP9 quantizer, with the correct scale for the running Chromium version. Without it, mediabunny's very-high bitrate. | PRD §4.6 reference: libx264 `-crf 18`. Constant-quantizer encoding is the WebCodecs analogue. Acceptance proxy in [design-test-harness.md](design-test-harness.md) (SSIM ≥ 0.98 mean, ≥ 0.95 min vs source frames). |
 | Container layout | MP4 `fastStart: 'in-memory'` (moov first) | QuickTime and Windows Photos play it without seeking to the end (PRD playback list). |
 | Backpressure | `await source.add(...)` before decoding the next frame | Exactly one decoded frame in flight: PRD memory rule. |
-| Encoder failure | One retry of the whole encode with `hardwareAcceleration: 'prefer-software'`, then `off/failed { kind: 'encode' }` | Hardware encoder session limits or driver faults are the most likely failures; software encoders (OpenH264/libvpx) are always present for these codecs. |
+| Encoder failure | One retry of the whole encode with `hardwareAcceleration: 'prefer-software'`, then `off/failed { kind: 'encode', detail, attempts }`, where `attempts` is 2 when the prefer-software pass ran and also failed, and 1 otherwise (a failure the retry does not apply to: a missing zip, invalid frames, or an `EncodeError` such as a corrupt zip entry raised inside the first pass). `EncodeError` carries `attempts`; the router copies it instead of the constant 1 it sent in iteration 1 (code review W8, ENG-011). | Hardware encoder session limits or driver faults are the most likely failures; software encoders (OpenH264/libvpx) are always present for these codecs. The attempt count tells a user's error log whether the software path was tried. |
 | Abort | Checked between frames; `output.cancel()`; the canvas and any open frame are closed | PRD §4.6: a cancelled encode writes nothing. |
 
 **Progress:** `done` = frames whose `add()` resolved; `total = frames.length`. The SW maps it to 40–100% ([design-download-engine.md](design-download-engine.md), `progress.ts`): `percent = 40 + floor(60 × done / total)`, capped at 99 until the video file lands. ZIP-only and the zip phase use `floor(40 × loaded / total)` (or `floor(100 × …)` for ZIP only). An unknown total → `indeterminate: true` until the encode phase starts (PRD §4.7.5).
@@ -303,7 +303,7 @@ sequenceDiagram
 
 ## Cross-Cutting Concerns
 
-- **Error handling:** every task ends in exactly one of `off/ready` or `off/failed` unless it was aborted. Exceptions inside a task are caught at the task boundary and converted to `Failure`, and the router never throws to Chrome.
+- **Error handling:** every task ends in exactly one of `off/ready` or `off/failed` unless it was aborted. Exceptions inside a task are caught at the task boundary and converted to `Failure`, and the router never throws to Chrome. An exception in an `encode` task becomes `{ kind: 'encode' }`; an unexpected exception in any other task (a bug, not a fetch outcome, since `fetchWithRetry` never throws) becomes `{ kind: 'internal', detail: 'exception', attempts: 1 }`. It was `network` in iteration 1, which made the SW tell the user "No connection" for an extension bug ([system.md §10](system.md)).
 - **Security:**
   - URL allowlists are re-checked here (defense in depth).
   - No `eval` and no workers from Blob URLs: fflate's sync API only, and mediabunny has no eval/WASM (verified in the 1.62.0 package).
@@ -324,6 +324,6 @@ sequenceDiagram
 
 ## Open Questions & Risks
 
-- **ENG-002** confirms the DNR rule applies to this document's `fetch()` and that `chrome.downloads.download(blobUrl)` from the SW reads Blob URLs created here.
+- **Verified by ENG-002** (2026-10-22): the DNR rule applies to this document's `fetch()`, and `chrome.downloads.download(blobUrl)` from the SW reads Blob URLs created here while the document stays open ([system.md §8.2](system.md)). The codec probe answered `true` for every H.264 profile and VP9 at 600×600 and 1920×1080 on macOS arm64; Linux CI may differ.
 - **H.264 availability in CI Chromium:** Chrome for Testing ships proprietary codecs, but a hardware or OpenH264 encoder may still be absent on Linux CI. The harness logs the probe result and runs MP4 assertions only where `avc` is supported. The WebM path is always tested.
 - **Quality proxy thresholds** (SSIM 0.98/0.95) are engineering proxies for the PRD's visual criterion and may be tuned after the first fixtures run. That would change the test threshold, not the design.

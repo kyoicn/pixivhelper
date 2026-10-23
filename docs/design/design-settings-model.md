@@ -1,6 +1,6 @@
 # Settings Model & Folder Paths (shared domain logic)
 
-> Last updated: 2026-10-22 18:08:04 (UTC+9)
+> Last updated: 2026-10-23 02:21:28 (UTC-7)
 > Serves: prd-000 — §4.4 (folder pattern & sanitization), §4.9 (settings model), CUJ-1 (folder resolution), CUJ-3 (validation, preview, persistence), CUJ-5 (retry into the same folder)
 
 ## Overview
@@ -63,14 +63,17 @@ interface StoredSettings extends Settings { v: 1; updatedAt: number }   // key '
 ```ts
 // settings.ts
 export function readSettings(): Promise<Settings & { updatedAt: number }>;
-export function writeSettings(next: Settings): Promise<{ ok: boolean }>;   // rejects (programming error) if next.folderPattern is invalid
+export function writeSettings(next: Settings): Promise<{ ok: boolean; updatedAt: number }>;
+// rejects (programming error) if next.folderPattern is invalid; updatedAt is the stamp written, which the options
+// page keeps as lastOwnWriteAt to recognize its own storage.onChanged echo (design-options-page.md "Two settings tabs")
 export function onSettingsChanged(cb: (s: Settings) => void): () => void;   // storage.onChanged for 'settings' in sync|local → re-read merged
 export function effectiveFormat(setting: Settings['ugoiraOutput'], caps: { avc: string | null; vp9: boolean }): 'mp4' | 'webm' | 'zip';
 
 // pattern.ts
 export type PatternError =
   | { code: 'empty' } | { code: 'absolute' } | { code: 'backslash' } | { code: 'dotdot' }
-  | { code: 'unknownToken'; token: string } | { code: 'illegalChars' };
+  | { code: 'unknownToken'; token: string } | { code: 'illegalChars' }
+  | { code: 'tooLong' };   // defensive only: > PATTERN_MAX_CHARS; the field's maxlength keeps user input within it, so it has no UI copy
 export function validatePattern(p: string): PatternError | null;
 export interface TokenValues { artist: string | null; id: string; title: string | null; userId: string | null; }
 export function resolveFolder(pattern: string, v: TokenValues): string;     // precondition: validatePattern(pattern) === null
@@ -116,9 +119,10 @@ flowchart TD
 | 4 | A `..` segment | `p.split('/').some(s => s.trim() === '..')` | `err_dotdot` |
 | 5 | Unknown `{…}` token | first match of `/\{[^{}]*\}/g` not in `{artist}`, `{id}`, `{title}`, `{userId}` (case-sensitive) | `err_unknown_token` with that token text |
 | 6 | Literal text contains `: * ? " < > \|` | test `p` with the known tokens removed against `/[:*?"<>\|]/` | `err_illegal_chars` |
+| 7 | Longer than 200 UTF-16 units (defensive; unreachable from the field) | `p.length > PATTERN_MAX_CHARS` → `{ code: 'tooLong' }` | none (renders `err_illegal_chars` if ever shown) |
 
 - A stray `{` or `}` without a matching pair is literal (rule 5 regex requires a pair).
-- Length is enforced by the field (`maxlength=200`), not by the validator. The validator additionally rejects `> 200` for defense against programmatic writes.
+- Length is enforced by the field (`maxlength=200`), not by the validator. The validator additionally rejects `> 200` as rule 7, `{ code: 'tooLong' }`, for defense against programmatic writes (`writeSettings` and a corrupt stored record). It runs last, so a too-long pattern that also breaks rules 1–6 reports that rule. It has no message key of its own (the PRD has no copy, and the page cannot produce it: `maxlength` and the chip guard keep the field within 200); should it ever reach the options page, it renders `err_illegal_chars` and, like every error, is never stored. `readSettings` treats a stored too-long pattern as absent, the same path as any invalid stored pattern.
 
 #### Resolution (PRD §4.4 "Resolution at job start")
 
@@ -141,10 +145,12 @@ Steps 1–6 are `safe_component` in `ref/pixiv-dl`. The marked steps are additio
 | 3 | Replace runs of Python-`str.isspace` characters with one `_`: `/[\t\n\v\f\r\x1c-\x1f \x85\xa0  -     　]+/g` (not JS `\s`, which differs: it includes U+FEFF and lacks U+0085/U+001C–1F) | script (Python `re` `\s` semantics) |
 | 3+ | Remove the remaining Chrome-illegal characters: Unicode general categories **Cc** and **Cf** (e.g. U+0080–U+009F, U+200B–U+200F, U+200D ZWJ, U+2060–U+2064, U+FEFF, U+E0001–U+E007F) and **noncharacters**. Implemented per code point: drop if `/[\p{Cc}\p{Cf}]/u` matches, or `(cp >= 0xFDD0 && cp <= 0xFDEF) || (cp & 0xFFFE) === 0xFFFE` (U+FDD0–U+FDEF and U+nFFFE/U+nFFFF in every plane) | **Chrome extension (D8)** |
 | 4 | Strip leading/trailing `.`, `_`, space (`/^[._ ]+\|[._ ]+$/g`) | script |
+| 4+ | In the same edge trim, also strip `~`: the class becomes `[._ ~]` (`/^[._ ~]+\|[._ ~]+$/g`), here and in step 5's re-trim | **Chrome extension (D8)** |
 | 5 | Truncate to ≤ 60 UTF-8 bytes on a code-point boundary (accumulate per code point: 1/2/3/4 bytes; lone surrogates count as U+FFFD = 3, matching `TextEncoder`), then strip `._ ` again | script |
 | 6 | Empty → `'unknown'` | script |
 
 - Step 3+ runs **after** step 3, so whitespace-class controls such as U+0085 still become `_` exactly as in the script. Only non-whitespace format/control characters are removed.
+- **Why step 4+ (iteration 2).** Chrome refuses a path component that begins or ends with `~` (segment pass step b). In the first design only the segment pass trimmed it, so a token value made only of `~` and `.` (artist `~`, title `.~.`) survived steps 1–6 as non-empty (`~`), became an empty **segment** in step b, and the segment was dropped: `resolveFolder('pixiv/{artist}/{title}', artist '~')` returned `pixiv/<title>`, losing a folder level (code review W3, PM iteration-1 review). That contradicts PRD §4.4 step 1.6 ("If the result is empty, use `unknown`") and the CUJ-1 edge "A name that sanitizes to nothing becomes `unknown` … The folder never gets an empty segment", because for Chrome such a value *is* empty. Trimming `~` inside the token's own edge trim makes such values empty there, so step 6 turns them into `unknown`: `pixiv/unknown/<title>`. It also strips a token's edge `~` when the token shares a segment with literal text (`~sora~` → `sora`), which the segment pass would have done for the leading `~` anyway; a `~` inside a value is kept (`so~ra`). After step 4+, steps 1–5 can leave no Chrome-refused character at a token's edges: Python whitespace became `_` in step 3 and is a superset of ICU White_Space, Cc/Cf/noncharacters went in step 3+, and `.`/`~` go here. The segment pass still runs on whole segments for literal text and for reserved names, shell extensions and 8.3 shapes.
 - `{ parityOnly: true }` skips the PRD and Chrome steps, giving a byte-for-byte reimplementation of `safe_component`. It is used only by the golden parity test.
 
 #### Chrome path-safety pass: `chromeSafeSegment(seg)` (D8)
@@ -182,7 +188,11 @@ Golden examples (unit-tested):
 | artist `  Sora / 空 :: 2nd  ` | `{artist}` → `Sora_空_2nd` (PRD) |
 | artist `...` | `unknown` (PRD) |
 | artist `👩‍🎨Mika` (with ZWJ) | `👩🎨Mika` (ZWJ removed; Chrome would refuse it) |
-| artist `~sora~` | `{artist}` → `~sora~` (parity), segment `~sora~-1` → `sora~-1` |
+| artist `~sora~`, pattern `{artist}-{id}`, id `1` | parity `safe_component` → `~sora~`; full `sanitizeToken` → `sora` (step 4+); folder `sora-1` |
+| artist `so~ra`, pattern `{artist}-{id}`, id `1` | `{artist}` → `so~ra`; segment `so~ra-1` is 8.3-shaped (7 units, no excluded character), so step f → `so_ra-1` |
+| artist `~`, pattern `pixiv/{artist}/{title}`, title `T` | `{artist}` → `unknown` (step 4+ then 6); folder `pixiv/unknown/T` (was `pixiv/T`) |
+| title `.~.`, pattern `{title}` | `unknown` |
+| literal pattern `~sora~-1` (no token) | segment step b → `sora~-1`, 8.3-shaped → step f → `sora_-1` (the first design's table wrongly said `sora~-1`; step f is normative) |
 | pattern `pixiv` | `pixiv` (all works in one folder; PRD example) |
 | pattern `a//b/` | `a/b` (PRD §4.4.3) |
 | pattern `{title}`, title `CON` | `_CON` |
@@ -239,7 +249,8 @@ sequenceDiagram
 - **Observability:** `debug` log of the resolved folder per job (local only).
 - **Testing:**
   - Golden parity: `sanitizeToken(s, { parityOnly: true }) === safe_component(s)` for every vector in `test/golden/safe_component.json`. ENG-003 generates ≥ 200 vectors: all PRD examples, every Python whitespace char, controls, emoji/ZWJ, NFC/NFD pairs, 59/60/61-byte CJK boundaries, 4-byte characters at the boundary, `.`/`_`/space edges, empty strings.
-  - Unit: each validation rule and its precedence (e.g. `/a\..` → rule 2 wins), each D8 step with the table above, `isSafeRelativeFolder`, newest-wins merging (sync newer, local newer, tie, one missing, corrupt fields), `effectiveFormat` truth table.
+  - Unit: each validation rule and its precedence (e.g. `/a\..` → rule 2 wins; a 201-character pattern with a stray `:` → rule 6, not 7), each D8 step with the table above, every Golden example row (including `~` → `unknown`, `.~.` → `unknown`, `~sora~` → `sora`, `so~ra-1` → `so_ra-1`, literal `~sora~-1` → `sora_-1`), `isSafeRelativeFolder`, newest-wins merging (sync newer, local newer, tie, one missing, corrupt fields), `writeSettings` returning the `updatedAt` it stored, `effectiveFormat` truth table.
+  - Golden parity is unaffected by step 4+: `parityOnly` keeps the script's `[._ ]` edge class, and `test/golden/safe_component.json` does not change.
   - Property test (fast-check is optional; a seeded random generator is enough): for 10 000 random Unicode strings, every segment of `resolveFolder('{artist}/{title}', …)` satisfies a JS port of Chrome's `IsSafePortablePathComponent` predicate.
 
 ## Dependencies & Integration Points
@@ -249,5 +260,6 @@ sequenceDiagram
 
 ## Open Questions & Risks
 
-- **PRD spec-sync (pm):** D8's additions (Cc/Cf/noncharacter removal in tokens; segment trimming of White_Space/`.`/`~`; reserved names; shell extensions; `~` short names) extend PRD §4.4 step 2. Applying them to literal text is a narrow exception to "literal text is used as typed". See [system.md §15](system.md) item 3.
+- **PRD spec-sync (pm):** D8's additions (Cc/Cf/noncharacter removal in tokens; `~` in the token edge trim; segment trimming of White_Space/`.`/`~`; reserved names; shell extensions; `~` short names) extend PRD §4.4 step 2. Applying them to literal text is a narrow exception to "literal text is used as typed". See [system.md §15](system.md) item 3.
+- **Unclosed `{` (PM iteration-1 item 5e).** Rule 5 matches only closed `{…}`, so `pixiv/{user` is valid literal text and, with the 400 ms autosave, a pause mid-token can store it as the last valid pattern. PM proposes rejecting an unclosed `{` with the unknown-token message. This chapter keeps PRD CUJ-3 step 5 as written until pm amends it ([system.md §15](system.md) item 12); the change would be one extra check in rule 5 (`/\{[^}]*$/` on the segment) plus test rows.
 - The ICU White_Space set used in step b must match Chrome's exactly. It is pinned as a constant with a unit test listing every code point (U+0009–U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000–U+200A, U+2028, U+2029, U+202F, U+205F, U+3000).
