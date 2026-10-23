@@ -221,7 +221,12 @@ describe('createBadgeRenderer', () => {
 
   it('render: a full job resolving with expectedFiles 0 shows the idle title', async () => {
     fake.action.title = 'stale';
-    const request = { mode: 'full', artworkId: '135882741', expectedFiles: 0 } as const;
+    const request = {
+      mode: 'full',
+      artworkId: '135882741',
+      expectedFiles: 0,
+      loggedIn: null,
+    } as const;
     const jobs = [job({ request, phase: 'resolving', kind: 'unknown', expectedFiles: 0 })];
     await rendered(createBadgeRenderer(() => jobs).render());
     expect(fake.action.title).toBe('Helper for Pixiv — click to open settings');
