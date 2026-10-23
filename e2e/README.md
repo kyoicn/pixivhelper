@@ -96,20 +96,20 @@ HTTP/2 (with HTTP/1.1 fallback) on `127.0.0.1`, ephemeral port, certificate gene
 - `/pages` and `/ugoira_meta` of a `sensitiveWall` work answer normally while logged out, as pixiv's do. A passing test therefore proves the extension, not the server, withholds the download.
 - Logged out, the artwork page of a `sensitiveWall` work shows pixiv's wall text (`This work may contain sensitive content.` / `Please log in to view this work.`) instead of the image; the action row stays.
 
-| Member                                                                    | Purpose                                                                                                              |
-| ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `startFakePixiv(port?)`                                                   | start a server                                                                                                       |
-| `port`, `hostResolverRules`                                               | listening port; the `--host-resolver-rules` value                                                                    |
-| `fault({ match, responses })`                                             | script responses (below)                                                                                             |
-| `hold(match)` → `{ held, release() }`                                     | keep matching 200 transfers in flight without stalling until `release()` (below)                                     |
-| `clearFaults()`                                                           | drop every fault rule                                                                                                |
-| `patchWork(id, { title, userName, r18Hidden, noContentLength, deleted })` | override fixture fields until `reset()`                                                                              |
-| `work(id)`                                                                | the fixture as served (with patches)                                                                                 |
-| `log`, `requests(match?)`                                                 | every request: `at`, `method`, `host`, `path`, `url`, `referer`, `loggedIn`, `status`, `bytes`, `artworkId`, `fault` |
-| `waitForRequest(match, { timeout })`                                      | first matching request, already logged or future                                                                     |
-| `maxInFlight(artworkId)`                                                  | peak concurrent original/zip requests for one artwork                                                                |
-| `reset()`                                                                 | clear log, faults, patches and peaks (the `harness` fixture does this per test)                                      |
-| `close()`                                                                 | stop                                                                                                                 |
+| Member                                                                                              | Purpose                                                                                                              |
+| --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `startFakePixiv(port?)`                                                                             | start a server                                                                                                       |
+| `port`, `hostResolverRules`                                                                         | listening port; the `--host-resolver-rules` value                                                                    |
+| `fault({ match, responses })`                                                                       | script responses (below)                                                                                             |
+| `hold(match)` → `{ held, release() }`                                                               | keep matching 200 transfers in flight without stalling until `release()` (below)                                     |
+| `clearFaults()`                                                                                     | drop every fault rule                                                                                                |
+| `patchWork(id, { title, userName, xRestrict, sensitiveWall, r18Hidden, noContentLength, deleted })` | override fixture fields until `reset()`                                                                              |
+| `work(id)`                                                                                          | the fixture as served (with patches)                                                                                 |
+| `log`, `requests(match?)`                                                                           | every request: `at`, `method`, `host`, `path`, `url`, `referer`, `loggedIn`, `status`, `bytes`, `artworkId`, `fault` |
+| `waitForRequest(match, { timeout })`                                                                | first matching request, already logged or future                                                                     |
+| `maxInFlight(artworkId)`                                                                            | peak concurrent original/zip requests for one artwork                                                                |
+| `reset()`                                                                                           | clear log, faults, patches and peaks (the `harness` fixture does this per test)                                      |
+| `close()`                                                                                           | stop                                                                                                                 |
 
 **Faults.** `match` is a substring of, or a RegExp tested against, the full URL. `responses` is one response, applied to every match until `clearFaults()`, or an array consumed one per matching request (e.g. per retry attempt), after which the rule is gone. A response is a status number or an object:
 

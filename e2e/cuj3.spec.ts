@@ -1286,3 +1286,51 @@ test.describe('CUJ-3: configure the extension from the toolbar icon', { tag: '@c
     });
   });
 });
+
+// Added by the QA gate (iteration 2): CUJ-3 edge cases with no e2e check yet.
+// | PRD                                                                            | Test               |
+// | ------------------------------------------------------------------------------ | ------------------ |
+// | Edge "Extremely long resulting path": the field accepts at most 200 characters | 'edge: 200 chars'  |
+// |   and truncates further typing or pasting; chips never push it past 200        |                    |
+// | Edge "Paste containing newlines": the single-line field drops the newlines     | 'edge: newlines'   |
+test.describe('CUJ-3: QA gate additions (iteration 2)', { tag: '@cuj3' }, () => {
+  test('edge: 200 chars: typing or pasting past 200 characters is truncated; a chip that would not fit inserts nothing', async ({
+    harness,
+  }) => {
+    const page = await openOptions(harness);
+    const ui = controls(page);
+    const long = `pixiv/${'a'.repeat(190)}`;
+    await ui.field.fill(long);
+    await ui.field.press('End');
+    await page.keyboard.type('bcd');
+    await page.evaluate(() => navigator.clipboard.writeText('efghijklmnop'));
+    await page.keyboard.press('ControlOrMeta+V');
+    await page.keyboard.type('xyz');
+    await expect(ui.field).toHaveValue(`${long}bcde`);
+    const value = await ui.field.inputValue();
+    expect(value).toHaveLength(200);
+    await ui.chip('{userId}').click();
+    await expect(ui.field).toHaveValue(value);
+    await expect(ui.saved('folder')).toHaveText('Saved');
+    await expect.poll(async () => (await stored(harness)).sync?.folderPattern).toBe(value);
+  });
+
+  test('edge: newlines: a pasted pattern with line breaks lands on one line without them and validates as usual', async ({
+    harness,
+  }) => {
+    const page = await openOptions(harness);
+    const ui = controls(page);
+    const paste = async (text: string): Promise<void> => {
+      await page.evaluate((clip) => navigator.clipboard.writeText(clip), text);
+      await page.keyboard.press('ControlOrMeta+V');
+    };
+    await ui.field.fill('');
+    await ui.field.focus();
+    await paste('pixiv/\n{artist}\r\n-{id}\n');
+    await expect(ui.field).toHaveValue('pixiv/{artist}-{id}');
+    await paste('/{artst}\n');
+    await expect(ui.field).toHaveValue('pixiv/{artist}-{id}/{artst}');
+    await expect(ui.errorBox).toBeVisible();
+    expect(await textOf(ui.errorText)).toBe(UNKNOWN_ARTST);
+  });
+});

@@ -805,3 +805,84 @@ test.describe('CUJ-1: QA gate additions', { tag: '@cuj1' }, () => {
     await waitForText(page, 'Saved · 12P');
   });
 });
+
+// Added by the QA gate (iteration 2): CUJ-1 edge cases with no e2e check yet.
+// | PRD                                                                          | Test                     |
+// | ---------------------------------------------------------------------------- | ------------------------ |
+// | Edge "Long or punctuation-heavy artist names" (§4.4): `  Sora / 空 :: 2nd  ` | 'sanitized folder'       |
+// |   → `Sora_空_2nd`; a name that sanitizes to nothing becomes `unknown`; the   |                          |
+// |   folder never gets an empty segment (also names of only `~` / `.`)          |                          |
+// | Edge "200-page manga": one width in every state (may exceed 164 px)          | '200 pages'              |
+test.describe('CUJ-1: QA gate additions (iteration 2)', { tag: '@cuj1' }, () => {
+  const PUNCT = requireWork('135882744') as IllustWork;
+  const MANGA = requireWork('135882743') as IllustWork;
+
+  async function saveInto(harness: Harness, id: string): Promise<string> {
+    const page = await openArtwork(harness, id);
+    await waitForText(page, /^Download/);
+    await clickButton(page);
+    const saved = await waitForText(page, /^Saved/);
+    await page.close();
+    return (saved.title ?? '').replace(/^Saved to Downloads\//, '');
+  }
+
+  test('sanitized folder: a punctuation-heavy artist, and artists of only "~" or "." resolve to unknown without losing a folder level', async ({
+    harness,
+    server,
+  }) => {
+    expect(await saveInto(harness, PUNCT.id)).toBe('pixiv/Sora_空_2nd-135882744');
+    await writeSettings(harness, { folderPattern: 'pixiv/{artist}/{title}', saveMetadata: true });
+    const folders: string[] = [];
+    for (const artist of ['~', '...', '~.~', ' . ']) {
+      server.patchWork(PUNCT.id, { userName: artist });
+      folders.push(await saveInto(harness, PUNCT.id));
+    }
+    expect(folders).toEqual(new Array(4).fill('pixiv/unknown/Punctuation_テスト_2nd'));
+    const files = await downloadedPaths(harness);
+    expect(files.filter((file) => file.startsWith('pixiv/Sora_空_2nd-135882744/'))).toEqual(
+      artworkFiles(PUNCT, 'pixiv/Sora_空_2nd-135882744', [0, 1], true),
+    );
+    // Four saves into one folder: the later ones are uniquified, nothing lands a level up.
+    expect(
+      files.filter((file) => file.startsWith('pixiv/unknown/Punctuation_テスト_2nd/')),
+    ).toHaveLength(12);
+    expect(files.filter((file) => file.startsWith('pixiv/Punctuation'))).toEqual([]);
+  });
+
+  test('200 pages: one width from Download · 200P through 0 / 200 … and Cancel to Saved · 200P', async ({
+    harness,
+    server,
+  }) => {
+    test.setTimeout(120_000);
+    const page = await openArtwork(harness, MANGA.id);
+    await waitForText(page, 'Download · 200P');
+    await page.evaluate(() => {
+      const host = document.querySelector('hfp-download');
+      const w = window as unknown as { __hfpWidths: number[] };
+      w.__hfpWidths = [];
+      if (host) {
+        new ResizeObserver(() => w.__hfpWidths.push(host.getBoundingClientRect().width)).observe(
+          host,
+        );
+      }
+    });
+    const idle = await restingView(page);
+    expect(idle.width).toBeGreaterThanOrEqual(164);
+
+    const hold = server.hold(pagesOf(MANGA, range(195, 199)));
+    await clickButton(page);
+    await waitForText(page, '195 / 200', { timeout: 60_000 });
+    expect((await restingView(page)).width).toBe(idle.width);
+    await hoverButton(page, true);
+    expect((await waitForText(page, 'Cancel')).width).toBe(idle.width);
+    await hoverButton(page, false);
+    hold.release();
+    const saved = await waitForText(page, 'Saved · 200P', { timeout: 60_000 });
+    expect(saved.width).toBe(idle.width);
+    const widths = await page.evaluate(
+      () => (window as unknown as { __hfpWidths: number[] }).__hfpWidths,
+    );
+    expect([...new Set(widths)]).toEqual([idle.width]);
+    test.info().annotations.push({ type: '200-page width px', description: String(idle.width) });
+  });
+});

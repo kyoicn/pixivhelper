@@ -1050,3 +1050,122 @@ test.describe('CUJ-5: recover when a download can’t start or breaks', { tag: '
     expect(inset).toEqual({ right: 24, bottom: 24 });
   });
 });
+
+// Added by the QA gate (iteration 2): R-003 and outage-classification cases with no e2e check yet.
+// | PRD                                                                           | Test                    |
+// | ----------------------------------------------------------------------------- | ----------------------- |
+// | AC 1 "xRestrict 1 or 2": logged out on an R-18G work → `Log in to download`   | 'needs login: R-18G'    |
+// | AC 4 / CUJ-2 edge "logged out on an R-18 ugoira": a walled all-ages ugoira,   | 'needs login: walled    |
+// |      incl. a click before the metadata: no ugoira_meta, no zip, no file      | ugoira'                 |
+// | AC 4 + CUJ-1 step 7: SPA navigation into and out of a walled work             | 'needs login: SPA'      |
+// | Step 6 detection: "pixiv server failure" when a 429/5xx answer precedes the   | 'server failure: an     |
+// |      final dropped connections (system.md §10 row 8, `lastStatus`)            | answer, then drops'     |
+test.describe('CUJ-5: QA gate additions (iteration 2)', { tag: '@cuj5' }, () => {
+  test('needs login: R-18G (xRestrict 2) logged out → Log in to download before any click; nothing fetched but the metadata', async ({
+    harness,
+    server,
+  }) => {
+    server.patchWork(R18.id, { xRestrict: 2 });
+    const page = await openArtwork(harness, R18.id);
+    await waitForText(page, 'Log in to download');
+    const resting = await restingView(page);
+    expect(resting).toMatchObject({
+      text: 'Log in to download',
+      glyph: null,
+      title: TIP_LOGIN,
+      ariaLabel: ARIA_LOGIN,
+      mode: 'row',
+      hosts: 1,
+      width: 164,
+    });
+    expect(resting.style.backgroundColor).toBe(WHITE);
+    expect(resting.style.color).toBe(LOGIN_TEXT);
+    expect(resting.style.borderTop).toMatch(new RegExp(`solid ${esc(LOGIN_BORDER)}$`));
+    expect(server.requests((r) => r.path.startsWith('/ajax/illust/145892669/'))).toEqual([]);
+    expect(server.requests((r) => r.host === 'i.pximg.net')).toEqual([]);
+    await clickButton(page);
+    await page.waitForURL((url) => url.host === 'accounts.pixiv.net');
+    expect(page.url()).toBe(loginUrlFor(R18.id));
+  });
+
+  test('needs login: a walled all-ages ugoira logged out → Log in to download; a click before the metadata reaches neither ugoira_meta nor the zip', async ({
+    harness,
+    server,
+  }) => {
+    server.patchWork(UGOIRA.id, { sensitiveWall: true });
+    const page = await openArtwork(harness, UGOIRA.id);
+    await expect(page.locator('figure.work-figure')).toContainText(
+      'This work may contain sensitive content.',
+    );
+    const view = await waitForText(page, 'Log in to download');
+    expect(view).toMatchObject({ title: TIP_LOGIN, ariaLabel: ARIA_LOGIN, glyph: null });
+    // Stays put once the codec probe answers (the hint never replaces the needs-login state).
+    await page.waitForTimeout(1_000);
+    expect((await restingView(page)).text).toBe('Log in to download');
+    await page.close();
+
+    // The race: the click lands while both metadata requests are still in flight.
+    const hold = server.hold((r) => r.path === '/ajax/illust/136004512');
+    const racing = await openArtwork(harness, UGOIRA.id);
+    expect((await waitForText(racing, 'Download')).classes).toContain('primary');
+    await expect.poll(() => hold.held).toBe(1);
+    await clickButton(racing);
+    await expect.poll(() => hold.held).toBe(2);
+    hold.release();
+    const stopped = await settle(racing, 'Log in to download');
+    expect(stopped.classes).toContain('neutral');
+
+    expect(server.requests((r) => r.path === '/ajax/illust/136004512/ugoira_meta')).toEqual([]);
+    expect(
+      server.requests((r) => r.host === 'i.pximg.net' && r.path.includes('136004512')),
+    ).toEqual([]);
+    expect(await downloadedPaths(harness)).toEqual([]);
+    await expectBadge(harness, '', IDLE_TITLE);
+  });
+
+  test('needs login: SPA navigation from a visible work into a walled work and back keeps each work’s own state', async ({
+    harness,
+    server,
+  }) => {
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    await page.click('header a[data-spa][href="/"]');
+    await page.click(`a[data-spa][href="/artworks/${WALLED.id}"]`);
+    const walled = await waitForText(page, 'Log in to download');
+    expect(walled).toMatchObject({ hosts: 1, mode: 'row', width: 164, ariaLabel: ARIA_LOGIN });
+    await page.goBack();
+    await page.goBack();
+    expect((await waitForText(page, 'Download · 12P')).classes).toContain('primary');
+    await page.goForward();
+    await page.goForward();
+    await waitForText(page, 'Log in to download');
+    expect(server.requests((r) => r.path.startsWith('/ajax/illust/135882745/'))).toEqual([]);
+    expect(
+      server.requests((r) => r.host === 'i.pximg.net' && r.path.includes('135882745')),
+    ).toEqual([]);
+  });
+
+  for (const first of [502, { status: 429, retryAfter: 1 }] as const) {
+    const name = typeof first === 'number' ? String(first) : '429';
+    test(`server failure: a ${name} answer, then dropped connections on every attempt left → Retry with "pixiv isn’t responding", not "No connection"`, async ({
+      harness,
+      server,
+    }) => {
+      harness.allowConsoleErrors(...FAULT_LOGS);
+      const drop: FaultResponse = { reset: true };
+      server.fault({
+        match: originalUrl(SINGLE, 0),
+        responses: [first, drop, drop, drop],
+      });
+      const page = await openArtwork(harness, SINGLE.id);
+      await waitForText(page, 'Download');
+      await clickButton(page);
+      const view = await settle(page, 'Retry', 30_000);
+      expectRedOutline(await restingView(page));
+      expect(view.title).toBe(TIP_SERVER);
+      expect(view.ariaLabel).toBe(ariaFailed(TIP_SERVER));
+      expect(server.requests(originalUrl(SINGLE, 0))).toHaveLength(4);
+      await expectBadge(harness, '', IDLE_TITLE);
+    });
+  }
+});
