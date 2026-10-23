@@ -260,7 +260,7 @@
     }
   },
   "aria_login": {
-    "message": "このR-18作品をダウンロードするには、pixivにログインしてください"
+    "message": "この作品をダウンロードするには、pixivにログインしてください。"
   },
   "aria_partial": {
     "message": "$TOTAL$ページ中$SAVED$ページ保存済み、$FAILED$ページ失敗。クリックで失敗したページを再試行。",

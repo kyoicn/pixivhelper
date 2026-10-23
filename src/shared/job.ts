@@ -7,7 +7,13 @@ import type { Failure, JobMode, SettingsSnapshot, UgoiraOutput } from './types';
 export type ErrorCode = 'BAD_REQUEST' | 'NOT_FOUND' | 'FORBIDDEN' | 'INTERNAL';
 
 export type StartRequest =
-  | { mode: 'full'; artworkId: string; expectedFiles: number } // expectedFiles: pageCount, or 1 for ugoira
+  | {
+      mode: 'full';
+      artworkId: string;
+      expectedFiles: number; // pageCount, or 1 for ugoira
+      // The page's login marker, for the resolver's login-wall check (R-003); null when unknown.
+      loggedIn: boolean | null;
+    }
   | { mode: 'retryPages'; artworkId: string; folder: string; pages: number[]; total: number } // pages: 0-based, unique, < total ≤ 200
   | { mode: 'retryEncode'; artworkId: string; folder: string; format: 'mp4' | 'webm' }
   | { mode: 'retryMetadata'; artworkId: string; folder: string };
@@ -72,6 +78,6 @@ export interface JobRecord {
   pagesOffset: number; // pages already saved before this run (retryPages: total − requested)
   files: FileTask[];
   ugoira: UgoiraState | null;
-  stopReason: null | 'cancelled' | 'forbidden';
+  stopReason: null | 'cancelled' | 'forbidden'; // forbidden: first byte 403, or the resolver's login-wall check (R-003)
   apiFailure: { endpoint: 'illust' | 'pages' | 'ugoira_meta'; failure: Failure } | null;
 }

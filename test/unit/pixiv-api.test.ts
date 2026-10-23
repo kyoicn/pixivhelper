@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   basenameOf,
   illustBody,
@@ -10,12 +10,15 @@ import {
   parseIllust,
   parsePages,
   parseUgoiraMeta,
+  requiresLogin,
   ugoiraMetaUrl,
 } from '../../src/shared/pixiv-api';
-import type { RetryResult } from '../../src/shared/types';
+import type { RetryResult, WorkInfo } from '../../src/shared/types';
 import errorDeleted from '../fixtures/api/error-deleted.json';
 import illustManga from '../fixtures/api/illust-manga.json';
 import illustUgoira from '../fixtures/api/illust-ugoira.json';
+import illustVisible from '../fixtures/api/illust-visible.json';
+import illustWalled from '../fixtures/api/illust-walled.json';
 import pages from '../fixtures/api/pages.json';
 import ugoiraMeta from '../fixtures/api/ugoira-meta.json';
 
@@ -32,6 +35,17 @@ function withBody(body: unknown): RetryResult<unknown> {
 function detailOf(result: RetryResult<unknown>): string | undefined {
   return result.ok ? undefined : result.failure.kind + ':' + (result.failure.detail ?? '');
 }
+
+/** parseIllust warns whenever it has to fall back to `sl` (a body without `urls.original`). */
+let warn: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+  warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('URL builders', () => {
   it('illustUrl: builds the illust endpoint', () => {
@@ -125,6 +139,7 @@ describe('parseIllust', () => {
         id: '135882741',
         illustType: 1,
         xRestrict: 0,
+        withheld: false,
         pageCount: 3,
         width: 1200,
         height: 1697,
@@ -181,6 +196,7 @@ describe('parseIllust', () => {
       id: '5',
       illustType: 0,
       xRestrict: 0,
+      withheld: false,
       pageCount: 1,
       width: 0,
       height: 0,
@@ -247,6 +263,116 @@ describe('parseIllust', () => {
     };
     expect(parseIllust(failed)).toBe(failed);
   });
+});
+
+describe('parseIllust: withheld (R-003, system.md §8.5)', () => {
+  const withheldOf = (body: Record<string, unknown>): boolean | null => {
+    const result = parseIllust(withBody({ illustId: '5', illustType: 0, ...body }));
+    return result.ok ? result.value.withheld : null;
+  };
+
+  it('parseIllust: the walled live body (151107515, all urls null) is withheld', () => {
+    expect(parseIllust(ok(illustWalled))).toEqual({
+      ok: true,
+      value: {
+        id: '151107515',
+        illustType: 0,
+        xRestrict: 0,
+        withheld: true,
+        pageCount: 4,
+        width: 6000,
+        height: 6000,
+        userName: '鬼针草',
+        userId: '6049901',
+        title: '蓝黄梅鲷',
+      },
+      status: 200,
+      attempts: 1,
+    });
+  });
+
+  it('parseIllust: the visible live body (151061734, urls.original a URL) is not withheld', () => {
+    const result = parseIllust(ok(illustVisible));
+    expect(result.ok && [result.value.xRestrict, result.value.withheld]).toEqual([0, false]);
+  });
+
+  it('parseIllust: neither live body needs the sl fallback', () => {
+    parseIllust(ok(illustWalled));
+    parseIllust(ok(illustVisible));
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('parseIllust: urls.original null is withheld even at sl 2', () => {
+    expect(withheldOf({ sl: 2, urls: { original: null } })).toBe(true);
+  });
+
+  it('parseIllust: urls.original a string is not withheld even at sl 6', () => {
+    expect(withheldOf({ sl: 6, urls: { original: ORIGINAL } })).toBe(false);
+  });
+
+  it('parseIllust: without urls, sl 4 falls back to withheld', () => {
+    expect(withheldOf({ sl: 4 })).toBe(true);
+  });
+
+  it('parseIllust: without urls, sl 2 falls back to not withheld', () => {
+    expect(withheldOf({ sl: 2 })).toBe(false);
+  });
+
+  it('parseIllust: without urls or sl, the work is not withheld', () => {
+    expect(withheldOf({})).toBe(false);
+  });
+
+  it.each([
+    ['urls without an original key', { urls: { regular: null } }],
+    ['urls.original a number', { urls: { original: 0 } }],
+    ['urls not an object', { urls: 'none' }],
+  ])('parseIllust: %s is unrecognized and falls back to sl', (_label, body) => {
+    expect([withheldOf({ ...body, sl: 4 }), withheldOf({ ...body, sl: 2 })]).toEqual([true, false]);
+  });
+
+  it('parseIllust: the sl fallback logs a warn', () => {
+    withheldOf({ sl: 4 });
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('requiresLogin (system.md §8.5)', () => {
+  const work = (xRestrict: 0 | 1 | 2, withheld: boolean): WorkInfo => ({
+    id: '5',
+    illustType: 0,
+    xRestrict,
+    withheld,
+    pageCount: 1,
+    width: 0,
+    height: 0,
+    userName: null,
+    userId: null,
+    title: null,
+  });
+
+  it.each([
+    // logged out: R-18/R-18G or withheld needs login
+    [false, 0, false, false],
+    [false, 0, true, true],
+    [false, 1, false, true],
+    [false, 1, true, true],
+    [false, 2, false, true],
+    [false, 2, true, true],
+    // logged in: pixiv's answers to the job decide
+    [true, 0, false, false],
+    [true, 0, true, false],
+    [true, 1, true, false],
+    [true, 2, true, false],
+    // login marker not found: never needs login
+    [null, 0, true, false],
+    [null, 1, true, false],
+    [null, 2, false, false],
+  ] as const)(
+    'requiresLogin: loggedIn %s, xRestrict %i, withheld %s → %s',
+    (loggedIn, xRestrict, withheld, expected) => {
+      expect(requiresLogin(work(xRestrict, withheld), loggedIn)).toBe(expected);
+    },
+  );
 });
 
 describe('illustBody', () => {

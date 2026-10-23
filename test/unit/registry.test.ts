@@ -57,7 +57,7 @@ function job(jobId = 'job-1', files: FileTask[] = []): JobRecord {
     originTabId: 7,
     createdAt: 0,
     mode: 'full',
-    request: { mode: 'full', artworkId: '135882741', expectedFiles: 2 },
+    request: { mode: 'full', artworkId: '135882741', expectedFiles: 2, loggedIn: null },
     kind: 'pages',
     phase: 'transferring',
     snapshot: {

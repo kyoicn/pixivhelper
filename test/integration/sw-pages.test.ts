@@ -63,7 +63,12 @@ interface Run {
 async function runJob(
   api: ApiTable = api12(),
   options: OffscreenOptions = {},
-  start: Record<string, unknown> = { mode: 'full', artworkId: ID, expectedFiles: 12 },
+  start: Record<string, unknown> = {
+    mode: 'full',
+    artworkId: ID,
+    expectedFiles: 12,
+    loggedIn: false,
+  },
 ): Promise<Run> {
   const offscreen = new ScriptedOffscreen(fake, options);
   await bootSw();
@@ -223,7 +228,15 @@ describe('sw: a 12-page job (CUJ-1)', () => {
   it('sw: a second run of the same artwork gets uniquified names', async () => {
     await runJob();
     const tab = new ContentTab(fake, ARTWORK_URL, api12());
-    await settle(tab.send({ type: 'job/start', mode: 'full', artworkId: ID, expectedFiles: 12 }));
+    await settle(
+      tab.send({
+        type: 'job/start',
+        mode: 'full',
+        artworkId: ID,
+        expectedFiles: 12,
+        loggedIn: true,
+      }),
+    );
     const driver = new DownloadDriver(fake);
     await until(() => {
       driver.step();
@@ -252,6 +265,7 @@ describe('sw: failures in a pages job (CUJ-5)', () => {
         mode: 'full',
         artworkId: ID,
         expectedFiles: 3,
+        loggedIn: false,
       },
     );
     expect(tab.ended()?.outcome).toEqual({
@@ -278,6 +292,50 @@ describe('sw: failures in a pages job (CUJ-5)', () => {
     ]);
   });
 
+  // R-003: pixiv serves /pages of a walled all-ages work to logged-out sessions, so the SW must
+  // stop a click made before the render-time metadata arrived.
+  function walledApi(): ApiTable {
+    const urls = { mini: null, thumb: null, small: null, regular: null, original: null };
+    return new Map<string, Record<string, unknown> | number>([
+      [`${API}/${ID}`, illustJson({ pageCount: 12, sl: 4, urls })],
+      [`${API}/${ID}/pages`, pagesJson(ID, 12)],
+    ]);
+  }
+
+  /** URLs the SW asked the tab to fetch from pixiv's API. */
+  function apiRequests(): string[] {
+    return fake.api.tabs.sendMessage.mock.calls.flatMap(([, message]) => {
+      const m = message as { type?: unknown; url?: unknown };
+      return m.type === 'api/fetchJson' && typeof m.url === 'string' ? [m.url] : [];
+    });
+  }
+
+  it('sw: a logged-out pending click on a walled work ends needs-login before /pages or any byte', async () => {
+    const start = { mode: 'full', artworkId: ID, expectedFiles: 0, loggedIn: false };
+    const { tab, offscreen } = await runJob(walledApi(), {}, start);
+    expect([tab.ended()?.outcome, apiRequests(), offscreen.commands, savedFiles(fake)]).toEqual([
+      { type: 'needsLogin' },
+      [`${API}/${ID}`],
+      [],
+      [],
+    ]);
+  });
+
+  it('sw: the login-wall stop leaves no badge and no job record', async () => {
+    const start = { mode: 'full', artworkId: ID, expectedFiles: 0, loggedIn: false };
+    await runJob(walledApi(), {}, start);
+    expect([
+      fake.action.badgeText,
+      Object.keys(fake.storage.session.snapshot()).filter((key) => key.startsWith('job:')),
+    ]).toEqual(['', []]);
+  });
+
+  it('sw: a logged-in click on the same walled body downloads normally', async () => {
+    const start = { mode: 'full', artworkId: ID, expectedFiles: 12, loggedIn: true };
+    const { tab } = await runJob(walledApi(), {}, start);
+    expect(tab.ended()?.outcome).toEqual({ type: 'saved', folder: FOLDER, pages: 12 });
+  });
+
   it('sw: a deleted work (illust 404) ends unavailable', async () => {
     const api = new Map<string, Record<string, unknown> | number>([[`${API}/${ID}`, 404]]);
     const { tab } = await runJob(api);
@@ -295,7 +353,16 @@ describe('sw: failures in a pages job (CUJ-5)', () => {
 
   it('sw: a download Chrome refuses ("Invalid filename") fails with disk', async () => {
     fake.downloads.failNextDownload('Invalid filename', 4);
-    const { tab } = await runJob(api3(), {}, { mode: 'full', artworkId: ID, expectedFiles: 3 });
+    const { tab } = await runJob(
+      api3(),
+      {},
+      {
+        mode: 'full',
+        artworkId: ID,
+        expectedFiles: 3,
+        loggedIn: false,
+      },
+    );
     expect(tab.ended()?.outcome).toEqual({ type: 'error', cause: 'disk' });
   });
 
@@ -303,7 +370,15 @@ describe('sw: failures in a pages job (CUJ-5)', () => {
     new ScriptedOffscreen(fake);
     await bootSw();
     const tab = new ContentTab(fake, ARTWORK_URL, api3());
-    await settle(tab.send({ type: 'job/start', mode: 'full', artworkId: ID, expectedFiles: 3 }));
+    await settle(
+      tab.send({
+        type: 'job/start',
+        mode: 'full',
+        artworkId: ID,
+        expectedFiles: 3,
+        loggedIn: true,
+      }),
+    );
     await until(() => {
       for (const item of fake.downloads.inProgress()) {
         if (item.filename.endsWith('_p2.jpg')) fake.downloads.interrupt(item.id, 'USER_CANCELED');
@@ -394,7 +469,13 @@ describe('sw: API proxy fallback', () => {
     const offscreen = new ScriptedOffscreen(fake, { api: api12() });
     await bootSw();
     const tab = new ContentTab(fake, ARTWORK_URL, api12());
-    const started = tab.send({ type: 'job/start', mode: 'full', artworkId: ID, expectedFiles: 12 });
+    const started = tab.send({
+      type: 'job/start',
+      mode: 'full',
+      artworkId: ID,
+      expectedFiles: 12,
+      loggedIn: true,
+    });
     tab.tab.close();
     await settle(started);
     const driver = new DownloadDriver(fake);

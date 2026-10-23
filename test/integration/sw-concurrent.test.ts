@@ -46,7 +46,7 @@ function api() {
 
 async function start(tab: ContentTab, artworkId: string, pages: number): Promise<string> {
   const response = (await settle(
-    tab.send({ type: 'job/start', mode: 'full', artworkId, expectedFiles: pages }),
+    tab.send({ type: 'job/start', mode: 'full', artworkId, expectedFiles: pages, loggedIn: true }),
   )) as JobStartResponse;
   if (!response.ok) throw new Error('job/start failed');
   return response.view.jobId;

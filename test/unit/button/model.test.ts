@@ -13,12 +13,15 @@ import type { JobOutcome, JobProgress, JobView, WorkInfo } from '../../../src/sh
 const ARTWORK = '135882741';
 const HREF = 'https://www.pixiv.net/artworks/135882741';
 const FOLDER = 'pixiv/みずき-135882741';
+/** The page's login marker passed to clickAction (read once per document). */
+const LOGGED_OUT = false;
 
 function work(overrides: Partial<WorkInfo> = {}): WorkInfo {
   return {
     id: ARTWORK,
     illustType: 0,
     xRestrict: 0,
+    withheld: false,
     pageCount: 12,
     width: 1200,
     height: 1697,
@@ -106,6 +109,27 @@ describe('reduce: render-time metadata', () => {
         loggedIn: false,
       });
       expect(next.state).toEqual({ s: 'needsLogin' });
+    },
+  );
+
+  it('reduce: metadata turns pending into needsLogin for a withheld all-ages work while logged out', () => {
+    const next = reduce(createEntry(ARTWORK), {
+      type: 'metadata',
+      work: work({ xRestrict: 0, withheld: true }),
+      loggedIn: false,
+    });
+    expect(next.state).toEqual({ s: 'needsLogin' });
+  });
+
+  it.each([true, null])(
+    'reduce: metadata for a withheld all-ages work with loggedIn %s is idle',
+    (loggedIn) => {
+      const next = reduce(createEntry(ARTWORK), {
+        type: 'metadata',
+        work: work({ xRestrict: 0, withheld: true }),
+        loggedIn,
+      });
+      expect(next.state).toEqual({ s: 'idle' });
     },
   );
 
@@ -437,31 +461,31 @@ describe('reduce: job/update when the job ends', () => {
 
 describe('clickAction', () => {
   it('clickAction: pending starts a full job with no file estimate', () => {
-    expect(clickAction(createEntry(ARTWORK), 0, HREF)).toEqual({
+    expect(clickAction(createEntry(ARTWORK), 0, HREF, LOGGED_OUT)).toEqual({
       type: 'start',
-      request: { mode: 'full', artworkId: ARTWORK, expectedFiles: 0 },
+      request: { mode: 'full', artworkId: ARTWORK, expectedFiles: 0, loggedIn: false },
     });
   });
 
   it('clickAction: idle pages starts a full job expecting every page', () => {
-    expect(clickAction(entry({ s: 'idle' }), 0, HREF)).toEqual({
+    expect(clickAction(entry({ s: 'idle' }), 0, HREF, LOGGED_OUT)).toEqual({
       type: 'start',
-      request: { mode: 'full', artworkId: ARTWORK, expectedFiles: 12 },
+      request: { mode: 'full', artworkId: ARTWORK, expectedFiles: 12, loggedIn: false },
     });
   });
 
   it('clickAction: idle ugoira starts a full job expecting one file', () => {
-    expect(clickAction(entry({ s: 'idle' }, { work: UGOIRA }), 0, HREF)).toEqual({
+    expect(clickAction(entry({ s: 'idle' }, { work: UGOIRA }), 0, HREF, LOGGED_OUT)).toEqual({
       type: 'start',
-      request: { mode: 'full', artworkId: ARTWORK, expectedFiles: 1 },
+      request: { mode: 'full', artworkId: ARTWORK, expectedFiles: 1, loggedIn: false },
     });
   });
 
   it('clickAction: Saved downloads the whole work again', () => {
     const saved: ButtonState = { s: 'saved', folder: FOLDER, kind: 'pages', pages: 12 };
-    expect(clickAction(entry(saved), 0, HREF)).toEqual({
+    expect(clickAction(entry(saved), 0, HREF, LOGGED_OUT)).toEqual({
       type: 'start',
-      request: { mode: 'full', artworkId: ARTWORK, expectedFiles: 12 },
+      request: { mode: 'full', artworkId: ARTWORK, expectedFiles: 12, loggedIn: false },
     });
   });
 
@@ -470,7 +494,7 @@ describe('clickAction', () => {
       s: 'error',
       err: { t: 'partial', folder: FOLDER, total: 12, saved: 9, failedPages: [3, 8, 10] },
     };
-    expect(clickAction(entry(state), 0, HREF)).toEqual({
+    expect(clickAction(entry(state), 0, HREF, LOGGED_OUT)).toEqual({
       type: 'start',
       request: {
         mode: 'retryPages',
@@ -487,7 +511,7 @@ describe('clickAction', () => {
       s: 'error',
       err: { t: 'metadataOnly', folder: FOLDER, total: 12 },
     };
-    expect(clickAction(entry(state), 0, HREF)).toEqual({
+    expect(clickAction(entry(state), 0, HREF, LOGGED_OUT)).toEqual({
       type: 'start',
       request: { mode: 'retryMetadata', artworkId: ARTWORK, folder: FOLDER },
     });
@@ -498,7 +522,7 @@ describe('clickAction', () => {
       s: 'error',
       err: { t: 'encodeFailed', folder: FOLDER, format: 'webm' },
     };
-    expect(clickAction(entry(state, { work: UGOIRA }), 0, HREF)).toEqual({
+    expect(clickAction(entry(state, { work: UGOIRA }), 0, HREF, LOGGED_OUT)).toEqual({
       type: 'start',
       request: { mode: 'retryEncode', artworkId: ARTWORK, folder: FOLDER, format: 'webm' },
     });
@@ -506,15 +530,50 @@ describe('clickAction', () => {
 
   it('clickAction: a cause error runs the whole job again', () => {
     const state: ButtonState = { s: 'error', err: { t: 'cause', cause: 'offline' } };
-    expect(clickAction(entry(state), 0, HREF)).toEqual({
+    expect(clickAction(entry(state), 0, HREF, LOGGED_OUT)).toEqual({
       type: 'start',
-      request: { mode: 'full', artworkId: ARTWORK, expectedFiles: 12 },
+      request: { mode: 'full', artworkId: ARTWORK, expectedFiles: 12, loggedIn: false },
     });
+  });
+
+  it.each([true, false, null])(
+    'clickAction: a pending click carries the page’s loggedIn %s (the SW re-checks, R-003)',
+    (loggedIn) => {
+      expect(clickAction(createEntry(ARTWORK), 0, HREF, loggedIn)).toEqual({
+        type: 'start',
+        request: { mode: 'full', artworkId: ARTWORK, expectedFiles: 0, loggedIn },
+      });
+    },
+  );
+
+  it.each<[string, ButtonState]>([
+    ['idle', { s: 'idle' }],
+    ['saved', { s: 'saved', folder: FOLDER, kind: 'pages', pages: 12 }],
+    ['error with a cause', { s: 'error', err: { t: 'cause', cause: 'server' } }],
+  ])('clickAction: a full start from %s carries loggedIn', (_label, state) => {
+    expect([
+      clickAction(entry(state), 0, HREF, true),
+      clickAction(entry(state), 0, HREF, null),
+    ]).toEqual([
+      {
+        type: 'start',
+        request: { mode: 'full', artworkId: ARTWORK, expectedFiles: 12, loggedIn: true },
+      },
+      {
+        type: 'start',
+        request: { mode: 'full', artworkId: ARTWORK, expectedFiles: 12, loggedIn: null },
+      },
+    ]);
   });
 
   it('clickAction: needsLogin opens pixiv login returning to this page', () => {
     expect(
-      clickAction(entry({ s: 'needsLogin' }), 0, 'https://www.pixiv.net/artworks/145892669'),
+      clickAction(
+        entry({ s: 'needsLogin' }),
+        0,
+        'https://www.pixiv.net/artworks/145892669',
+        LOGGED_OUT,
+      ),
     ).toEqual({
       type: 'login',
       url: 'https://accounts.pixiv.net/login?return_to=https%3A%2F%2Fwww.pixiv.net%2Fartworks%2F145892669',
@@ -522,11 +581,13 @@ describe('clickAction', () => {
   });
 
   it('clickAction: busy within the 500 ms guard is ignored', () => {
-    expect(clickAction(entry(busy({ startedAt: 1000 })), 1499, HREF)).toEqual({ type: 'ignore' });
+    expect(clickAction(entry(busy({ startedAt: 1000 })), 1499, HREF, LOGGED_OUT)).toEqual({
+      type: 'ignore',
+    });
   });
 
   it('clickAction: busy after the guard cancels the job', () => {
-    expect(clickAction(entry(busy({ startedAt: 1000 })), 1500, HREF)).toEqual({
+    expect(clickAction(entry(busy({ startedAt: 1000 })), 1500, HREF, LOGGED_OUT)).toEqual({
       type: 'cancel',
       jobId: 'job-1',
     });
@@ -534,16 +595,21 @@ describe('clickAction', () => {
 
   it('clickAction: busy before job/start answered is ignored', () => {
     const state = busy({ jobId: AWAITING_JOB_ID, startedAt: 0 });
-    expect(clickAction(entry(state), 9000, HREF)).toEqual({ type: 'ignore' });
+    expect(clickAction(entry(state), 9000, HREF, LOGGED_OUT)).toEqual({ type: 'ignore' });
   });
 
   it('clickAction: a reattached job can be cancelled at once', () => {
     const state = busy({ startedAt: Number.NEGATIVE_INFINITY, armed: true });
-    expect(clickAction(entry(state), 10, HREF)).toEqual({ type: 'cancel', jobId: 'job-1' });
+    expect(clickAction(entry(state), 10, HREF, LOGGED_OUT)).toEqual({
+      type: 'cancel',
+      jobId: 'job-1',
+    });
   });
 
   it('clickAction: unavailable does nothing', () => {
-    expect(clickAction(entry({ s: 'unavailable' }), 0, HREF)).toEqual({ type: 'ignore' });
+    expect(clickAction(entry({ s: 'unavailable' }), 0, HREF, LOGGED_OUT)).toEqual({
+      type: 'ignore',
+    });
   });
 
   it('loginUrl: encodes locale-prefixed artwork URLs', () => {

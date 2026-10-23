@@ -21,7 +21,14 @@ const OFFSCREEN: chrome.runtime.MessageSender = {
   id: FAKE_EXTENSION_ID,
   url: `${EXTENSION_ORIGIN}/offscreen.html`,
 };
-const START = { target: 'sw', type: 'job/start', mode: 'full', artworkId: ID, expectedFiles: 12 };
+const START = {
+  target: 'sw',
+  type: 'job/start',
+  mode: 'full',
+  artworkId: ID,
+  expectedFiles: 12,
+  loggedIn: false,
+};
 
 let fake: ChromeFake;
 
@@ -158,6 +165,17 @@ describe('handlers: validation', () => {
     });
   });
 
+  it.each([
+    ['without loggedIn', { loggedIn: undefined }],
+    ["with loggedIn 'yes'", { loggedIn: 'yes' }],
+  ])('router: a full job/start %s is a bad request', async (_label, override) => {
+    const engine = stubEngine();
+    expect([
+      (await route({ ...START, ...override }, CONTENT, engine)).response,
+      engine.start.mock.calls,
+    ]).toEqual([{ ok: false, error: 'BAD_REQUEST' }, []]);
+  });
+
   it('router: a retry whose echoed folder is not safe is a bad request', async () => {
     const engine = stubEngine();
     const message = {
@@ -191,7 +209,7 @@ describe('handlers: job/start', () => {
     const engine = stubEngine();
     await route(START, CONTENT, engine);
     expect(engine.start.mock.calls).toEqual([
-      [{ mode: 'full', artworkId: ID, expectedFiles: 12 }, TAB_ID],
+      [{ mode: 'full', artworkId: ID, expectedFiles: 12, loggedIn: false }, TAB_ID],
     ]);
   });
 
@@ -259,8 +277,18 @@ describe('handlers: startRequest', () => {
   it.each<[string, Record<string, unknown>, StartRequest]>([
     [
       'full',
-      { mode: 'full', artworkId: ID, expectedFiles: 3 },
-      { mode: 'full', artworkId: ID, expectedFiles: 3 },
+      { mode: 'full', artworkId: ID, expectedFiles: 3, loggedIn: true, extra: 1 },
+      { mode: 'full', artworkId: ID, expectedFiles: 3, loggedIn: true },
+    ],
+    [
+      'full logged out',
+      { mode: 'full', artworkId: ID, expectedFiles: 3, loggedIn: false },
+      { mode: 'full', artworkId: ID, expectedFiles: 3, loggedIn: false },
+    ],
+    [
+      'full with an unknown login state',
+      { mode: 'full', artworkId: ID, expectedFiles: 3, loggedIn: null },
+      { mode: 'full', artworkId: ID, expectedFiles: 3, loggedIn: null },
     ],
     [
       'retryPages',

@@ -34,7 +34,21 @@ function firstPageOriginal(work: Work): string {
   return work.illustType === 2 ? masterUrl(work) : originalUrl(work, 0);
 }
 
-/** `GET /ajax/illust/{id}` body. `gated`: pixiv nulls every image URL of an R-18 work for a logged-out viewer. */
+/** pixiv's sanity level: 6 for R-18/R-18G, 4 behind the sensitive-content wall, else 2. */
+function sanityLevel(work: Work): number {
+  if (work.xRestrict > 0) return 6;
+  return work.sensitiveWall === true ? 4 : 2;
+}
+
+/**
+ * Whether pixiv withholds the work's images from this viewer (system.md §8.5): logged out, on an
+ * R-18/R-18G work or one behind the sensitive-content wall.
+ */
+export function isWalled(work: Work, loggedIn: boolean): boolean {
+  return !loggedIn && (work.xRestrict > 0 || work.sensitiveWall === true);
+}
+
+/** `GET /ajax/illust/{id}` body. `gated`: pixiv nulls every image URL (see isWalled). */
 export function illustBody(work: Work, gated: boolean): Record<string, unknown> {
   const original = gated ? null : firstPageOriginal(work);
   const preview = gated ? null : masterUrl(work);
@@ -50,7 +64,7 @@ export function illustBody(work: Work, gated: boolean): Record<string, unknown> 
     uploadDate: work.createDate,
     restrict: 0,
     xRestrict: work.xRestrict,
-    sl: work.xRestrict > 0 ? 6 : 2,
+    sl: sanityLevel(work),
     urls: { mini: preview, thumb: preview, small: preview, regular: preview, original },
     tags: {
       authorId: work.userId,

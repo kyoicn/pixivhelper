@@ -260,7 +260,7 @@
     }
   },
   "aria_login": {
-    "message": "登录 pixiv 以下载此 R-18 作品"
+    "message": "登录 pixiv 以下载此作品。"
   },
   "aria_partial": {
     "message": "共 $TOTAL$ 页，已保存 $SAVED$ 页，$FAILED$ 页失败。点击重试失败的页面。",

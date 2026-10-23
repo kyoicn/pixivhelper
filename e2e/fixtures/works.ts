@@ -19,6 +19,11 @@ interface WorkBase {
   height: number;
   /** Logged-in requests to /pages and /ugoira_meta still get `{ error: true }` (pixiv's R-18 display off). */
   r18Hidden?: boolean;
+  /**
+   * An all-ages work behind pixiv's sensitive-content login wall (`sl` 4): logged out, /ajax/illust
+   * sends no image URLs and the page shows the wall, while /pages and /ugoira_meta still answer.
+   */
+  sensitiveWall?: boolean;
   /** i.pximg.net bytes of this work are sent without Content-Length (chunked). */
   noContentLength?: boolean;
   /** Every ajax endpoint answers 404 `{ error: true }`. */
@@ -116,6 +121,23 @@ export const WORKS: readonly Work[] = [
     pages: ['png', 'jpg'],
     purpose:
       'folder sanitization and Chrome path safety; patch userName to ZWJ_EMOJI_ARTIST for the emoji case',
+  },
+  {
+    id: '135882745',
+    illustType: 0,
+    title: '水族館の夜',
+    userName: 'うみ',
+    userId: '40285180',
+    xRestrict: 0,
+    sensitiveWall: true,
+    description: '夜の水族館。',
+    tags: ['オリジナル', '水族館'],
+    createDate: '2026-10-01T22:00:00+09:00',
+    width: 120,
+    height: 170,
+    pages: ['jpg', 'jpg', 'jpg', 'jpg'],
+    purpose:
+      'R-003: all-ages work behind the sensitive-content wall (4 pages, sl 4): logged-out needs-login, pending-click resolver stop, login round-trip',
   },
   {
     id: '145892669',

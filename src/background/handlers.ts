@@ -39,7 +39,12 @@ const failure = (error: ErrorCode): ErrorResponse => ({ ok: false, error });
 export function startRequest(m: JobStartMessage): StartRequest {
   switch (m.mode) {
     case 'full':
-      return { mode: m.mode, artworkId: m.artworkId, expectedFiles: m.expectedFiles };
+      return {
+        mode: m.mode,
+        artworkId: m.artworkId,
+        expectedFiles: m.expectedFiles,
+        loggedIn: m.loggedIn,
+      };
     case 'retryPages':
       return {
         mode: m.mode,

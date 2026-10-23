@@ -260,7 +260,7 @@
     }
   },
   "aria_login": {
-    "message": "Log in to pixiv to download this R-18 work"
+    "message": "Log in to pixiv to download this work."
   },
   "aria_partial": {
     "message": "$SAVED$ of $TOTAL$ pages saved, $FAILED$ failed. Click to retry the failed pages.",

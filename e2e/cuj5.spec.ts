@@ -9,22 +9,26 @@
 // | 2  Click → accounts.pixiv.net/login?return_to=<encoded URL>; after login    | 'login round-trip';     |
 // |    `Download · 68P`                                                         | 'logged in elsewhere'   |
 // | 3  Logged out, all-ages: normal idle `Download · NP`, download succeeds     | 'logged out all-ages'   |
-// | 4  Some pages fail after 4 attempts: `Retry · 3 failed`, red outline,       | 'partial'               |
+// | 4  Logged out, all-ages behind pixiv's sensitive-content wall (R-003):      | 'needs login (R-003)'   |
+// |    `Log in to download` before any click, same styling and tooltip, name    | (3 tests: walled work,  |
+// |    `Log in to pixiv to download this work.`; login → `Download · 4P`        | pending click, logged   |
+// |                                                                             | in)                     |
+// | 5  Some pages fail after 4 attempts: `Retry · 3 failed`, red outline,       | 'partial'               |
 // |    warning triangle, same width, exact tooltip                              |                         |
-// | 5  `Retry · 3 failed` fetches only the 3 pages into the same folder, ends   | 'partial'               |
+// | 6  `Retry · 3 failed` fetches only the 3 pages into the same folder, ends   | 'partial'               |
 // |    `Saved · 12P`                                                            |                         |
-// | 6  Network disconnected → `Retry` + "No connection…"                        | 'offline' (2 tests)     |
-// | 7  Logged in, R-18 display off → `Retry` + "pixiv refused this work…"       | 'refused' (2 tests)     |
-// | 8  Deleted after page load → gray `Unavailable`, click does nothing         | 'unavailable' (2 tests) |
-// | 9  Encode fails: zip + frames.json, no video, `Retry · MP4` + exact tooltip;| 'encode failure' (2     |
+// | 7  Network disconnected → `Retry` + "No connection…"                        | 'offline' (2 tests)     |
+// | 8  Logged in, R-18 display off → `Retry` + "pixiv refused this work…"       | 'refused' (2 tests)     |
+// | 9  Deleted after page load → gray `Unavailable`, click does nothing         | 'unavailable' (2 tests) |
+// | 10 Encode fails: zip + frames.json, no video, `Retry · MP4` + exact tooltip;| 'encode failure' (2     |
 // |    clicking it produces only the video                                      | tests)                  |
-// | 10 403 on originals mid-job: saved files stay, back to `Log in to download` | '403 mid-job'           |
-// | 11 No error state shows a badge unless another job is in flight             | 'badge in error states';|
+// | 11 403 on originals mid-job: saved files stay, back to `Log in to download` | '403 mid-job'           |
+// | 12 No error state shows a badge unless another job is in flight             | 'badge in error states';|
 // |                                                                             | also every error test   |
-// | 12 Cancelling never produces red styling or any message                     | 'cancel a retry'        |
-// | 13 Action row removed before navigation → floating pill at the artwork's    | 'floating fallback'     |
+// | 13 Cancelling never produces red styling or any message                     | 'cancel a retry'        |
+// | 14 Action row removed before navigation → floating pill at the artwork's    | 'floating fallback'     |
 // |    bottom-right within 3 s; downloads normally                              | (2 tests)               |
-// | 14 403 never retried; 429/500/502/503/504 and network errors retried up to  | 'retry policy';         |
+// | 15 403 never retried; 429/500/502/503/504 and network errors retried up to  | 'retry policy';         |
 // |    4 attempts                                                               | '403 mid-job'; 'partial'|
 // | Edge: 5xx with 0 pages saved → `Retry` + "pixiv isn't responding…"          | 'server failure'        |
 // | Edge: exactly 1 failure → `Retry · 1 failed` + tip_partial_one; reload      | 'partial one'           |
@@ -41,7 +45,10 @@
 // 4 attempts on 500/503 under the real 1.5/3/6 s backoff were verified with the dev build (QA report).
 //
 // Not covered here: "only metadata.json failed" (needs a chrome.downloads failure on one file; L1/L2
-// cover the classifier row and retryMetadata), R-18G (xRestrict 2; no fixture, same `≥ 1` rule).
+// cover the classifier row and retryMetadata), R-18G (xRestrict 2; no fixture, same `≥ 1` rule),
+// and "pixiv isn't responding" after Chromium throttled the later attempts of a sustained 503 (the
+// ×0.01 backoff cannot reproduce the throttling deterministically; retry.test.ts and
+// outcome.test.ts pin `lastStatus` → server, and QA replays it against the dev build).
 
 import type { Page } from '@playwright/test';
 import { CAPS_KEY_PREFIX } from '../src/shared/constants';
@@ -85,6 +92,8 @@ import type { FakePixiv, FaultResponse, LoggedRequest } from './server/server';
 const EXAMPLE = requireWork('135882741') as IllustWork;
 const SINGLE = requireWork('135882742') as IllustWork;
 const R18 = requireWork('145892669') as IllustWork;
+/** All-ages, behind pixiv's sensitive-content login wall (R-003). */
+const WALLED = requireWork('135882745') as IllustWork;
 const TAB_B = requireWork('136120877') as IllustWork;
 const UGOIRA = requireWork('136004512') as UgoiraWork;
 const CORRUPT = requireWork('136004516') as UgoiraWork;
@@ -92,13 +101,14 @@ const DELETED_ID = '199999999';
 
 const FOLDER = 'pixiv/みずき-135882741';
 const R18_FOLDER = 'pixiv/ヨル-145892669';
+const WALLED_FOLDER = 'pixiv/うみ-135882745';
 const UGOIRA_FOLDER = 'pixiv/ひなた-136004512';
 const CORRUPT_FOLDER = 'pixiv/ひなた-136004516';
 const ALL_PAGES = EXAMPLE.pages.map((_, page) => page);
 
 // ── PRD copy (Appendix A) ──
 const TIP_LOGIN = 'Opens pixiv login and returns you here';
-const ARIA_LOGIN = 'Log in to pixiv to download this R-18 work';
+const ARIA_LOGIN = 'Log in to pixiv to download this work.';
 const TIP_OFFLINE = "No connection. Retry when you're back online.";
 const TIP_REFUSED =
   "pixiv refused this work. If you're logged in, check your R-18 setting on pixiv.";
@@ -325,6 +335,102 @@ test.describe('CUJ-5: recover when a download can’t start or breaks', { tag: '
       artworkFiles(SINGLE, 'pixiv/みずき-135882742', [0], true),
     );
     expect(server.requests((r) => r.host === 'www.pixiv.net').every((r) => !r.loggedIn)).toBe(true);
+  });
+
+  test('needs login (R-003): logged out on an all-ages work behind pixiv’s login wall → Log in to download before any click; login → Download · 4P → saves', async ({
+    harness,
+    server,
+  }) => {
+    const page = await openArtwork(harness, WALLED.id);
+    // The fake shows pixiv's wall instead of the image, as pixiv does for a logged-out visitor.
+    const figure = page.locator('figure.work-figure');
+    await expect(figure).toContainText('This work may contain sensitive content.');
+    await expect(figure).toContainText('Please log in to view this work.');
+    const view = await waitForText(page, 'Log in to download');
+    const resting = await restingView(page);
+    expect(resting).toMatchObject({
+      text: 'Log in to download',
+      glyph: null,
+      title: TIP_LOGIN,
+      ariaLabel: ARIA_LOGIN,
+      ariaBusy: null,
+      ariaDisabled: null,
+      mode: 'row',
+      hosts: 1,
+    });
+    expect(view.classes).toContain('neutral');
+    expect(resting.style.backgroundColor).toBe(WHITE);
+    expect(resting.style.color).toBe(LOGIN_TEXT);
+    expect(resting.style.borderTop).toMatch(new RegExp(`^[\\d.]+px solid ${esc(LOGIN_BORDER)}$`));
+    expect(resting.style.boxShadow).toBe('none');
+    // Decided from the render-time metadata alone: nothing else of the work was fetched.
+    expect(server.requests((r) => r.path === '/ajax/illust/135882745').length).toBeGreaterThan(0);
+    expect(server.requests((r) => r.path.startsWith('/ajax/illust/135882745/'))).toEqual([]);
+    expect(await badgeText(harness)).toBe('');
+
+    await clickButton(page);
+    await page.waitForURL((url) => url.host === 'accounts.pixiv.net');
+    expect(page.url()).toBe(loginUrlFor(WALLED.id));
+    expect(page.url()).toBe(
+      'https://accounts.pixiv.net/login?return_to=https%3A%2F%2Fwww.pixiv.net%2Fartworks%2F135882745',
+    );
+
+    await page.click('button[type="submit"]');
+    await page.waitForURL(artworkUrl(WALLED.id));
+    await exposeButton(page);
+    const idle = await waitForText(page, 'Download · 4P');
+    expect(idle.classes).toContain('primary');
+    expect(idle.ariaLabel).toBe('Download all 4 original images of this artwork');
+
+    await clickButton(page);
+    await settle(page, 'Saved · 4P');
+    expect(await downloadedPaths(harness)).toEqual(
+      artworkFiles(WALLED, WALLED_FOLDER, range(0, 3), true),
+    );
+  });
+
+  test('needs login (R-003): a click before the metadata arrived never reaches /pages or i.pximg.net and ends Log in to download', async ({
+    harness,
+    server,
+  }) => {
+    // Drip-fed, never stalled: the render-time fetch and the SW resolver's own call stay in flight.
+    const hold = server.hold((r) => r.path === '/ajax/illust/135882745');
+    const page = await openArtwork(harness, WALLED.id);
+    const pending = await waitForText(page, 'Download');
+    expect(pending.classes).toContain('primary');
+    await expect.poll(() => hold.held).toBe(1);
+    await clickButton(page);
+    await expect.poll(() => hold.held).toBe(2);
+    hold.release();
+
+    const view = await settle(page, 'Log in to download');
+    expect(view).toMatchObject({ title: TIP_LOGIN, ariaLabel: ARIA_LOGIN, glyph: null });
+    expect(view.classes).toContain('neutral');
+    expect(server.requests((r) => r.path === '/ajax/illust/135882745/pages')).toEqual([]);
+    expect(server.requests((r) => r.path === '/ajax/illust/135882745/ugoira_meta')).toEqual([]);
+    expect(
+      server.requests((r) => r.host === 'i.pximg.net' && r.path.includes('135882745')),
+    ).toEqual([]);
+    expect(await downloadedPaths(harness)).toEqual([]);
+    await expectBadge(harness, '', IDLE_TITLE);
+  });
+
+  test('needs login (R-003): logged in, the walled work is the normal idle Download · 4P and saves', async ({
+    harness,
+    server,
+  }) => {
+    await harness.context.addCookies([SESSION_COOKIE]);
+    const page = await openArtwork(harness, WALLED.id);
+    const idle = await waitForText(page, 'Download · 4P');
+    expect(idle.classes).toContain('primary');
+    await clickButton(page);
+    await settle(page, 'Saved · 4P');
+    expect(await downloadedPaths(harness)).toEqual(
+      artworkFiles(WALLED, WALLED_FOLDER, range(0, 3), true),
+    );
+    expect(server.requests((r) => r.path === '/ajax/illust/135882745/pages')[0]?.loggedIn).toBe(
+      true,
+    );
   });
 
   // ── Part B: reactive error states ──

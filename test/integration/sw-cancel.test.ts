@@ -39,7 +39,7 @@ function api(): ApiTable {
 
 async function start(tab: ContentTab): Promise<string> {
   const response = (await settle(
-    tab.send({ type: 'job/start', mode: 'full', artworkId: ID, expectedFiles: 12 }),
+    tab.send({ type: 'job/start', mode: 'full', artworkId: ID, expectedFiles: 12, loggedIn: true }),
   )) as JobStartResponse;
   if (!response.ok) throw new Error('job/start failed');
   return response.view.jobId;

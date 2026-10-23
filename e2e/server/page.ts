@@ -17,6 +17,8 @@ export interface CatalogEntry {
   userName: string;
   userId: string;
   xRestrict: number;
+  /** Behind pixiv's sensitive-content login wall: logged out, the page shows the wall text. */
+  sensitiveWall?: boolean;
   pageCount: number;
   /** Description HTML, as pixiv serves it. */
   description: string;
@@ -65,6 +67,7 @@ main { max-width: 752px; margin: 0 auto; padding: 24px; }
 .work-figure { margin: 0; display: flex; justify-content: center; background: #8882; min-height: 240px; }
 .work-figure img { max-width: 100%; height: auto; }
 .r18 { align-self: center; font-weight: 700; }
+.wall { align-self: center; text-align: center; }
 .row-wrapper { margin-top: 16px; }
 .row { display: flex; flex-direction: row-reverse; align-items: center; min-height: 48px; }
 .row button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 32px; height: 32px; padding: 0; border: 0; border-radius: 16px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
@@ -255,21 +258,27 @@ export function fakePixivApp(config: FakePageConfig): void {
     current = work;
     document.title = work.pageTitle;
     const wall = work.xRestrict > 0 && !config.loggedIn;
+    // pixiv's sensitive-content wall replaces the image; the action row stays.
+    const sensitiveWall = work.sensitiveWall === true && !config.loggedIn;
+    const artwork = sensitiveWall
+      ? el(
+          'div',
+          { class: 'wall' },
+          el('p', {}, 'This work may contain sensitive content.'),
+          el('p', {}, 'Please log in to view this work.'),
+        )
+      : wall || !work.master
+        ? el('div', { class: 'r18' }, wall ? 'R-18' : '')
+        : el('img', {
+            src: work.master,
+            alt: work.title,
+            width: String(work.width),
+            height: String(work.height),
+          });
     const figure = el(
       'figure',
       { class: 'work-figure' },
-      el(
-        'div',
-        { role: 'presentation' },
-        wall || !work.master
-          ? el('div', { class: 'r18' }, wall ? 'R-18' : '')
-          : el('img', {
-              src: work.master,
-              alt: work.title,
-              width: String(work.width),
-              height: String(work.height),
-            }),
-      ),
+      el('div', { role: 'presentation' }, artwork),
     );
     slot = el('div', { class: 'row-wrapper' });
     const caption = el(

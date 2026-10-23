@@ -2,8 +2,17 @@
 // (design-download-engine.md "Resolving"). Pure: no fetch, no chrome.* access.
 
 import type { UgoiraState } from './job';
-import { FILE_BASENAME_RE, PIXIV_API_URL_RE, PIXIV_ORIGIN, PXIMG_URL_PREFIX } from './constants';
+import {
+  FILE_BASENAME_RE,
+  PIXIV_API_URL_RE,
+  PIXIV_ORIGIN,
+  PXIMG_URL_PREFIX,
+  WITHHELD_MIN_SANITY_LEVEL,
+} from './constants';
+import { createLogger } from './log';
 import type { RetryResult, WorkInfo } from './types';
+
+const log = createLogger('pixiv-api');
 
 const ARTWORK_ID_RE = /^\d{1,12}$/;
 
@@ -80,6 +89,7 @@ export function parseIllust(result: RetryResult<unknown>): RetryResult<WorkInfo>
         id,
         illustType,
         xRestrict: xRestrict === 1 || xRestrict === 2 ? xRestrict : 0,
+        withheld: isWithheld(body, id),
         pageCount: pageCount !== null && pageCount > 0 ? pageCount : 1,
         width: hasSize ? width : 0,
         height: hasSize ? height : 0,
@@ -89,6 +99,31 @@ export function parseIllust(result: RetryResult<unknown>): RetryResult<WorkInfo>
       },
     };
   });
+}
+
+/**
+ * Whether pixiv withholds the work's images from this viewer (system.md §8.5, D10): pixiv's own
+ * per-viewer decision, `urls.original === null`. Only when the `urls` shape is missing or
+ * unrecognized does pixiv's sanity level stand in, so a shape drift degrades to today's threshold
+ * instead of silently downloading walled works.
+ */
+function isWithheld(body: Record<string, unknown>, id: string): boolean {
+  const urls = body.urls;
+  if (isRecord(urls) && 'original' in urls) {
+    if (urls.original === null) return true;
+    if (typeof urls.original === 'string') return false;
+  }
+  const sl = toInt(body.sl);
+  log.warn(`illust ${id}: no recognizable urls.original, falling back to sl ${String(sl)}`);
+  return sl !== null && sl >= WITHHELD_MIN_SANITY_LEVEL;
+}
+
+/**
+ * Needs login (R-003): the page is logged out and the work is R-18/R-18G or withheld behind
+ * pixiv's login wall. An unknown login state (`null`) never needs login.
+ */
+export function requiresLogin(work: WorkInfo, loggedIn: boolean | null): boolean {
+  return loggedIn === false && (work.xRestrict >= 1 || work.withheld);
 }
 
 /** `/ajax/illust/{id}/pages` → `urls.original` per page, in page order, each allowlisted. */

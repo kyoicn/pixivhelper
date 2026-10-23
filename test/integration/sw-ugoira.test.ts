@@ -52,7 +52,12 @@ function seedSettings(ugoiraOutput: 'mp4' | 'webm' | 'zip'): void {
 
 async function runJob(
   options: OffscreenOptions = {},
-  start: Record<string, unknown> = { mode: 'full', artworkId: ID, expectedFiles: 1 },
+  start: Record<string, unknown> = {
+    mode: 'full',
+    artworkId: ID,
+    expectedFiles: 1,
+    loggedIn: true, // the fixture is an R-18 body as a logged-in page gets it
+  },
 ) {
   const offscreen = new ScriptedOffscreen(fake, options);
   await bootSw();

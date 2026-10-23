@@ -38,10 +38,15 @@ function errorCause(list: Failure[], navigatorOnLine: boolean): ErrorCause {
   return 'server';
 }
 
+const isBytes = (file: FileTask): boolean => file.role === 'page' || file.role === 'zip';
+
 const isBytesForbidden = (file: FileTask): boolean =>
-  (file.role === 'page' || file.role === 'zip') &&
-  file.state === 'failed' &&
-  file.failure?.status === 403;
+  isBytes(file) && file.state === 'failed' && file.failure?.status === 403;
+
+/** The resolver's login-wall stop (R-003): `forbidden` before any byte request was made. */
+const isLoginWallStop = (job: JobRecord): boolean =>
+  job.stopReason === 'forbidden' &&
+  !job.files.some((file) => isBytes(file) && file.state === 'failed');
 
 export function classifyOutcome(job: JobRecord, navigatorOnLine: boolean): JobOutcome {
   // 1
@@ -61,7 +66,7 @@ export function classifyOutcome(job: JobRecord, navigatorOnLine: boolean): JobOu
   }
 
   // 4
-  if (job.files.some(isBytesForbidden)) return { type: 'needsLogin' };
+  if (job.files.some(isBytesForbidden) || isLoginWallStop(job)) return { type: 'needsLogin' };
 
   const folder = job.folder ?? '';
 

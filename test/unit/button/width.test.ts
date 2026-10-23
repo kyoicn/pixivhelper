@@ -15,6 +15,7 @@ function work(overrides: Partial<WorkInfo> = {}): WorkInfo {
     id: '135882741',
     illustType: 0,
     xRestrict: 0,
+    withheld: false,
     pageCount: 12,
     width: 1200,
     height: 1697,

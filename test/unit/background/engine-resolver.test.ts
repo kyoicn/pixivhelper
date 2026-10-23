@@ -22,6 +22,10 @@ function fixture(name: string): Json {
 const API = 'https://www.pixiv.net/ajax/illust';
 const MANGA = '135882741';
 const UGOIRA = '136004512';
+/** Live 151107515: all-ages, behind pixiv's sensitive-content wall (all `urls` null logged out). */
+const WALLED = '151107515';
+/** Live 151061734: all-ages, shown to logged-out visitors. */
+const VISIBLE = '151061734';
 const TAB = 7;
 const MANGA_FOLDER = 'pixiv/みずき-135882741';
 const UGOIRA_FOLDER = 'pixiv/Sora_空-136004512';
@@ -32,6 +36,8 @@ const MP4_CAPS: CodecCaps = { avc: 'avc1.64001e', vp9: true };
 
 const illustManga = fixture('illust-manga.json');
 const illustUgoira = fixture('illust-ugoira.json');
+const illustWalled = fixture('illust-walled.json');
+const illustVisible = fixture('illust-visible.json');
 const pages = fixture('pages.json');
 const ugoiraMeta = fixture('ugoira-meta.json');
 const frames = (ugoiraMeta.body as Json).frames;
@@ -52,6 +58,11 @@ const STANDARD_API: Record<string, RetryResult<unknown>> = {
   [`${API}/${MANGA}/pages`]: ok(pages),
   [`${API}/${UGOIRA}`]: ok(illustUgoira),
   [`${API}/${UGOIRA}/ugoira_meta`]: ok(ugoiraMeta),
+  // pixiv serves /pages of a walled all-ages work to logged-out sessions (system.md §8.5).
+  [`${API}/${WALLED}`]: ok(illustWalled),
+  [`${API}/${WALLED}/pages`]: ok(pages),
+  [`${API}/${VISIBLE}`]: ok(illustVisible),
+  [`${API}/${VISIBLE}/pages`]: ok(pages),
 };
 
 function deps(
@@ -98,7 +109,12 @@ function job(
   };
 }
 
-const full = (artworkId: string): StartRequest => ({ mode: 'full', artworkId, expectedFiles: 3 });
+const full = (artworkId: string, loggedIn: boolean | null = true): StartRequest => ({
+  mode: 'full',
+  artworkId,
+  expectedFiles: 3,
+  loggedIn,
+});
 
 async function plan(record: JobRecord, d: ResolverDeps = deps()): Promise<Plan> {
   const resolution = await resolve(record, d);
@@ -381,6 +397,95 @@ describe('resolver: API failures', () => {
         failure: { kind: 'internal', detail: 'off/fetchJson failed', attempts: 1 },
       },
     });
+  });
+});
+
+describe('resolver: login wall (R-003)', () => {
+  const urls = (d: ReturnType<typeof deps>) => d.apiFetchJson.mock.calls.map(([, url]) => url);
+
+  it('resolve: logged out on a withheld work requires login before /pages is called', async () => {
+    const d = deps();
+    const resolution = await resolve(job(full(WALLED, false)), d);
+    expect([resolution, urls(d)]).toEqual([
+      { ok: false, loginRequired: true },
+      [`${API}/${WALLED}`],
+    ]);
+  });
+
+  it('resolve: logged out on an R-18 ugoira requires login before ugoira_meta or caps', async () => {
+    const d = deps();
+    const resolution = await resolve(job(full(UGOIRA, false)), d);
+    expect([resolution, urls(d), d.getCaps.mock.calls]).toEqual([
+      { ok: false, loginRequired: true },
+      [`${API}/${UGOIRA}`],
+      [],
+    ]);
+  });
+
+  it('resolve: logged in on a withheld work proceeds to /pages', async () => {
+    const d = deps();
+    const resolution = await resolve(job(full(WALLED, true)), d);
+    expect([resolution.ok, urls(d)]).toEqual([
+      true,
+      [`${API}/${WALLED}`, `${API}/${WALLED}/pages`],
+    ]);
+  });
+
+  it('resolve: an unknown login state (null) on a withheld work proceeds', async () => {
+    const resolution = await resolve(job(full(WALLED, null)), deps());
+    expect(resolution.ok).toBe(true);
+  });
+
+  it('resolve: logged out on a work pixiv shows proceeds', async () => {
+    const resolution = await resolve(job(full(VISIBLE, false)), deps());
+    expect(resolution.ok).toBe(true);
+  });
+
+  it('resolve: a hydrated full request without loggedIn skips the check', async () => {
+    const legacy = { mode: 'full', artworkId: WALLED, expectedFiles: 3 } as unknown as StartRequest;
+    const resolution = await resolve(job(legacy), deps());
+    expect(resolution.ok).toBe(true);
+  });
+
+  it('resolve: retryMetadata skips the check on a withheld work', async () => {
+    const request: StartRequest = { mode: 'retryMetadata', artworkId: WALLED, folder: 'pixiv/old' };
+    const resolution = await resolve(job(request), deps());
+    expect(resolution.ok).toBe(true);
+  });
+
+  it('resolve: retryEncode skips the check on an R-18 ugoira', async () => {
+    const request: StartRequest = {
+      mode: 'retryEncode',
+      artworkId: UGOIRA,
+      folder: 'pixiv/old',
+      format: 'mp4',
+    };
+    const resolution = await resolve(job(request), deps());
+    expect(resolution.ok).toBe(true);
+  });
+
+  it('resolve: retryPages skips the check (it never reads /ajax/illust)', async () => {
+    const request: StartRequest = {
+      mode: 'retryPages',
+      artworkId: WALLED,
+      folder: 'pixiv/old',
+      pages: [0],
+      total: 3,
+    };
+    const resolution = await resolve(job(request), deps());
+    expect(resolution.ok).toBe(true);
+  });
+
+  it('applyResolution: a login-wall stop sets stopReason forbidden and finalizes', () => {
+    const record = job(full(WALLED, false));
+    const effects = applyResolution(record, { ok: false, loginRequired: true });
+    expect([record.stopReason, record.apiFailure, record.phase, record.files, effects]).toEqual([
+      'forbidden',
+      null,
+      'resolving',
+      [],
+      [{ type: 'finalize' }],
+    ]);
   });
 });
 

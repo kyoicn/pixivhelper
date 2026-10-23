@@ -15,6 +15,7 @@ export interface WorkInfo {
   id: string; // body.illustId ?? body.id
   illustType: 0 | 1 | 2;
   xRestrict: 0 | 1 | 2;
+  withheld: boolean; // pixiv withholds the images from this viewer: body.urls.original === null (system.md §8.5, R-003)
   pageCount: number;
   width: number; // page-0 / ugoira frame size
   height: number;

@@ -120,6 +120,7 @@ async function run(
     mode: 'full',
     artworkId: scenario.artworkId,
     expectedFiles: scenario.expectedFiles,
+    loggedIn: true,
   });
   const driver = new DownloadDriver(fake);
   let badgeAfterReady: string | null = null;

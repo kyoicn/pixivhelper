@@ -14,6 +14,7 @@ function work(overrides: Partial<WorkInfo> = {}): WorkInfo {
     id: '135882741',
     illustType: 0,
     xRestrict: 0,
+    withheld: false,
     pageCount: 12,
     width: 1200,
     height: 1697,
@@ -444,9 +445,23 @@ describe('present: English copy (PRD Appendix A)', () => {
     expect(present(entry({ s: 'needsLogin' }), META_ON)).toMatchObject({
       label: 'Log in to download',
       title: 'Opens pixiv login and returns you here',
-      ariaLabel: 'Log in to pixiv to download this R-18 work',
+      ariaLabel: 'Log in to pixiv to download this work.',
     });
   });
+
+  // R-003: also announced for a mid-job 403 on an all-ages work, so it no longer says R-18.
+  it.each([
+    ['en', 'Log in to pixiv to download this work.'],
+    ['ja', 'この作品をダウンロードするには、pixivにログインしてください。'],
+    ['zh_CN', '登录 pixiv 以下载此作品。'],
+    ['zh_TW', '登入 pixiv 以下載此作品。'],
+  ] as const)(
+    'present: the needs-login accessible name in %s is the neutral R-003 text',
+    (locale, text) => {
+      stubChromeI18n(locale);
+      expect(present(entry({ s: 'needsLogin' }), META_ON).ariaLabel).toBe(text);
+    },
+  );
 });
 
 describe('announcementFor', () => {
@@ -560,7 +575,7 @@ describe('announcementFor', () => {
       'Frames saved as ZIP. Video encoding failed. Click to retry the encode, or choose ZIP only in settings.',
     ],
     ['cancelled', { s: 'idle' }, {}, 'Download cancelled'],
-    ['needsLogin', { s: 'needsLogin' }, {}, 'Log in to pixiv to download this R-18 work'],
+    ['needsLogin', { s: 'needsLogin' }, {}, 'Log in to pixiv to download this work.'],
     ['unavailable', { s: 'unavailable' }, {}, 'This work is no longer available.'],
   ])('announcementFor: the end state %s is always announced', (_, state, overrides, text) => {
     expect(announcementFor(busy(pages(5)), entry(state, overrides))).toEqual({

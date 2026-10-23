@@ -50,7 +50,7 @@ function job(files: FileTask[], extra: Partial<JobRecord> = {}): JobRecord {
     originTabId: 7,
     createdAt: 0,
     mode: 'full',
-    request: { mode: 'full', artworkId: ID, expectedFiles: 3 },
+    request: { mode: 'full', artworkId: ID, expectedFiles: 3, loggedIn: null },
     kind: 'pages',
     phase: 'transferring',
     snapshot: {

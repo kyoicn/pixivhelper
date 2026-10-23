@@ -71,6 +71,7 @@ const VALID = {
     mode: 'full',
     artworkId: '135882741',
     expectedFiles: 12,
+    loggedIn: false,
   },
   startRetryPages: {
     target: 'sw',
@@ -192,6 +193,8 @@ describe('isJobStartMessage', () => {
     ['full with expectedFiles 0', { expectedFiles: 0 }],
     ['full with expectedFiles over 200 (the SW clamps it)', { expectedFiles: 500 }],
     ['a 12-digit artwork id', { artworkId: '123456789012' }],
+    ['full logged in', { loggedIn: true }],
+    ['full with an unknown login state', { loggedIn: null }],
   ]);
   expectAccepts(isJobStartMessage, VALID.startRetryPages, [
     ['retryPages', {}],
@@ -217,6 +220,9 @@ describe('isJobStartMessage', () => {
     ['a negative expectedFiles', { expectedFiles: -1 }],
     ['a fractional expectedFiles', { expectedFiles: 1.5 }],
     ['a string expectedFiles', { expectedFiles: '12' }],
+    ['full without loggedIn', { loggedIn: undefined }],
+    ["full with loggedIn 'yes'", { loggedIn: 'yes' }],
+    ['full with loggedIn 0', { loggedIn: 0 }],
   ]);
   expectRejects(isJobStartMessage, VALID.startRetryPages, [
     ['no pages', { pages: [] }],

@@ -62,7 +62,7 @@ function seedJob(tabId: number, extra: Partial<JobRecord>): void {
     originTabId: tabId,
     createdAt: 0,
     mode: 'full',
-    request: { mode: 'full', artworkId: ID, expectedFiles: 3 },
+    request: { mode: 'full', artworkId: ID, expectedFiles: 3, loggedIn: null },
     kind: 'pages',
     phase: 'transferring',
     snapshot: {
@@ -190,7 +190,15 @@ describe('sw: handlers end to end', () => {
     new ScriptedOffscreen(fake, { auto: false });
     await bootSw();
     const tab = new ContentTab(fake, ARTWORK_URL, api());
-    await settle(tab.send({ type: 'job/start', mode: 'full', artworkId: ID, expectedFiles: 3 }));
+    await settle(
+      tab.send({
+        type: 'job/start',
+        mode: 'full',
+        artworkId: ID,
+        expectedFiles: 3,
+        loggedIn: true,
+      }),
+    );
     const response = await settle(tab.send({ type: 'job/listForTab' }));
     expect(response).toMatchObject({
       ok: true,
@@ -203,7 +211,15 @@ describe('sw: handlers end to end', () => {
     new ScriptedOffscreen(fake, { refuse: ['off/fetchBytes'] });
     await bootSw();
     const tab = new ContentTab(fake, ARTWORK_URL, api());
-    await settle(tab.send({ type: 'job/start', mode: 'full', artworkId: ID, expectedFiles: 3 }));
+    await settle(
+      tab.send({
+        type: 'job/start',
+        mode: 'full',
+        artworkId: ID,
+        expectedFiles: 3,
+        loggedIn: true,
+      }),
+    );
     await driveToEnd(tab);
     expect(tab.ended()?.outcome?.type).toBe('error');
   });
@@ -214,7 +230,15 @@ describe('sw: handlers end to end', () => {
     const failures = recordFailures();
     await bootSw();
     const tab = new ContentTab(fake, ARTWORK_URL, api());
-    await settle(tab.send({ type: 'job/start', mode: 'full', artworkId: ID, expectedFiles: 3 }));
+    await settle(
+      tab.send({
+        type: 'job/start',
+        mode: 'full',
+        artworkId: ID,
+        expectedFiles: 3,
+        loggedIn: true,
+      }),
+    );
     await driveToEnd(tab);
     expect([failures.map((f) => f.kind), tab.ended()?.outcome]).toEqual([
       ['internal', 'internal', 'internal'],
@@ -235,7 +259,15 @@ describe('sw: handlers end to end', () => {
     const failures = recordFailures();
     await bootSw();
     const tab = new ContentTab(fake, ARTWORK_URL, api());
-    await settle(tab.send({ type: 'job/start', mode: 'full', artworkId: ID, expectedFiles: 3 }));
+    await settle(
+      tab.send({
+        type: 'job/start',
+        mode: 'full',
+        artworkId: ID,
+        expectedFiles: 3,
+        loggedIn: true,
+      }),
+    );
     await driveToEnd(tab);
     expect([new Set(failures.map((f) => f.kind)), tab.ended()?.outcome]).toEqual([
       new Set(['internal']),

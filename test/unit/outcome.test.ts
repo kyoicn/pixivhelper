@@ -39,7 +39,7 @@ function job(overrides: Partial<JobRecord> = {}): JobRecord {
     originTabId: 7,
     createdAt: 0,
     mode: 'full',
-    request: { mode: 'full', artworkId: '135882741', expectedFiles: 12 },
+    request: { mode: 'full', artworkId: '135882741', expectedFiles: 12, loggedIn: null },
     kind: 'pages',
     phase: 'ended',
     snapshot: {
@@ -200,6 +200,25 @@ describe('classifyOutcome', () => {
         stopReason: 'forbidden',
       });
       expect(classifyOutcome(mixed, ONLINE)).toEqual({ type: 'needsLogin' });
+    });
+
+    it('classifyOutcome: the resolver’s login-wall stop (forbidden, no file) needs login', () => {
+      const walled = job({ kind: 'unknown', folder: null, pagesTotal: 0, stopReason: 'forbidden' });
+      expect(classifyOutcome(walled, ONLINE)).toEqual({ type: 'needsLogin' });
+    });
+
+    it('classifyOutcome: the login-wall stop needs login even while offline', () => {
+      const walled = job({ kind: 'unknown', folder: null, pagesTotal: 0, stopReason: 'forbidden' });
+      expect(classifyOutcome(walled, OFFLINE)).toEqual({ type: 'needsLogin' });
+    });
+
+    it('classifyOutcome: forbidden with no failed byte file needs login', () => {
+      const stopped = pagesJob(
+        Object.fromEntries(Array.from({ length: 12 }, (_, page) => [page, 'skipped' as const])),
+        'skipped',
+        { stopReason: 'forbidden' },
+      );
+      expect(classifyOutcome(stopped, ONLINE)).toEqual({ type: 'needsLogin' });
     });
   });
 

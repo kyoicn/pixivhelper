@@ -11,6 +11,13 @@ export const PIXIV_LOGIN_URL = 'https://accounts.pixiv.net/login';
 /** Options-page "Report an issue" link and store support URL (R-001). */
 export const REPORT_ISSUE_URL = 'https://github.com/kyoicn/pixivhelper/issues';
 
+// ── Login walls (system.md §8.5, R-003) ──
+/**
+ * pixiv's sanity level from which it walls a work off from logged-out visitors. Only a fallback
+ * for an `/ajax/illust` body whose `urls` shape is missing or unrecognized.
+ */
+export const WITHHELD_MIN_SANITY_LEVEL = 4;
+
 // ── Allowlists (system.md §11.1) ──
 export const PIXIV_API_URL_RE =
   /^https:\/\/www\.pixiv\.net\/ajax\/illust\/\d{1,12}(\/pages|\/ugoira_meta)?$/;

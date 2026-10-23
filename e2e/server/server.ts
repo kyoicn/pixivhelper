@@ -20,6 +20,7 @@ import {
 import {
   failure,
   illustBody,
+  isWalled,
   MESSAGE_NOT_FOUND,
   MESSAGE_NOT_UGOIRA,
   MESSAGE_RESTRICTED,
@@ -523,6 +524,7 @@ export class FakePixiv {
         userName: work.userName,
         userId: work.userId,
         xRestrict: work.xRestrict,
+        sensitiveWall: work.sensitiveWall === true,
         pageCount: work.illustType === 2 ? 1 : work.pages.length,
         description: work.description,
         tags: work.tags,
@@ -560,8 +562,9 @@ export class FakePixiv {
   #ajax(id: string, endpoint: string, loggedIn: boolean): Reply {
     const work = this.work(id);
     if (!work || work.deleted) return json(404, failure(MESSAGE_NOT_FOUND));
+    // Like pixiv, a sensitive-wall work's /pages and ugoira_meta answer logged-out sessions.
     const restricted = work.xRestrict > 0 && (!loggedIn || work.r18Hidden === true);
-    if (endpoint === '') return json(200, ok(illustBody(work, work.xRestrict > 0 && !loggedIn)));
+    if (endpoint === '') return json(200, ok(illustBody(work, isWalled(work, loggedIn))));
     if (restricted) return json(200, failure(MESSAGE_RESTRICTED));
     if (endpoint === '/pages') return json(200, ok(pagesBody(work)));
     if (work.illustType !== 2) return json(200, failure(MESSAGE_NOT_UGOIRA));

@@ -5,6 +5,7 @@
 
 import type { StartRequest } from '../../shared/job';
 import { CLICK_GUARD_MS, PIXIV_LOGIN_URL } from '../../shared/constants';
+import { requiresLogin } from '../../shared/pixiv-api';
 import type {
   ErrorCause,
   JobOutcome,
@@ -90,16 +91,23 @@ export function createEntry(artworkId: string): Entry {
 
 /**
  * The action a click on `entry` asks for. Call it with the entry as it was before the click, and
- * reduce the same click (with the same `now`) to get the optimistic next state.
+ * reduce the same click (with the same `now`) to get the optimistic next state. `loggedIn` is the
+ * page's login marker: every `full` job carries it, so the SW can repeat the needs-login check for
+ * a click made before the metadata arrived (R-003).
  */
-export function clickAction(entry: Entry, now: number, href: string): ClickAction {
+export function clickAction(
+  entry: Entry,
+  now: number,
+  href: string,
+  loggedIn: boolean | null,
+): ClickAction {
   const { state } = entry;
   switch (state.s) {
     case 'pending':
     case 'idle':
     case 'saved':
     case 'error':
-      return { type: 'start', request: startRequest(entry) };
+      return { type: 'start', request: startRequest(entry, loggedIn) };
     case 'busy':
       return canCancel(state, now) ? { type: 'cancel', jobId: state.jobId } : { type: 'ignore' };
     case 'needsLogin':
@@ -121,7 +129,7 @@ export function reduce(entry: Entry, event: ButtonEvent): Entry {
     case 'metadata': {
       const next = { ...entry, work: event.work };
       if (state.s !== 'pending') return next;
-      const needsLogin = event.work.xRestrict >= 1 && event.loggedIn === false;
+      const needsLogin = requiresLogin(event.work, event.loggedIn);
       return { ...next, state: needsLogin ? { s: 'needsLogin' } : { s: 'idle' } };
     }
     case 'unavailable':
@@ -248,7 +256,7 @@ function outcomeState(outcome: JobOutcome, view: JobView, entry: Entry): ButtonS
 }
 
 /** The job/start payload for a click on a startable state (design "Click actions"). */
-function startRequest(entry: Entry): StartRequest {
+function startRequest(entry: Entry, loggedIn: boolean | null): StartRequest {
   const { artworkId, state, work } = entry;
   if (state.s === 'error') {
     const { err } = state;
@@ -270,7 +278,7 @@ function startRequest(entry: Entry): StartRequest {
     }
   }
   const expectedFiles = work === null ? 0 : work.illustType === 2 ? 1 : work.pageCount;
-  return { mode: 'full', artworkId, expectedFiles };
+  return { mode: 'full', artworkId, expectedFiles, loggedIn };
 }
 
 /** Shown synchronously on click, before job/start answers (PRD NFR: busy within 100 ms). */

@@ -3,7 +3,7 @@
 // a stubbed chrome.* and fetch, and the button read through its closed shadow root.
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest';
 import { masterUrl, pageCount, requireWork, WORKS } from '../../../e2e/fixtures/works';
-import { failure, illustBody, MESSAGE_NOT_FOUND, ok } from '../../../e2e/server/ajax';
+import { failure, illustBody, isWalled, MESSAGE_NOT_FOUND, ok } from '../../../e2e/server/ajax';
 import {
   artworkPageTitle,
   type CatalogEntry,
@@ -19,6 +19,7 @@ import type { JobView } from '../../../src/shared/types';
 const ILLUST = '135882741'; // 12 pages
 const SINGLE = '135882742'; // 1 page
 const R18 = '145892669'; // xRestrict 1
+const WALLED = '135882745'; // xRestrict 0, behind pixiv's sensitive-content wall (R-003)
 const UGOIRA = '136004512'; // 600 × 600
 const DELETED = '199999999';
 const UNUSED = '135882743'; // shown only to tear an instance down
@@ -113,7 +114,7 @@ function installFetch(): void {
     const id = /\/ajax\/illust\/(\d+)$/.exec(input)?.[1] ?? '';
     const work = WORKS.find((candidate) => candidate.id === id);
     if (!work || work.deleted) return Promise.resolve(json(404, failure(MESSAGE_NOT_FOUND)));
-    return Promise.resolve(json(200, ok(illustBody(work, work.xRestrict > 0))));
+    return Promise.resolve(json(200, ok(illustBody(work, isWalled(work, false)))));
   });
   vi.stubGlobal('fetch', fetchMock);
 }
@@ -128,6 +129,7 @@ function catalog(): Record<string, CatalogEntry> {
         userName: work.userName,
         userId: work.userId,
         xRestrict: work.xRestrict,
+        sensitiveWall: work.sensitiveWall === true,
         pageCount: pageCount(work),
         description: work.description,
         tags: work.tags,
@@ -336,6 +338,28 @@ describe('content: render-time metadata', () => {
     expect(text()).toBe('btn_login');
   });
 
+  it('content: an all-ages work behind pixiv’s login wall on a logged-out page shows needs-login', async () => {
+    await open(`/artworks/${WALLED}`);
+    expect(text()).toBe('btn_login');
+  });
+
+  it('content: each needs-login decision is logged at debug with its reason', async () => {
+    await open(`/artworks/${WALLED}`);
+    document.querySelector<HTMLElement>(`a[href="/artworks/${ILLUST}"]`)?.click();
+    await settle(ROW_DELAY_MS + 20);
+    history.pushState(null, '', `/artworks/${R18}`);
+    navigation.dispatchEvent(new Event('currententrychange'));
+    await settle(ROW_DELAY_MS + 20);
+    const decisions = vi
+      .mocked(console.debug)
+      .mock.calls.filter((args) => args[1] === 'needs login')
+      .map((args: unknown[]) => args.slice(2));
+    expect(decisions).toEqual([
+      [WALLED, 'withheld'],
+      [R18, 'xRestrict'],
+    ]);
+  });
+
   it('content: a 404 at render time shows Unavailable', async () => {
     await open(`/artworks/${DELETED}`);
     expect(text()).toBe('btn_unavailable');
@@ -429,12 +453,36 @@ describe('content: clicks', () => {
     ]);
   });
 
-  it('content: a click sends job/start with the page count', async () => {
+  it('content: a click sends job/start with the page count and the page’s login marker', async () => {
     await open(`/artworks/${ILLUST}`);
     pill().click();
     await settle();
     expect(swMessages('job/start')).toEqual([
-      { target: 'sw', type: 'job/start', mode: 'full', artworkId: ILLUST, expectedFiles: 12 },
+      {
+        target: 'sw',
+        type: 'job/start',
+        mode: 'full',
+        artworkId: ILLUST,
+        expectedFiles: 12,
+        loggedIn: false,
+      },
+    ]);
+  });
+
+  it('content: a click before the metadata arrived sends loggedIn, so the SW can re-check (R-003)', async () => {
+    fetchMock.mockReturnValue(new Promise<Response>(() => undefined));
+    await open(`/artworks/${WALLED}`);
+    pill().click();
+    await settle();
+    expect(swMessages('job/start')).toEqual([
+      {
+        target: 'sw',
+        type: 'job/start',
+        mode: 'full',
+        artworkId: WALLED,
+        expectedFiles: 0,
+        loggedIn: false,
+      },
     ]);
   });
 

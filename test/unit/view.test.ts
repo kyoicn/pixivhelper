@@ -20,7 +20,7 @@ function job(overrides: Partial<JobRecord> = {}): JobRecord {
     originTabId: 7,
     createdAt: 0,
     mode: 'full',
-    request: { mode: 'full', artworkId: '135882741', expectedFiles: 12 },
+    request: { mode: 'full', artworkId: '135882741', expectedFiles: 12, loggedIn: null },
     kind: 'unknown',
     phase: 'resolving',
     snapshot: {

@@ -10,6 +10,7 @@ const WORK: WorkInfo = {
   id: ARTWORK,
   illustType: 0,
   xRestrict: 0,
+  withheld: false,
   pageCount: 12,
   width: 1200,
   height: 1697,

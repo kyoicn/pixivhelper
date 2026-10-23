@@ -434,7 +434,7 @@ function isStartRequest(m: Fields): boolean {
   if (!isArtworkId(m.artworkId)) return false;
   switch (m.mode) {
     case 'full':
-      return isCount(m.expectedFiles);
+      return isCount(m.expectedFiles) && (m.loggedIn === null || isBoolean(m.loggedIn));
     case 'retryPages':
       return isFolder(m.folder) && isRetryPages(m.pages, m.total);
     case 'retryEncode':

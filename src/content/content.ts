@@ -11,7 +11,7 @@ import {
   isJobUpdateMessage,
   type ResponseFor,
 } from '../shared/messages';
-import { illustUrl, parseIllust } from '../shared/pixiv-api';
+import { illustUrl, parseIllust, requiresLogin } from '../shared/pixiv-api';
 import { fetchWithRetry } from '../shared/retry';
 import {
   DEFAULT_SETTINGS,
@@ -163,9 +163,13 @@ function init(): void {
       if (status === 404 || kind === 'pixivError') update(artworkId, { type: 'unavailable' });
       return;
     }
-    update(artworkId, { type: 'metadata', work: result.value, loggedIn });
+    const work = result.value;
+    if (requiresLogin(work, loggedIn)) {
+      log.debug('needs login', artworkId, work.xRestrict >= 1 ? 'xRestrict' : 'withheld');
+    }
+    update(artworkId, { type: 'metadata', work, loggedIn });
     if (artworkId === displayed) measure();
-    if (result.value.illustType === 2) await loadCaps(artworkId, result.value);
+    if (work.illustType === 2) await loadCaps(artworkId, work);
   }
 
   async function loadCaps(artworkId: string, work: WorkInfo): Promise<void> {
@@ -187,7 +191,7 @@ function init(): void {
     if (displayed === null) return;
     const entry = memory.getOrCreate(displayed);
     const now = performance.now();
-    const action = clickAction(entry, now, location.href);
+    const action = clickAction(entry, now, location.href, loggedIn);
     // Busy (or the optimistic cancel) shows synchronously, before the SW answers (PRD NFR).
     show(entry, reduce(entry, { type: 'click', now }));
     void run(entry.artworkId, action);

@@ -13,6 +13,7 @@ import {
   parseIllust,
   parsePages,
   parseUgoiraMeta,
+  requiresLogin,
   ugoiraMetaUrl,
   type UgoiraMeta,
 } from '../shared/pixiv-api';
@@ -52,7 +53,10 @@ export interface Plan {
   effectiveFormat: UgoiraOutput | null;
 }
 
-export type Resolution = { ok: true; plan: Plan } | { ok: false; apiFailure: ApiFailure };
+export type Resolution =
+  | { ok: true; plan: Plan }
+  | { ok: false; apiFailure: ApiFailure }
+  | { ok: false; loginRequired: true }; // R-003: page logged out and pixiv withholds the work
 
 type Step<T> = { ok: true; value: T } | { ok: false; apiFailure: ApiFailure };
 type Endpoint = ApiFailure['endpoint'];
@@ -63,7 +67,7 @@ export function resolve(job: JobRecord, deps: ResolverDeps): Promise<Resolution>
   const { request } = job;
   switch (request.mode) {
     case 'full':
-      return resolveFull(job, deps);
+      return resolveFull(job, request, deps);
     case 'retryPages':
       return resolveRetryPages(job, request, deps);
     case 'retryEncode':
@@ -73,11 +77,15 @@ export function resolve(job: JobRecord, deps: ResolverDeps): Promise<Resolution>
   }
 }
 
-/** Mutator: applies a resolution. A failure ends the job through finalize (system.md §10). */
+/**
+ * Mutator: applies a resolution. A failure ends the job through finalize (system.md §10); so does
+ * the login-wall stop, as `forbidden` like a byte 403 (row 4: needsLogin).
+ */
 export function applyResolution(job: JobRecord, resolution: Resolution): Effect[] {
   if (job.phase !== 'resolving' || job.stopReason !== null || job.apiFailure !== null) return [];
   if (!resolution.ok) {
-    job.apiFailure = resolution.apiFailure;
+    if ('loginRequired' in resolution) job.stopReason = 'forbidden';
+    else job.apiFailure = resolution.apiFailure;
     return [{ type: 'finalize' }];
   }
   const { plan } = resolution;
@@ -93,10 +101,21 @@ export function applyResolution(job: JobRecord, resolution: Resolution): Effect[
   return settle(job);
 }
 
-async function resolveFull(job: JobRecord, deps: ResolverDeps): Promise<Resolution> {
+async function resolveFull(
+  job: JobRecord,
+  request: Request<'full'>,
+  deps: ResolverDeps,
+): Promise<Resolution> {
   const illust = await fetchIllust(job, deps);
   if (!illust.ok) return illust;
   const { work, body } = illust.value;
+  // R-003, before /pages or ugoira_meta: pixiv serves those (and the originals) to logged-out
+  // sessions for walled all-ages works, so a click made before the render-time metadata arrived
+  // must be stopped here. A record hydrated without `loggedIn` skips the check.
+  if (requiresLogin(work, request.loggedIn ?? null)) {
+    log.debug('login required', job.artworkId, work.xRestrict >= 1 ? 'xRestrict' : 'withheld');
+    return { ok: false, loginRequired: true };
+  }
   const { snapshot } = job;
   const folder = resolveFolder(snapshot.folderPattern, {
     artist: work.userName,
