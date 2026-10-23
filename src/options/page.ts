@@ -97,6 +97,9 @@ export async function initOptionsPage(): Promise<void> {
     previewText.replaceChildren(...stillUsingLine(current.folderPattern));
   };
   const showError = (next: PatternError): void => {
+    // At once, before the message: a Saved beside the error would read as "the typo was stored"
+    // (PRD CUJ-3 step 5: no Saved appears).
+    saved.folder.clear();
     error = next;
     errorText.replaceChildren(...errorMessage(next));
     errorBox.hidden = false;
@@ -124,7 +127,11 @@ export async function initOptionsPage(): Promise<void> {
       return;
     }
     lastOwnWriteAt = updatedAt;
-    for (const section of flash) saved[section].flash();
+    for (const section of flash) {
+      // The field turned invalid while the write was in flight: the error stays alone.
+      if (section === 'folder' && error !== null) continue;
+      saved[section].flash();
+    }
   };
 
   const validateField = (): void => {

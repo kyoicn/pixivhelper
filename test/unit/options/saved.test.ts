@@ -91,4 +91,64 @@ describe('createSavedIndicator', () => {
     vi.advanceTimersByTime(SAVED_FADE_MS);
     expect([el.style.opacity, el.textContent]).toEqual(['1', 'Saved']);
   });
+
+  it('clear: empties the element at once', () => {
+    indicator.flash();
+    indicator.clear();
+    expect(el.childNodes).toHaveLength(0);
+  });
+
+  it('clear: hides it at once, without a fade', () => {
+    indicator.flash();
+    indicator.clear();
+    expect([el.style.opacity, el.style.transition]).toEqual(['0', 'none']);
+  });
+
+  it('clear: cancels the pending fade', () => {
+    indicator.flash();
+    vi.advanceTimersByTime(SAVED_VISIBLE_MS / 2);
+    indicator.clear();
+    vi.advanceTimersByTime(SAVED_VISIBLE_MS);
+    expect(el.style.transition).toBe('none');
+  });
+
+  it('clear: during the fade, empties the element without waiting for the fade to end', () => {
+    indicator.flash();
+    vi.advanceTimersByTime(SAVED_VISIBLE_MS + SAVED_FADE_MS / 2);
+    indicator.clear();
+    expect([el.style.opacity, el.style.transition, el.textContent]).toEqual(['0', 'none', '']);
+  });
+
+  it('clear: before the fade, leaves no timer pending', () => {
+    indicator.flash();
+    indicator.clear();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('clear: during the fade, leaves no timer pending', () => {
+    indicator.flash();
+    vi.advanceTimersByTime(SAVED_VISIBLE_MS + SAVED_FADE_MS / 2);
+    indicator.clear();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('clear: a flash after clear shows Saved again', () => {
+    indicator.flash();
+    indicator.clear();
+    indicator.flash();
+    expect([el.style.opacity, el.textContent]).toEqual(['1', 'Saved']);
+  });
+
+  it('clear: a flash after clear still fades after 2 s', () => {
+    indicator.flash();
+    indicator.clear();
+    indicator.flash();
+    vi.advanceTimersByTime(SAVED_VISIBLE_MS);
+    expect([el.style.opacity, el.style.transition]).toEqual(['0', `opacity ${SAVED_FADE_MS}ms`]);
+  });
+
+  it('clear: with nothing shown, leaves it empty and hidden', () => {
+    indicator.clear();
+    expect([el.style.opacity, el.textContent]).toEqual(['0', '']);
+  });
 });

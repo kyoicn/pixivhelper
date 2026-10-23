@@ -1,5 +1,6 @@
 /* Settings page (design-options-page.md "Styles"): colors and geometry from PRD CUJ-3 and the
-   cuj-3-*.html mocks. System fonts only; no remote resources. */
+   cuj-3-*.html mocks, except the Saved, validation-message and "Still using" text colors, which
+   meet WCAG AA 4.5:1 (system.md §11.5). System fonts only; no remote resources. */
 
 :root {
   color-scheme: light dark;
@@ -14,9 +15,11 @@
   --switch-off: #bdc1c6;
   --rule: #e3e6ea;
   --accent: #0096fa;
-  --danger: #d93025;
-  --saved: #1a9f5a;
-  --muted: #8a8f94;
+  /* A non-text component: 3:1 suffices, so the border keeps the PRD red in both modes. */
+  --invalid-border: #d93025;
+  --error-text: #c5221f;
+  --saved: #188038;
+  --muted: #5c6166;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
@@ -32,6 +35,9 @@
     --seg-hover: #2a2f35;
     --switch-off: #5f6368;
     --rule: #2a2f35;
+    --error-text: #f28b82;
+    --saved: #1a9f5a;
+    --muted: #8a8f94;
   }
 }
 
@@ -183,7 +189,7 @@ h2 {
 
 /* After :focus-visible, so the red border stays while the user fixes the pattern. */
 .field[aria-invalid='true'] {
-  border: 2px solid var(--danger);
+  border: 2px solid var(--invalid-border);
 }
 
 .error {
@@ -192,7 +198,7 @@ h2 {
   gap: 8px;
   margin-top: 8px;
   font-size: 13px;
-  color: var(--danger);
+  color: var(--error-text);
 }
 
 .error svg {
