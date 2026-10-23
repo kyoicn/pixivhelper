@@ -218,8 +218,9 @@ function reportFailed(task: Task, failure: Failure): void {
  */
 function failureOf(kind: TaskKind, error: unknown): Failure {
   if (kind === 'encode') {
-    const detail = error instanceof EncodeError ? error.detail : 'encoder';
-    return { kind: 'encode', detail, attempts: 1 };
+    return error instanceof EncodeError
+      ? { kind: 'encode', detail: error.detail, attempts: error.attempts }
+      : { kind: 'encode', detail: 'encoder', attempts: 1 };
   }
   return { kind: 'internal', detail: 'exception', attempts: 1 };
 }

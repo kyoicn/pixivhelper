@@ -8,10 +8,12 @@ import { EXTENSION_ORIGIN, FAKE_EXTENSION_ID } from '../../fakes/chrome';
 const ugoira = vi.hoisted(() => {
   class EncodeError extends Error {
     readonly detail: string;
-    constructor(detail: string) {
+    readonly attempts: 1 | 2;
+    constructor(detail: string, options?: { attempts?: 1 | 2 }) {
       super(`ugoira encode failed: ${detail}`);
       this.name = 'EncodeError';
       this.detail = detail;
+      this.attempts = options?.attempts ?? 1;
     }
   }
   return {
@@ -728,6 +730,28 @@ describe('off/encode', () => {
       ]);
     },
   );
+
+  it('off/encode: encode failure attempts is 1 for a failure before any retry', async () => {
+    await loadZip();
+    ugoira.encodeUgoira.mockRejectedValueOnce(new ugoira.EncodeError('zip'));
+    deliver(encode());
+    await until(() => expect(eventsFor('v')).toHaveLength(1));
+    expect(lastEventFor('v')).toMatchObject({
+      type: 'off/failed',
+      failure: { kind: 'encode', detail: 'zip', attempts: 1 },
+    });
+  });
+
+  it('off/encode: encode failure attempts is 2 when the prefer-software pass failed too', async () => {
+    await loadZip();
+    ugoira.encodeUgoira.mockRejectedValueOnce(new ugoira.EncodeError('encoder', { attempts: 2 }));
+    deliver(encode());
+    await until(() => expect(eventsFor('v')).toHaveLength(1));
+    expect(lastEventFor('v')).toMatchObject({
+      type: 'off/failed',
+      failure: { kind: 'encode', detail: 'encoder', attempts: 2 },
+    });
+  });
 
   it('off/encode: without a retained zip, encodeUgoira gets no bytes', () => {
     ugoira.encodeUgoira.mockRejectedValueOnce(new ugoira.EncodeError('no-zip'));
