@@ -8,7 +8,7 @@ The built extension (`dist-e2e/`, unmodified manifest) runs in Playwright's bund
 | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
 | `npm run test:e2e`                                                             | build `dist-e2e/`, run every spec                                       |
 | `npm run test:e2e -- --grep @cuj1`                                             | one CUJ's specs                                                         |
-| `npm run build:e2e && npx playwright test e2e/harness.spec.ts --reporter=line` | harness self-test (`@harness`, ENG-004)                                 |
+| `npm run build:e2e && npx playwright test e2e/harness.spec.ts --reporter=line` | harness self-test (`@harness`, ENG-004, ENG-009)                        |
 | `HFP_LIVE=1 npm run test:e2e -- --grep @live`                                  | L4 live smoke against the real pixiv (`e2e/live/**`, ignored otherwise) |
 | `npm run qa:fake` / `npm run qa:live`                                          | QA sessions (below)                                                     |
 
@@ -17,6 +17,7 @@ The built extension (`dist-e2e/`, unmodified manifest) runs in Playwright's bund
 - On failure, `test-results/<test>/` holds `trace.zip`, `server-log.json`, `console-errors.json` and `downloads.json`.
 - `ffprobe`/`ffmpeg` are optional. `ffprobe()` and `ssim()` skip the calling test with a reason when the tool is not on `PATH`.
 - Chromium comes from the Playwright browser cache (`npx playwright install chromium` if missing).
+- The live smoke navigates with `waitUntil: 'domcontentloaded'`, never `load`: pixiv's `load` waits on ads and trackers (43–119 s in QA's runs). The button and file waits carry their own timeouts. Besides the all-ages download it has a login-wall case (R-003): a logged-out, all-ages ranking work whose `/ajax/illust` withholds `urls.original` must read `Log in to download` before any click and open pixiv's login with `return_to`. It is skipped with a logged reason when the day's ranking has no such work.
 
 ## Layout
 
@@ -27,9 +28,9 @@ The built extension (`dist-e2e/`, unmodified manifest) runs in Playwright's bund
 | `harness/console.ts` | console-error collection from pages, the SW and the offscreen document                                          |
 | `harness/media.ts`   | `ffprobe()`, `ssim()`, `hasMediaTool()`                                                                         |
 | `server/server.ts`   | the fake pixiv HTTPS server: routing, faults, request log, `maxInFlight`                                        |
-| `server/ajax.ts`     | `/ajax/illust` JSON bodies                                                                                      |
+| `server/ajax.ts`     | `/ajax/illust` JSON bodies; `isWalled(work, loggedIn)` (login walls)                                            |
 | `server/page.ts`     | fixture page HTML, SPA script, `window.__fake` controls, login page                                             |
-| `fixtures/works.ts`  | the 13 fixture works and their URLs                                                                             |
+| `fixtures/works.ts`  | the 14 fixture works and their URLs                                                                             |
 | `fixtures/assets.ts` | generated page images, ugoira frames and zips (deterministic, cached per process)                               |
 | `fixtures/images.ts` | tiny PNG/JPEG encoders                                                                                          |
 | `qa/`                | `qa:fake` / `qa:live` sessions (`run.mjs` bundles them with esbuild into `.qa/`)                                |
@@ -83,10 +84,17 @@ Also exported: `unpackedExtensionId(dir)`, `E2E_EXTENSION_DIR`, `DEV_EXTENSION_D
 
 HTTP/2 (with HTTP/1.1 fallback) on `127.0.0.1`, ephemeral port, certificate generated at start by `selfsigned` (nothing committed). Routed by `Host`:
 
-- **`www.pixiv.net`**: `/artworks/:id`, `/<lang>/artworks/:id`, `/users/:id` and `/` (fixture pages); `/ajax/illust/:id`, `/:id/pages`, `/:id/ugoira_meta`. `/pages` and `/ugoira_meta` of an `xRestrict ≥ 1` work answer `{ error: true }` unless the request carries `PHPSESSID=fake-session`, and always when the work has `r18Hidden`. Logged out, `/ajax/illust/:id` of such a work has every image URL `null`. Deleted or unknown works: 404 `{ error: true }`.
+- **`www.pixiv.net`**: `/artworks/:id`, `/<lang>/artworks/:id`, `/users/:id` and `/` (fixture pages); `/ajax/illust/:id`, `/:id/pages`, `/:id/ugoira_meta`. `/pages` and `/ugoira_meta` of an `xRestrict ≥ 1` work answer `{ error: true }` unless the request carries `PHPSESSID=fake-session`, and always when the work has `r18Hidden`. Deleted or unknown works: 404 `{ error: true }`. Login walls: below.
 - **`i.pximg.net`**: `/img-original/…`, `/img-master/…`, `/img-zip-ugoira/…` return **403 unless `Referer` is exactly `https://www.pixiv.net/`**. Bytes carry `Content-Length` unless the work has `noContentLength` (then chunked). `/__harness/ok.bin` (`HARNESS_BLOB`) has no Referer check.
 - **`accounts.pixiv.net`**: `GET /login?return_to=…` shows a "Log in" button (or redirects straight back when already logged in); its `POST` sets `PHPSESSID=fake-session` on `.pixiv.net` and redirects to `return_to` (only `https://www.pixiv.net/…` targets are honored).
 - `/favicon.ico` answers 204 everywhere.
+
+**Login walls** mirror live pixiv (R-003, [system.md §8.5](../docs/design/system.md)). A work flagged `sensitiveWall` is all-ages but behind pixiv's sensitive-content wall.
+
+- `/ajax/illust/:id` sends `sl` 6 for `xRestrict ≥ 1`, 4 for a `sensitiveWall` work, else 2.
+- Logged out, it sends every `urls` key as `null` for an R-18/R-18G or `sensitiveWall` work (`isWalled(work, loggedIn)` in `server/ajax.ts`). Logged in, the URLs are present.
+- `/pages` and `/ugoira_meta` of a `sensitiveWall` work answer normally while logged out, as pixiv's do. A passing test therefore proves the extension, not the server, withholds the download.
+- Logged out, the artwork page of a `sensitiveWall` work shows pixiv's wall text (`This work may contain sensitive content.` / `Please log in to view this work.`) instead of the image; the action row stays.
 
 | Member                                                                    | Purpose                                                                                                              |
 | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -114,7 +122,7 @@ HTTP/2 (with HTTP/1.1 fallback) on `127.0.0.1`, ephemeral port, certificate gene
 | `{ stallAfterBytes: 1024 }`        | send headers and 1024 body bytes, then go silent                                                      |
 | `{ reset: true }`                  | drop the request without a response (HTTP/2 stream reset; socket destroy on HTTP/1.1) → network error |
 
-**Stall timeout.** `dist-e2e/` scales the 30 s inactivity timeout by `__RETRY_TIME_SCALE__` (0.01) to **300 ms**. A response whose headers or next body chunk take 300 ms or longer counts as a `timeout` and is retried, so `{ delayHeadersMs: 300 }` (or more) does not delay a transfer: it fails the attempt. To keep transfers in flight (cancel mid-job, `maxInFlight`, badge counts while files are pending), use **`server.hold(match)`**: matching requests that would be answered 200 with a `Content-Length` get their headers at once, then their body one byte every 100 ms with the last byte held back, until `release()` (or `reset()`). The transfer never stalls, so nothing times out. A body of n bytes can be held for about (n − 1) × 100 ms (the smallest fixture page, 239 bytes, for ~24 s); after that it stalls and the client's retry starts a fresh hold. `held` counts the requests currently held.
+**Stall timeout.** `dist-e2e/` scales the 30 s inactivity timeout by `__RETRY_TIME_SCALE__` (0.01) to **300 ms**. A response whose headers or next body chunk take 300 ms or longer counts as a `timeout` and is retried, so `{ delayHeadersMs: 300 }` (or more) does not delay a transfer: it fails the attempt. To keep transfers in flight (cancel mid-job, `maxInFlight`, badge counts while files are pending), use **`server.hold(match)`**: matching requests that would be answered 200 with a `Content-Length` get their headers at once, then their body one byte every 100 ms with the last byte held back, until `release()` (or `reset()`). The transfer never stalls, so nothing times out. A body of n bytes can be held for about (n − 1) × 100 ms (the smallest fixture page, 239 bytes, for ~24 s); after that it stalls and the client's retry starts a fresh hold. `held` counts the requests currently held. JSON answers can be held too, e.g. `/ajax/illust` so a click lands before the metadata arrives (`server.hold((r) => r.path === '/ajax/illust/135882745')` in `cuj5.spec.ts`).
 
 ```ts
 const held = server.hold(pagesOf(EXAMPLE, range(5, 11))); // e2e/harness/flows.ts helpers
@@ -126,7 +134,7 @@ held.release();
 
 ## Fixture page (`server/page.ts`)
 
-A reduction of the ENG-002 live capture (`test/fixtures/pixiv/artwork-live-*.html`, `scripts/spike/FINDINGS.md` §5) to the hooks `src/content/pixiv-dom.ts` relies on: `<html data-theme="light|dark">` (theme marker), an artwork `<figure>` with the master image (an R-18 wall when logged out), the `figcaption` work marker, and the action row, rendered `ROW_DELAY_MS` (300 ms) after `load` or after an SPA navigation with `performance.mark('fake:row')` (`ROW_MARK`). As on pixiv, the row's DOM order is share, bookmark, like, laid out `flex-direction: row-reverse` (screen order like, bookmark, share). The extension therefore inserts its host **after** the like wrapper in the DOM, which puts it immediately left of Like on screen: in specs, the host's `previousElementSibling` is the like wrapper. Related works carry their own Bookmark mini-buttons, and `<script id="__NEXT_DATA__">` carries `props.pageProps.isLoggedIn` from the request's cookie. Links marked `data-spa` navigate with `history.pushState`; back/forward re-render.
+A reduction of the ENG-002 live capture (`test/fixtures/pixiv/artwork-live-*.html`, `scripts/spike/FINDINGS.md` §5) to the hooks `src/content/pixiv-dom.ts` relies on: `<html data-theme="light|dark">` (theme marker), an artwork `<figure>` with the master image (logged out: an R-18 placeholder, or the wall text of a `sensitiveWall` work), the `figcaption` work marker, and the action row, rendered `ROW_DELAY_MS` (300 ms) after `load` or after an SPA navigation with `performance.mark('fake:row')` (`ROW_MARK`). As on pixiv, the row's DOM order is share, bookmark, like, laid out `flex-direction: row-reverse` (screen order like, bookmark, share). The extension therefore inserts its host **after** the like wrapper in the DOM, which puts it immediately left of Like on screen: in specs, the host's `previousElementSibling` is the like wrapper. Related works carry their own Bookmark mini-buttons, and `<script id="__NEXT_DATA__">` carries `props.pageProps.isLoggedIn` from the request's cookie. Links marked `data-spa` navigate with `history.pushState`; back/forward re-render.
 
 Test controls (`page.evaluate(() => (window as unknown as FakeWindow).__fake.removeRow())`):
 
@@ -142,6 +150,7 @@ Test controls (`page.evaluate(() => (window as unknown as FakeWindow).__fake.rem
 | 135882742 | 1-page illust                                                         | single-page labels                                |
 | 135882743 | 200-page manga, tiny images                                           | badge 200, ≤ 5 in flight, 3-digit width           |
 | 135882744 | artist `  Sora / 空 :: 2nd  `; patch `userName` to `ZWJ_EMOJI_ARTIST` | sanitization and Chrome path safety on disk       |
+| 135882745 | 4-page illust, `xRestrict` 0, `sensitiveWall` (`sl` 4), うみ          | R-003 wall: needs-login, pending click, login     |
 | 145892669 | 68 pages, `xRestrict` 1, ヨル                                         | needs-login, login round-trip; `r18Hidden`        |
 | 136004512 | ugoira 600×600, 48 JPEG frames × 100 ms                               | CUJ-2 example                                     |
 | 136004513 | ugoira, delays 40, 40, 500, 40                                        | timing exactness                                  |
@@ -152,9 +161,9 @@ Test controls (`page.evaluate(() => (window as unknown as FakeWindow).__fake.rem
 | 136120877 | 8 pages, そら                                                         | CUJ-4 tab B                                       |
 | 199999999 | deleted (ajax 404)                                                    | Unavailable                                       |
 
-Bytes are generated on demand (`fixtures/assets.ts`): images are flat 16×16 tiles (checkerboards for pages, a gradient with a moving square for frames), zips are stored entries with a fixed timestamp. Specs that need the expected bytes call `pageBytes()`, `ugoiraFrames()` or `ugoiraZip()`.
+Bytes are generated on first use and cached per process (`fixtures/assets.ts`): images are flat 16×16 tiles (checkerboards for pages, a gradient with a moving square for frames), zips are stored entries with a fixed timestamp. Specs that need the expected bytes call `pageBytes()`, `ugoiraFrames()` or `ugoiraZip()`.
 
-The server builds a zip synchronously on its first request and caches it per process. For 136004517 (1920×1080, 300 frames) that takes ~1.5 s, longer than the 300 ms stall timeout, so the first download attempt would time out. Call `ugoiraZip(work)` before the click (as `warmZip()` in `cuj2.spec.ts` does); the server and the spec share the cache.
+Zips are prebuilt at server start: `startFakePixiv()` builds every ugoira fixture's zip before it listens (ENG-009). Built on its first request instead, the 1080p zip of 136004517 took ~1.5 s, longer than the 300 ms stall timeout, and failed that download attempt. Specs need no warm-up; the harness self-test `fake server: fixture zips are prebuilt` guards this.
 
 ## QA sessions
 
@@ -243,20 +252,32 @@ Skeleton: every PRD acceptance criterion (docs/prd/prd-000-mvp.md), the check th
 | SW stopped mid-job: badge correct within 1 s, jobs complete                    | `stopServiceWorker()`, then poll ≤ 1 s after the next event                                                                    |
 | Toolbar click while jobs run opens settings, jobs unaffected                   | e2e hook or `openOrFocusOptions` via `swEval`                                                                                  |
 
-### CUJ-5 (`cuj5.spec.ts`, `@cuj5`, next iteration)
+### CUJ-5 (`cuj5.spec.ts`, `@cuj5`)
 
-| PRD AC                                                                                       | Check                                                                                    |
-| -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Logged out on `xRestrict ≥ 1`: `Log in to download` before any click                         | 145892669, no cookie                                                                     |
-| Click → `accounts.pixiv.net/login?return_to=…`; after login `Download · 68P`                 | fake login button; page reload with the cookie                                           |
-| Logged out on all-ages: normal idle, download succeeds                                       | 135882742, no cookie                                                                     |
-| `Retry · 3 failed` with the exact tooltip                                                    | persistent `503` faults on `_p4.`, `_p9.`, `_p11.`                                       |
-| Retry fetches only the 3 pages into the same folder → `Saved · 12P`                          | clear faults; `server.log`; `downloads.files()`                                          |
-| Offline → `Retry` + "No connection…"                                                         | `{ reset: true }` on every byte request                                                  |
-| R-18 display off → "pixiv refused this work…"                                                | `patchWork('145892669', { r18Hidden: true })`, logged in                                 |
-| Deleted after page load → `Unavailable`, click does nothing                                  | `patchWork(id, { deleted: true })` after load; 199999999 at render time                  |
-| Encode failure: zip + `frames.json`, no video, `Retry · MP4`; retry writes only the video    | 136004516                                                                                |
-| 403 mid-job keeps saved files, back to `Log in to download`                                  | `{ status: 403 }` on `_p5.`                                                              |
-| No badge in error states unless another job runs                                             | `swEval(getBadgeText)`                                                                   |
-| (system.md §9) 429/5xx up to 4 attempts, `Retry-After` honored and capped; 403 never retried | attempt counts and gaps in `server.log` (`1.5·2ⁿ·0.01` s ± jitter, `min(RA, 30)·0.01` s) |
-| (PRD CUJ-5 step 11) floating fallback within 3 s                                             | `__fake.removeRow()`; `restoreRow()` moves the button back                               |
+The AC → test mapping at the top of `cuj5.spec.ts` (24 tests), numbered as in docs/prd/prd-000-mvp.md CUJ-5 "Acceptance Criteria"; tests are named by their title prefix.
+
+| PRD AC                                                                                                                                                                                                        | Test                                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| 1 Logged out, `xRestrict ≥ 1`: `Log in to download` (white, `#c4c7c5` border, `#3c4043` text, no icon) before any click, tooltip; no other text                                                               | 'needs login'                                                          |
+| 2 Click → `accounts.pixiv.net/login?return_to=<encoded URL>`; after login `Download · 68P`                                                                                                                    | 'login round-trip'; 'logged in elsewhere'                              |
+| 3 Logged out, all-ages: normal idle `Download · NP`, download succeeds                                                                                                                                        | 'logged out all-ages'                                                  |
+| 4 Logged out, all-ages behind pixiv's sensitive-content wall (R-003): `Log in to download` before any click, same styling and tooltip, name `Log in to pixiv to download this work.`; login → `Download · 4P` | 'needs login (R-003)' (3 tests: walled work, pending click, logged in) |
+| 5 Some pages fail after 4 attempts: `Retry · 3 failed`, red outline, warning triangle, same width, exact tooltip                                                                                              | 'partial'                                                              |
+| 6 `Retry · 3 failed` fetches only the 3 pages into the same folder, ends `Saved · 12P`                                                                                                                        | 'partial'                                                              |
+| 7 Network disconnected → `Retry` + "No connection…"                                                                                                                                                           | 'offline' (2 tests)                                                    |
+| 8 Logged in, R-18 display off → `Retry` + "pixiv refused this work…"                                                                                                                                          | 'refused' (2 tests)                                                    |
+| 9 Deleted after page load → gray `Unavailable`, click does nothing                                                                                                                                            | 'unavailable' (2 tests)                                                |
+| 10 Encode fails: zip + `frames.json`, no video, `Retry · MP4` + exact tooltip; clicking it produces only the video                                                                                            | 'encode failure' (2 tests)                                             |
+| 11 403 on originals mid-job: saved files stay, back to `Log in to download`                                                                                                                                   | '403 mid-job'                                                          |
+| 12 No error state shows a badge unless another job is in flight                                                                                                                                               | 'badge in error states'; also every error test                         |
+| 13 Cancelling never produces red styling or any message                                                                                                                                                       | 'cancel a retry'                                                       |
+| 14 Action row removed before navigation → floating pill at the artwork's bottom-right within 3 s; downloads normally                                                                                          | 'floating fallback' (2 tests)                                          |
+| 15 403 never retried; 429/500/502/503/504 and network errors retried up to 4 attempts                                                                                                                         | 'retry policy'; '403 mid-job'; 'partial'                               |
+| Edge: 5xx with 0 pages saved → `Retry` + "pixiv isn't responding…"                                                                                                                                            | 'server failure'                                                       |
+| Edge: exactly 1 failure → `Retry · 1 failed` + `tip_partial_one`; reload clears the failure memory and a click re-runs the whole job                                                                          | 'partial one'                                                          |
+| Edge: retry after the pattern changed still writes into the original folder                                                                                                                                   | 'partial'                                                              |
+| Edge: logged out in another tab after load → `Retry` + refused                                                                                                                                                | 'refused … logged out'                                                 |
+| Edge: 429 with `Retry-After: 120` waits min(RA, 30) s (×0.01 in `dist-e2e/`)                                                                                                                                  | 'retry policy'                                                         |
+| Edge: floating fallback on pixiv's dark theme: `#5fb9fb` focus ring                                                                                                                                           | 'floating fallback'                                                    |
+
+Exhausted-retry scenarios use 502/504: under the ×0.01 backoff, Chromium throttles an extension's repeated 500/503 requests, so a 4th quick attempt never reaches the server. Not covered here: "only `metadata.json` failed" (L1/L2), R-18G (no fixture; same `xRestrict ≥ 1` rule), and "pixiv isn't responding" after Chromium throttled a sustained 503 (L1: `retry.test.ts`, `outcome.test.ts`; QA replays it against the dev build).

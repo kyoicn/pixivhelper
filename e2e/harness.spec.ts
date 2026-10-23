@@ -1,18 +1,55 @@
-// Harness self-test: the six acceptance points of ENG-004 (docs/eng-backlog.md).
+// Harness self-test: the six acceptance points of ENG-004, and ENG-009's prebuilt fixture zips
+// (docs/eng-backlog.md).
 
+import { request } from 'node:https';
+import { STALL_TIMEOUT_MS } from '../src/shared/constants';
 import {
   artworkUrl,
   originalUrl,
   PIXIV_REFERER,
   requireWork,
+  ugoiraZipUrl,
   type IllustWork,
+  type UgoiraWork,
 } from './fixtures/works';
 import { E2E_EXTENSION_DIR, unpackedExtensionId } from './harness/launch';
 import { expect, test } from './harness/test';
 import { artworkPageTitle } from './server/page';
-import { HARNESS_BLOB, HARNESS_BLOB_PATH } from './server/server';
+import { HARNESS_BLOB, HARNESS_BLOB_PATH, startFakePixiv, type FakePixiv } from './server/server';
 
 const EXAMPLE = requireWork('135882741') as IllustWork;
+/** 1920×1080, 300 frames: the fixture zip that takes longest to build. */
+const LONG = requireWork('136004517') as UgoiraWork;
+/** dist-e2e's __RETRY_TIME_SCALE__ (scripts/build.mjs): its stall timeout is 300 ms. */
+const E2E_TIME_SCALE = 0.01;
+
+/** GETs `url` from `server` with the pixiv Referer; `ms` runs from the request until its headers. */
+function timeToHeaders(server: FakePixiv, url: string): Promise<{ status: number; ms: number }> {
+  const { host, pathname } = new URL(url);
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const outgoing = request(
+      {
+        host: '127.0.0.1',
+        port: server.port,
+        servername: host,
+        path: pathname,
+        headers: { host, referer: PIXIV_REFERER },
+        agent: false,
+        // The fake server's certificate is self-signed.
+        rejectUnauthorized: false,
+      },
+      (response) => {
+        const ms = Date.now() - started;
+        response.on('error', reject);
+        response.on('end', () => resolve({ status: response.statusCode ?? 0, ms }));
+        response.resume();
+      },
+    );
+    outgoing.on('error', reject);
+    outgoing.end();
+  });
+}
 
 test.describe('e2e harness', { tag: '@harness' }, () => {
   test('1: the extension service worker loads from dist-e2e and its ID resolves', async ({
@@ -102,5 +139,18 @@ test.describe('e2e harness', { tag: '@harness' }, () => {
     const served = await page.goto(url, { referer: PIXIV_REFERER });
     expect(served?.status()).toBe(200);
     expect(server.requests(url).at(-1)?.referer).toBe(PIXIV_REFERER);
+  });
+
+  test('fake server: fixture zips are prebuilt', async () => {
+    // Zips are cached per worker process. Run alone, as ENG-009's Verify does, this worker has built
+    // none yet, so only a server that builds them at start answers the 1080p zip in time.
+    const fresh = await startFakePixiv();
+    try {
+      const first = await timeToHeaders(fresh, ugoiraZipUrl(LONG));
+      expect(first.status).toBe(200);
+      expect(first.ms).toBeLessThan(STALL_TIMEOUT_MS * E2E_TIME_SCALE);
+    } finally {
+      await fresh.close();
+    }
   });
 });

@@ -138,15 +138,6 @@ function sumOfDelays(work: UgoiraWork): number {
   return work.frameDelays.reduce((sum, delay) => sum + delay, 0);
 }
 
-/**
- * The fake server builds a work's zip on first request, synchronously; for the 1080p fixture that
- * takes longer than the e2e build's 300 ms stall timeout. Building it here first (same process,
- * same cache) keeps the server's answer immediate, as pixiv's CDN is.
- */
-function warmZip(work: UgoiraWork): void {
-  ugoiraZip(work);
-}
-
 // ── Settings and codec probe ──
 
 async function setSettings(harness: Harness, changes: Partial<Settings>): Promise<void> {
@@ -701,7 +692,6 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
   test('example (136004512) as MP4: percent, badge 1, Saved · MP4, exact folder, identical zip and frames.json, plays in Chrome', async ({
     harness,
   }) => {
-    warmZip(EXAMPLE);
     const page = await openArtwork(harness, EXAMPLE);
     requireAvc(await probeResult(harness, EXAMPLE), EXAMPLE);
     const run = await runJob(harness, page);
@@ -744,7 +734,6 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
     harness,
     server,
   }) => {
-    warmZip(EXAMPLE);
     const page = await openArtwork(harness, EXAMPLE);
     // Hold the zip so the job is surely running while the title is read.
     server.fault({ match: ugoiraZipUrl(EXAMPLE), responses: [{ delayHeadersMs: 1000 }] });
@@ -765,7 +754,6 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
     harness,
   }) => {
     test.slow(); // 300 frames at 1080p: tens of seconds with a software encoder
-    warmZip(LONG);
     const page = await openArtwork(harness, LONG);
     const format = defaultVideo(await probeResult(harness, LONG), LONG);
     const restores: Array<() => void> = [];
@@ -802,7 +790,6 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
     harness,
   }) => {
     await setSettings(harness, { saveMetadata: false });
-    warmZip(EXAMPLE);
     const page = await openArtwork(harness, EXAMPLE);
     const format = defaultVideo(await probeResult(harness, EXAMPLE), EXAMPLE);
     const label = FORMAT_LABEL[format];
@@ -821,7 +808,6 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
     server,
   }) => {
     await setUgoiraOutput(harness, 'zip');
-    warmZip(EXAMPLE);
     const page = await openArtwork(harness, EXAMPLE);
     const idle = await readPill(page);
     expect(idle.text).toBe('Download · ZIP');
@@ -849,7 +835,6 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
     server,
   }) => {
     expect(NO_LENGTH.noContentLength).toBe(true);
-    warmZip(NO_LENGTH);
     const page = await openArtwork(harness, NO_LENGTH);
     const format = defaultVideo(await probeResult(harness, NO_LENGTH), NO_LENGTH);
     const run = await runJob(harness, page);
@@ -883,7 +868,6 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
     harness,
   }) => {
     test.slow(); // 300 frames at 1080p: tens of seconds with a software encoder
-    warmZip(LONG);
     const page = await openArtwork(harness, LONG);
     const format = defaultVideo(await probeResult(harness, LONG), LONG);
     await page.locator(HOST).click();
@@ -937,7 +921,6 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
     harness,
   }) => {
     test.slow(); // 300 frames at 1080p: tens of seconds with a software encoder
-    warmZip(LONG);
     const page = await openArtwork(harness, LONG);
     const format = defaultVideo(await probeResult(harness, LONG), LONG);
     await page.locator(HOST).click();
@@ -959,7 +942,6 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
     harness,
     server,
   }) => {
-    warmZip(EXAMPLE);
     const page = await openArtwork(harness, EXAMPLE);
     const format = defaultVideo(await probeResult(harness, EXAMPLE), EXAMPLE);
     const label = FORMAT_LABEL[format];
@@ -1005,7 +987,6 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
       key: capsKey(EXAMPLE),
       caps: noAvc,
     });
-    warmZip(EXAMPLE);
     const page = await openArtwork(harness, EXAMPLE);
     const idle = await readPill(page);
     expect(idle.text).toBe('Download · WebM');
@@ -1029,7 +1010,6 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
     test('timing (136004513) as MP4: 4 frames lasting 40, 40, 500, 40 ms (±1 ms), 620 ms in all', async ({
       harness,
     }) => {
-      warmZip(TIMING);
       const page = await openArtwork(harness, TIMING);
       requireAvc(await probeResult(harness, TIMING), TIMING);
       const run = await runJob(harness, page);
@@ -1041,7 +1021,6 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
       harness,
     }) => {
       await setUgoiraOutput(harness, 'webm');
-      warmZip(TIMING);
       const page = await openArtwork(harness, TIMING);
       requireVp9(await probeResult(harness, TIMING), TIMING);
       const run = await runJob(harness, page);
@@ -1050,7 +1029,6 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
     });
 
     test('odd size (136004514): 601×451 frames give a 600×450 video', async ({ harness }) => {
-      warmZip(ODD);
       const page = await openArtwork(harness, ODD);
       const format = defaultVideo(await probeResult(harness, ODD), ODD);
       const run = await runJob(harness, page);
@@ -1061,7 +1039,6 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
     test('quality (136004512) as MP4: 48 frames of 100 ms at 600×600, SSIM mean ≥ 0.98 and min ≥ 0.95', async ({
       harness,
     }) => {
-      warmZip(EXAMPLE);
       const page = await openArtwork(harness, EXAMPLE);
       requireAvc(await probeResult(harness, EXAMPLE), EXAMPLE);
       const run = await runJob(harness, page);
@@ -1074,7 +1051,6 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
       harness,
     }) => {
       await setUgoiraOutput(harness, 'webm');
-      warmZip(EXAMPLE);
       const page = await openArtwork(harness, EXAMPLE);
       requireVp9(await probeResult(harness, EXAMPLE), EXAMPLE);
       const run = await runJob(harness, page);
