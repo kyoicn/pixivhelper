@@ -177,8 +177,23 @@ describe('sanitizeToken', () => {
     expect(sanitizeToken('._ a.b_c ._')).toBe('a.b_c');
   });
 
-  it('sanitizeToken: keeps "~" (script parity; the segment pass handles the ends)', () => {
-    expect(sanitizeToken('~sora~')).toBe('~sora~');
+  it('sanitizeToken: step 4+ also strips leading and trailing "~"', () => {
+    expect(sanitizeToken('~sora~')).toBe('sora');
+  });
+
+  it('sanitizeToken: step 4+ keeps a "~" inside the value', () => {
+    expect(sanitizeToken('so~ra')).toBe('so~ra');
+  });
+
+  it.each(['~', '.~.', '~~', ' ~_.~ '])(
+    'sanitizeToken: step 4+ turns the "~"/"." only value %j into unknown',
+    (s) => {
+      expect(sanitizeToken(s)).toBe('unknown');
+    },
+  );
+
+  it('sanitizeToken: parityOnly keeps the edge "~", as safe_component does', () => {
+    expect(sanitizeToken('~sora~', { parityOnly: true })).toBe('~sora~');
   });
 
   it('sanitizeToken: step 5 keeps 20 kanji (60 bytes)', () => {
@@ -195,6 +210,14 @@ describe('sanitizeToken', () => {
 
   it('sanitizeToken: step 5 strips "._ " again after truncating', () => {
     expect(sanitizeToken(`${'a'.repeat(59)} b`)).toBe('a'.repeat(59));
+  });
+
+  it('sanitizeToken: step 5 also strips "~" again after truncating (step 4+)', () => {
+    expect(sanitizeToken(`${'a'.repeat(59)}~b`)).toBe('a'.repeat(59));
+  });
+
+  it('sanitizeToken: parityOnly keeps a "~" that truncation leaves at the end', () => {
+    expect(sanitizeToken(`${'a'.repeat(59)}~b`, { parityOnly: true })).toBe(`${'a'.repeat(59)}~`);
   });
 
   it('sanitizeToken: step 5 counts a lone surrogate as 3 bytes, like TextEncoder', () => {
@@ -378,14 +401,26 @@ describe('resolveFolder', () => {
     expect(resolveFolder('{artist}', work({ artist: `👩${ZWJ}🎨Mika` }))).toBe('👩🎨Mika');
   });
 
-  it('resolveFolder: golden ~sora~ trims the segment-leading "~" and keeps the inner one', () => {
-    expect(resolveFolder('{artist}-{id}', work({ artist: '~sora~', id: '123' }))).toBe('sora~-123');
+  it('resolveFolder: golden {artist}-{id} with artist "~sora~", id 1 → sora-1 (step 4+)', () => {
+    expect(resolveFolder('{artist}-{id}', work({ artist: '~sora~', id: '1' }))).toBe('sora-1');
   });
 
-  // The design's golden table shows `~sora~-1` → `sora~-1`, but `sora~-1` is 8.3-shaped, which
-  // Chrome refuses on Windows, so step f also turns its "~" into "_".
-  it('resolveFolder: golden ~sora~ with id 1 also gets step f (sora~-1 is 8.3-shaped)', () => {
-    expect(resolveFolder('{artist}-{id}', work({ artist: '~sora~', id: '1' }))).toBe('sora_-1');
+  it('resolveFolder: golden {artist}-{id} with artist "so~ra", id 1 → so_ra-1 (step f)', () => {
+    expect(resolveFolder('{artist}-{id}', work({ artist: 'so~ra', id: '1' }))).toBe('so_ra-1');
+  });
+
+  it('resolveFolder: golden pixiv/{artist}/{title} with artist "~" → pixiv/unknown/T', () => {
+    expect(
+      resolveFolder('pixiv/{artist}/{title}', { artist: '~', id: '1', title: 'T', userId: null }),
+    ).toBe('pixiv/unknown/T');
+  });
+
+  it('resolveFolder: golden {title} ".~." → unknown', () => {
+    expect(resolveFolder('{title}', work({ title: '.~.' }))).toBe('unknown');
+  });
+
+  it('resolveFolder: golden literal pattern "~sora~-1" → sora_-1 (step b, then step f)', () => {
+    expect(resolveFolder('~sora~-1', work())).toBe('sora_-1');
   });
 
   it('resolveFolder: golden pattern "pixiv" puts every work in one folder', () => {
