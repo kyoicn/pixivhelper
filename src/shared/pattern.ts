@@ -51,6 +51,9 @@ const PY_WHITESPACE_RUN_RE =
 const SCRIPT_EDGE_RE = /^[._ ]+|[._ ]+$/g;
 // PRD §4.4.2 extension.
 const PRD_REMOVED_RE = /[*?"<>|]/g;
+// D8 step 4+: Chrome refuses an edge '~', so a value of only '~'/'.' must become 'unknown' here
+// rather than an empty segment that the segment pass drops.
+const TOKEN_EDGE_RE = /^[._ ~]+|[._ ~]+$/g;
 
 // Chrome's IsFilenameLegal: characters refused anywhere in a path component.
 const CHROME_ILLEGAL_RE = /["*/:<>?\\|\p{Cc}\p{Cf}\p{Noncharacter_Code_Point}]/gu;
@@ -132,8 +135,9 @@ export function sanitizeToken(s: string, opts: { parityOnly?: boolean } = {}): s
   out = out.replace(PY_WHITESPACE_RUN_RE, '_');
   // After the whitespace step, so whitespace-class controls such as U+0085 still become '_'.
   if (!parityOnly) out = out.replace(CHROME_ILLEGAL_RE, '');
-  out = out.replace(SCRIPT_EDGE_RE, '');
-  out = truncateUtf8(out, TOKEN_MAX_BYTES).replace(SCRIPT_EDGE_RE, '');
+  const edgeRe = parityOnly ? SCRIPT_EDGE_RE : TOKEN_EDGE_RE;
+  out = out.replace(edgeRe, '');
+  out = truncateUtf8(out, TOKEN_MAX_BYTES).replace(edgeRe, '');
   return out === '' ? 'unknown' : out;
 }
 
