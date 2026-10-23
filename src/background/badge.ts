@@ -4,7 +4,7 @@
 import { BADGE_COALESCE_MS } from '../shared/constants';
 import { t } from '../shared/i18n';
 import { createLogger } from '../shared/log';
-import type { FileState, JobRecord } from './types';
+import type { FileState, JobRecord } from '../shared/job';
 
 const log = createLogger('badge');
 

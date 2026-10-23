@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { FileRole, FileState, FileTask, JobRecord } from '../../src/background/types';
+import type { FileRole, FileState, FileTask, JobRecord } from '../../src/shared/job';
 import { toView } from '../../src/background/view';
 
 function file(

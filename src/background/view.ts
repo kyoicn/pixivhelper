@@ -2,7 +2,7 @@
 
 import { jobProgress } from '../shared/progress';
 import type { JobOutcome, JobView } from '../shared/types';
-import type { JobRecord } from './types';
+import type { JobRecord } from '../shared/job';
 
 /** `outcome` is the classified end state of an ended job, and null while the job runs. */
 export function toView(job: JobRecord, outcome: JobOutcome | null): JobView {

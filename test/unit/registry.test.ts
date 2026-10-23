@@ -5,7 +5,7 @@ import {
   type EffectRunner,
   type SessionStore,
 } from '../../src/background/registry';
-import type { FileRole, FileState, FileTask, JobRecord } from '../../src/background/types';
+import type { FileRole, FileState, FileTask, JobRecord } from '../../src/shared/job';
 import { __testHook, setTestHookHandler } from '../../src/shared/test-hooks';
 
 afterEach(() => {

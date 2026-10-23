@@ -30,7 +30,7 @@ import { createRegistry, type Effect, type FileRef, type Registry } from './regi
 import { applyResolution, resolve } from './resolver';
 import { cancel, commandFor, fileAt } from './scheduler';
 import { apiFetchJson, pushView } from './tab-client';
-import type { JobRecord, StartRequest } from './types';
+import type { JobRecord, StartRequest } from '../shared/job';
 import { toView } from './view';
 
 const log = createLogger('engine');

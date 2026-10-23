@@ -2,7 +2,7 @@
 // "API / Interface Contract"). Every listener ignores messages whose `target` is not its own.
 // Payload validation (system.md §7 "Validation", "Sender checks") belongs in this module too.
 
-import type { ErrorCode, StartRequest, UgoiraState } from '../background/types';
+import type { ErrorCode, StartRequest, UgoiraState } from './job';
 import { MAX_FOLDER_CHARS, MAX_PAGES_PER_WORK, OFFSCREEN_DOCUMENT_PATH } from './constants';
 import { isApiUrl, isArtworkId, isBytesUrl } from './pixiv-api';
 import type {

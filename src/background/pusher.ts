@@ -3,7 +3,7 @@
 // is throttled to PUSH_INTERVAL_MS per job with a trailing push of the latest state.
 
 import type { JobView } from '../shared/types';
-import type { JobRecord } from './types';
+import type { JobRecord } from '../shared/job';
 
 /** At most 4 progress pushes per second per job. */
 export const PUSH_INTERVAL_MS = 250;

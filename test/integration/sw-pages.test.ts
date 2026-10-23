@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { JobRecord } from '../../src/background/types';
+import type { JobRecord } from '../../src/shared/job';
 import { buildMetadata, serializeJson } from '../../src/shared/metadata';
 import type { JobStartResponse } from '../../src/shared/messages';
 import type { ChromeFake } from '../fakes/chrome';

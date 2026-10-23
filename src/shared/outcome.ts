@@ -1,7 +1,7 @@
 // The only place a job's end state is decided (system.md §10). Rows are tried top to bottom and
 // the first match wins; the row numbers below are the table's.
 
-import type { FileTask, JobRecord } from '../background/types';
+import type { FileTask, JobRecord } from './job';
 import type { ErrorCause, Failure, JobOutcome } from './types';
 
 const landed = (file: FileTask): boolean => file.state === 'done';

@@ -5,7 +5,7 @@ import {
   createBadgeRenderer,
   remaining,
 } from '../../../src/background/badge';
-import type { FileRole, FileState, FileTask, JobRecord } from '../../../src/background/types';
+import type { FileRole, FileState, FileTask, JobRecord } from '../../../src/shared/job';
 import { BADGE_COALESCE_MS } from '../../../src/shared/constants';
 import { installChromeFake, type ChromeFake } from '../../fakes/chrome';
 

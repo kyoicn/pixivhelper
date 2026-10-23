@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FileTask, JobRecord } from '../../src/background/types';
+import type { FileTask, JobRecord } from '../../src/shared/job';
 import type { CapsGetResponse } from '../../src/shared/messages';
 import type { ChromeFake } from '../fakes/chrome';
 import {

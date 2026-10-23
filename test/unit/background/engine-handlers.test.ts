@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Engine } from '../../../src/background/engine';
 import { createMessageRouter, startRequest } from '../../../src/background/handlers';
-import type { JobRecord, StartRequest } from '../../../src/background/types';
+import type { JobRecord, StartRequest } from '../../../src/shared/job';
 import type { JobStartMessage } from '../../../src/shared/messages';
 import {
   EXTENSION_ORIGIN,

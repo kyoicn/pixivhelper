@@ -1,7 +1,7 @@
 // pixiv AJAX: URL builders, allowlists (system.md §11.1) and response parsing
 // (design-download-engine.md "Resolving"). Pure: no fetch, no chrome.* access.
 
-import type { UgoiraState } from '../background/types';
+import type { UgoiraState } from './job';
 import { FILE_BASENAME_RE, PIXIV_API_URL_RE, PIXIV_ORIGIN, PXIMG_URL_PREFIX } from './constants';
 import type { RetryResult, WorkInfo } from './types';
 

@@ -8,7 +8,7 @@ import type {
   FileTask,
   JobRecord,
   UgoiraState,
-} from '../../../src/background/types';
+} from '../../../src/shared/job';
 import { buildMetadata, serializeJson } from '../../../src/shared/metadata';
 
 const ID = '135882741';

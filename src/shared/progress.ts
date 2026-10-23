@@ -1,6 +1,6 @@
 // Busy-state progress (PRD §4.7.5; design-offscreen-worker.md "Progress").
 
-import type { FileTask, JobRecord } from '../background/types';
+import type { FileTask, JobRecord } from './job';
 import type { JobProgress } from './types';
 
 /** Share of the whole-job percent covered by the frame zip when a video follows it. */

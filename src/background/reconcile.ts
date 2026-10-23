@@ -8,7 +8,7 @@ import type { OffTaskSnapshot } from '../shared/messages';
 import { interruptFailure, releaseLanded } from './downloads';
 import type { Effect } from './registry';
 import { settle, settleFile } from './scheduler';
-import type { FileTask, JobRecord } from './types';
+import type { FileTask, JobRecord } from '../shared/job';
 
 export interface ReconcileFacts {
   /** The offscreen task table by taskId; empty when no offscreen document exists. */

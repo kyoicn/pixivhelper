@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PUSH_INTERVAL_MS, createPusher } from '../../../src/background/pusher';
-import type { JobRecord } from '../../../src/background/types';
+import type { JobRecord } from '../../../src/shared/job';
 import type { JobView } from '../../../src/shared/types';
 
 function job(jobId = 'job-1', percent = 0): JobRecord {

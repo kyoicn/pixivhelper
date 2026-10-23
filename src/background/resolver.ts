@@ -22,7 +22,7 @@ import { __testHook as testHook } from '../shared/test-hooks';
 import type { RetryResult, UgoiraOutput, WorkInfo } from '../shared/types';
 import type { Effect } from './registry';
 import { settle } from './scheduler';
-import type { FileRole, FileTask, JobRecord, StartRequest, UgoiraState } from './types';
+import type { FileRole, FileTask, JobRecord, StartRequest, UgoiraState } from '../shared/job';
 
 const log = createLogger('resolver');
 

@@ -17,7 +17,7 @@ import {
 import { isSafeRelativeFolder } from '../shared/pattern';
 import { getCaps } from './caps';
 import type { Engine } from './engine';
-import type { ErrorCode, StartRequest } from './types';
+import type { ErrorCode, StartRequest } from '../shared/job';
 import { toView } from './view';
 
 const log = createLogger('sw');

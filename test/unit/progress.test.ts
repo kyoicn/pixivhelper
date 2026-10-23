@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type {
-  FileRole,
-  FileState,
-  FileTask,
-  JobRecord,
-  UgoiraState,
-} from '../../src/background/types';
+import type { FileRole, FileState, FileTask, JobRecord, UgoiraState } from '../../src/shared/job';
 import {
   jobProgress,
   pagesProgress,

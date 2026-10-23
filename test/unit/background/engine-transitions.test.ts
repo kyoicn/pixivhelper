@@ -21,7 +21,7 @@ import type {
   FileTask,
   JobRecord,
   UgoiraState,
-} from '../../../src/background/types';
+} from '../../../src/shared/job';
 import type { OffTaskSnapshot } from '../../../src/shared/messages';
 import type { Failure } from '../../../src/shared/types';
 

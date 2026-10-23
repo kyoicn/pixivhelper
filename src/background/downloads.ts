@@ -8,7 +8,7 @@ import type { Failure } from '../shared/types';
 import type { OffFailedEvent, OffProgressEvent, OffReadyEvent } from '../shared/messages';
 import type { Effect } from './registry';
 import { fileAt, isTerminal, settle, settleFile } from './scheduler';
-import type { FileTask, JobRecord } from './types';
+import type { FileTask, JobRecord } from '../shared/job';
 
 /** chrome.downloads InterruptReason for a dismissed Save As dialog. */
 const USER_CANCELED = 'USER_CANCELED';

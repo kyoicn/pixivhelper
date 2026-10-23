@@ -7,7 +7,7 @@ import { JOB_KEY_PREFIX } from '../shared/constants';
 // Imported under another name: the unminified prod bundle keeps the dead `if (false)` call text,
 // and it must not mention __testHook (design-test-harness.md).
 import { __testHook as testHook } from '../shared/test-hooks';
-import type { JobRecord } from './types';
+import type { JobRecord } from '../shared/job';
 
 /**
  * Byte-progress fields (`ugoira.zipLoaded/zipTotal/encDone/percent`) are display-only, so a

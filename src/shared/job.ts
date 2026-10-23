@@ -1,7 +1,8 @@
-// Service-worker job model (design-download-engine.md "Data Model", "API / Interface Contract").
+// Job model and request protocol (design-download-engine.md "Data Model", "API / Interface Contract").
+// Lives in src/shared so the pure core and every context share it (system.md §4 "Layering rule (D11)").
 // Extends src/shared/types.ts.
 
-import type { Failure, JobMode, SettingsSnapshot, UgoiraOutput } from '../shared/types';
+import type { Failure, JobMode, SettingsSnapshot, UgoiraOutput } from './types';
 
 export type ErrorCode = 'BAD_REQUEST' | 'NOT_FOUND' | 'FORBIDDEN' | 'INTERNAL';
 

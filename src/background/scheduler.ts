@@ -7,7 +7,7 @@ import { buildMetadata, serializeJson } from '../shared/metadata';
 import type { Failure } from '../shared/types';
 import type { OffscreenCommand } from './offscreen-client';
 import type { Effect } from './registry';
-import type { FileState, FileTask, JobRecord } from './types';
+import type { FileState, FileTask, JobRecord } from '../shared/job';
 
 const JSON_MIME = 'application/json';
 

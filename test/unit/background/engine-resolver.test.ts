@@ -7,7 +7,7 @@ import {
   type Resolution,
   type ResolverDeps,
 } from '../../../src/background/resolver';
-import type { JobRecord, StartRequest } from '../../../src/background/types';
+import type { JobRecord, StartRequest } from '../../../src/shared/job';
 import type { CodecCaps } from '../../../src/shared/messages';
 import type { RetryResult, UgoiraOutput } from '../../../src/shared/types';
 

@@ -4,7 +4,7 @@
 // job to its end.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { JobRecord } from '../../src/background/types';
+import type { JobRecord } from '../../src/shared/job';
 import type { JobOutcome } from '../../src/shared/types';
 import type { ChromeFake } from '../fakes/chrome';
 import {

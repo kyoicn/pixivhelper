@@ -3,7 +3,7 @@
 // chrome.* here: the content script (task 3.4) performs the actions and feeds results back as
 // events.
 
-import type { StartRequest } from '../../background/types';
+import type { StartRequest } from '../../shared/job';
 import { CLICK_GUARD_MS, PIXIV_LOGIN_URL } from '../../shared/constants';
 import type {
   ErrorCause,
