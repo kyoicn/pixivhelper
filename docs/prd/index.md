@@ -45,7 +45,7 @@ It replaces a personal terminal script (`ref/pixiv-dl`), which needed cookie ext
 - Uses Chrome in Traditional or Simplified Chinese. Occasionally saves a wallpaper or a manga chapter. Often browses logged out.
 - Will never open settings and won't read instructions.
 - Needs "click, and it's in Downloads, in a sensible folder".
-- Hits the needs-login state on R-18 works and needs the button itself to explain the next step.
+- Hits the needs-login state on works pixiv hides from logged-out visitors (R-18, R-18G, or behind pixiv's sensitive-content wall) and needs the button itself to explain the next step (per R-003).
 
 ### P3: The script user (maintainer, power user)
 - Runs `ref/pixiv-dl` today and knows its behaviors.

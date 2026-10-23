@@ -266,7 +266,7 @@ This is the core promise of the product. The user is looking at an illustration 
 - The extension is installed and enabled in desktop Chrome.
 - The tab shows `https://www.pixiv.net/artworks/<id>` or a locale-prefixed variant (`https://www.pixiv.net/en/artworks/<id>`), reached by direct load or by pixiv's in-app navigation.
 - The work's `illustType` is 0 (illustration) or 1 (manga).
-- The work is all-ages (`xRestrict` 0), or the user is logged in to pixiv with R-18 display enabled. Otherwise CUJ-5 applies.
+- The work is all-ages (`xRestrict` 0) and not behind pixiv's sensitive-content login wall, or the user is logged in to pixiv with R-18 display enabled. Otherwise CUJ-5 applies (per R-003).
 - Settings are at their defaults: pattern `pixiv/{artist}-{id}`, metadata on.
 - Example data: artwork `135882741`, "雨上がりの渋谷" by みずき (userId `40285173`), 12 pages.
 
@@ -630,10 +630,10 @@ Downloads fail for reasons the user can fix (not logged in, connection dropped, 
 
 **Part A: pre-emptive needs-login (known before any click)**
 
-1. **User action**: Logged out, user opens an R-18 or R-18G work.
-   - **System response**: At render time the extension has the work's metadata (`xRestrict` 1) and the page's `"isLoggedIn":false`. Because `xRestrict ≥ 1` and the page is logged out, it renders the needs-login state instead of idle.
+1. **User action**: Logged out, user opens a work pixiv withholds behind a login requirement: an R-18 or R-18G work, or an all-ages work behind pixiv's sensitive-content wall, `This work may contain sensitive content. Please log in to view this work.` (per R-003).
+   - **System response**: At render time the extension has the work's metadata (`xRestrict` 1) and the page's `"isLoggedIn":false`. Because the page is logged out and pixiv withholds the work behind a login requirement (R-18, R-18G, or pixiv's sensitive-content wall), it renders the needs-login state instead of idle (per R-003). The signal that detects the sensitive-content wall is specified in the design docs.
    - **User sees**: In the usual spot, a white pill with a 1.5 px `#c4c7c5` border, `#3c4043` text, **no icon**, and the label `Log in to download`. Hover: fill `#f5f7f9`, border `#8a8f94`. Tooltip: `Opens pixiv login and returns you here`. There is no other text anywhere on the page from the extension. See `cuj-5-initial.html`.
-   - **Details**: `aria-label` is `Log in to pixiv to download this R-18 work`. Same fixed width as every other state.
+   - **Details**: `aria-label` is `Log in to pixiv to download this work.` (per R-003). Same fixed width as every other state.
 
 2. **User action**: User clicks `Log in to download`.
    - **System response**: The tab navigates to `https://accounts.pixiv.net/login?return_to=<URL-encoded current page URL>`, e.g. `https://accounts.pixiv.net/login?return_to=https%3A%2F%2Fwww.pixiv.net%2Fartworks%2F145892669`.
@@ -690,7 +690,7 @@ Downloads fail for reasons the user can fix (not logged in, connection dropped, 
     - **Details**: If the action row appears later, the button moves into it and keeps its state. Downloads work exactly as in CUJ-1 and CUJ-2.
 
 #### Edge Cases & Error States
-- **All-ages work while logged out**: no needs-login state. Downloads work normally, because originals need only the Referer.
+- **All-ages work while logged out**: if pixiv shows the work to logged-out visitors, there is no needs-login state and downloads work normally, because originals need only the Referer. If pixiv hides it behind its sensitive-content wall (`This work may contain sensitive content. Please log in to view this work.`), the button shows `Log in to download` exactly as on an R-18 work, even though the originals would download with the Referer alone: the extension respects pixiv's login requirement wherever pixiv imposes one (per R-003).
 - **Logged in elsewhere after this page loaded** (e.g. logged in from another tab): this page still says logged out, so the button still shows `Log in to download`. Clicking it goes to pixiv login, which redirects straight back because the session already exists, and the reloaded page shows `Download · 68P`.
 - **Logged out in another tab after this page loaded**: the button shows `Download`. The click is refused and ends in `Retry` with the "pixiv refused this work" tooltip.
 - **Partial failure, then the user changes the folder pattern before clicking Retry**: the retry still writes into the original job's folder, so the artwork is never split across folders.
@@ -709,7 +709,8 @@ Mocks for this CUJ:
 #### Acceptance Criteria
 - Logged out, on a work with `xRestrict` 1 or 2, the button renders `Log in to download` (white fill, `#c4c7c5` border, `#3c4043` text, no icon) before any click, with the tooltip `Opens pixiv login and returns you here`. The extension shows no other text on the page.
 - Clicking it navigates the tab to `https://accounts.pixiv.net/login?return_to=` followed by the URL-encoded artwork URL. After logging in, the returned page shows `Download · 68P`.
-- Logged out, on an all-ages work, the button is the normal idle `Download · NP`, and the download succeeds.
+- Logged out, on an all-ages work that pixiv shows without a login wall, the button is the normal idle `Download · NP`, and the download succeeds.
+- Logged out, on an all-ages work (`xRestrict` 0) that pixiv hides behind its `This work may contain sensitive content. Please log in to view this work.` wall, the button renders `Log in to download` before any click, with the same styling and tooltip as on an R-18 work and the accessible name `Log in to pixiv to download this work.` Clicking it navigates to `https://accounts.pixiv.net/login?return_to=` followed by the URL-encoded artwork URL, and after logging in the returned page shows the normal idle `Download · NP` (per R-003).
 - When some pages fail after 4 attempts, the button shows `Retry · 3 failed` (red outline, warning triangle, same width), and the tooltip reads exactly `9 of 12 pages saved. 3 failed after 4 attempts each. Click to retry just those 3.`
 - Clicking `Retry · 3 failed` downloads only the 3 failed pages (no other file of the artwork appears again in `chrome://downloads`), into the same folder, and ends in `Saved · 12P` when they succeed.
 - With the network disconnected, clicking Download ends in `Retry` with the tooltip `No connection. Retry when you're back online.`
@@ -770,7 +771,7 @@ English is canonical. Strings marked **(derived)** were not mocked or given in d
 | `aria_busy_encode` | `Encoding <format>, <p> percent. Click to cancel.` |
 | `aria_saved_pages` | `Saved <n> pages to Downloads/<folder>. Click to download again.` |
 | `aria_saved_ugoira` (derived) | `Saved <format> to Downloads/<folder>. Click to download again.` |
-| `aria_login` | `Log in to pixiv to download this R-18 work` |
+| `aria_login` (per R-003) | `Log in to pixiv to download this work.` |
 | `aria_partial` | `<saved> of <total> pages saved, <failed> failed. Click to retry the failed pages.` |
 | `aria_failed` (derived) | `Download failed. <cause tooltip> Click to retry.` |
 | `live_start` (derived) | `Downloading <n> pages` |
