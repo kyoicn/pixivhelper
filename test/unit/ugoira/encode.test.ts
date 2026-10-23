@@ -465,6 +465,15 @@ describe('encodeUgoira: abort', () => {
     const error = await failureOf(encodeUgoira(options({ signal: controller.signal })));
     expect(error).toMatchObject({ name: 'AbortError' });
   });
+
+  it('encodeUgoira: abort during the prefer-software retry rejects with the abort reason', async () => {
+    const controller = new AbortController();
+    mb.state.failAdd = (attempt) => attempt === 0;
+    const error = await failureOf(
+      encodeUgoira(options({ signal: controller.signal, onProgress: () => controller.abort() })),
+    );
+    expect(error).toMatchObject({ name: 'AbortError' });
+  });
 });
 
 describe('encodeUgoira: software retry', () => {
@@ -521,6 +530,12 @@ describe('encodeUgoira: software retry', () => {
     mb.state.failAdd = () => true;
     await failureOf(encodeUgoira(options()));
     expect(mb.state.sources).toHaveLength(2);
+  });
+
+  it('encodeUgoira: a failed retry keeps the prefer-software error as the cause', async () => {
+    mb.state.failAdd = () => true;
+    const error = await failureOf(encodeUgoira(options()));
+    expect((error as Error).cause).toMatchObject({ message: 'EncodingError: encoder crashed' });
   });
 
   it('encodeUgoira: a missing 2d context is an encoder failure', async () => {
@@ -591,6 +606,37 @@ describe('encodeUgoira: input failures', () => {
     browser.bitmapSize = { width: 1, height: 600 };
     await failureOf(encodeUgoira(options()));
     expect(browser.bitmaps[0]?.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('encodeUgoira: encode failure attempts', () => {
+  it('encodeUgoira: encode failure attempts is 1 without a retained zip', async () => {
+    const error = await failureOf(encodeUgoira(options({ zip: undefined })));
+    expect(error).toMatchObject({ detail: 'no-zip', attempts: 1 });
+  });
+
+  it('encodeUgoira: encode failure attempts is 1 for invalid frames', async () => {
+    const error = await failureOf(encodeUgoira(options({ frames: [] })));
+    expect(error).toMatchObject({ detail: 'bad-frames', attempts: 1 });
+  });
+
+  it('encodeUgoira: encode failure attempts is 1 for a zip failure in the first pass', async () => {
+    const zip = zipOf(['000000.jpg', '000001.jpg', '000003.jpg']);
+    const error = await failureOf(encodeUgoira(options({ zip })));
+    expect(error).toMatchObject({ detail: 'zip', attempts: 1 });
+  });
+
+  it('encodeUgoira: encode failure attempts is 2 when the prefer-software pass fails too', async () => {
+    mb.state.failAdd = () => true;
+    const error = await failureOf(encodeUgoira(options()));
+    expect(error).toMatchObject({ detail: 'encoder', attempts: 2 });
+  });
+
+  it('encodeUgoira: encode failure attempts is 2 for a zip failure in the prefer-software pass', async () => {
+    mb.state.failAdd = (attempt, index) => attempt === 0 && index === 0;
+    browser.failDecode = (content) => content === '000001.jpg';
+    const error = await failureOf(encodeUgoira(options()));
+    expect(error).toMatchObject({ detail: 'zip', attempts: 2 });
   });
 });
 

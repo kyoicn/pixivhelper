@@ -23,13 +23,21 @@ const log = createLogger('offscreen');
 /** Becomes `Failure.detail` of the `encode` failure the offscreen task reports. */
 export type EncodeFailureDetail = 'no-zip' | 'bad-frames' | 'zip' | 'encoder';
 
+export interface EncodeErrorOptions extends ErrorOptions {
+  /** Encoder passes that ran; 1 when omitted. */
+  attempts?: 1 | 2;
+}
+
 export class EncodeError extends Error {
   readonly detail: EncodeFailureDetail;
+  /** Becomes `Failure.attempts`: 2 when the prefer-software retry ran and also failed, else 1. */
+  readonly attempts: 1 | 2;
 
-  constructor(detail: EncodeFailureDetail, options?: ErrorOptions) {
+  constructor(detail: EncodeFailureDetail, options?: EncodeErrorOptions) {
     super(`ugoira encode failed: ${detail}`, options);
     this.name = 'EncodeError';
     this.detail = detail;
+    this.attempts = options?.attempts ?? 1;
   }
 }
 
@@ -75,7 +83,8 @@ export function mimeFromExt(file: string): string {
 /**
  * Encodes the ugoira named by `frames` (looked up by file name in `zip`). Resolves with the finished
  * video only after the muxer finalized. An encoder failure is retried once with
- * `hardwareAcceleration: 'prefer-software'`; every failure rejects with an {@link EncodeError}.
+ * `hardwareAcceleration: 'prefer-software'`; every failure rejects with an {@link EncodeError}, whose
+ * `attempts` is 2 only when that retry ran and failed too.
  * After an abort it rejects with the signal's reason and never resolves with a Blob.
  */
 export async function encodeUgoira(options: EncodeUgoiraOptions): Promise<Blob> {
@@ -89,7 +98,12 @@ export async function encodeUgoira(options: EncodeUgoiraOptions): Promise<Blob> 
     } catch (error) {
       if (signal.aborted || error instanceof EncodeError) throw error;
       log.warn('encoder failed, retrying with prefer-software:', error);
+    }
+    try {
       return await encodeOnce(job, 'prefer-software');
+    } catch (error) {
+      const detail = error instanceof EncodeError ? error.detail : 'encoder';
+      throw new EncodeError(detail, { cause: error, attempts: 2 });
     }
   } catch (error) {
     signal.throwIfAborted();
