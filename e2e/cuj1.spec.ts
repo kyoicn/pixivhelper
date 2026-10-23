@@ -689,3 +689,79 @@ test.describe('CUJ-1: download an illustration or manga', { tag: '@cuj1' }, () =
     );
   });
 });
+
+// Added by the QA gate (iteration 1): PRD preconditions and edge cases with no e2e check yet.
+// | PRD                                                                          | Test                    |
+// | ---------------------------------------------------------------------------- | ----------------------- |
+// | Preconditions / NFR "pixiv themes": locale-prefixed `/en/artworks/<id>`      | 'locale-prefixed URL'   |
+// | Edge case: no button on non-artwork pages (home, user profile)               | 'non-artwork pages'     |
+// | §4.7.4 prefers-reduced-motion: no ring or background transitions             | 'reduced motion'        |
+test.describe('CUJ-1: QA gate additions', { tag: '@cuj1' }, () => {
+  test('locale-prefixed URL: /en/artworks/<id> gets the same button, placement and download', async ({
+    harness,
+  }) => {
+    const page = await harness.newPage();
+    await page.goto(`https://www.pixiv.net/en/artworks/${EXAMPLE.id}`);
+    await exposeButton(page);
+    const idle = await waitForText(page, 'Download · 12P');
+    expect(idle).toMatchObject({ hosts: 1, mode: 'row', width: 164 });
+    await clickButton(page);
+    const saved = await waitForText(page, 'Saved · 12P');
+    expect(saved.title).toBe(`Saved to Downloads/${FOLDER}`);
+    expect(await downloadedPaths(harness)).toEqual(expectedFiles(FOLDER, ALL_PAGES, true));
+    const raw = await readFile(path.join(harness.downloads.dir, FOLDER, 'metadata.json'), 'utf8');
+    expect((JSON.parse(raw) as { url: string }).url).toBe(artworkUrl(EXAMPLE.id));
+  });
+
+  test('non-artwork pages: no button on the home or a user page; leaving an artwork removes it', async ({
+    harness,
+  }) => {
+    const hosts = (page: import('@playwright/test').Page) =>
+      page.evaluate(() => document.getElementsByTagName('hfp-download').length);
+    const page = await harness.newPage();
+    await page.goto('https://www.pixiv.net/');
+    await page.waitForTimeout(1_000);
+    expect(await hosts(page)).toBe(0);
+    await page.goto(`https://www.pixiv.net/users/${'40285173'}`);
+    await page.waitForTimeout(1_000);
+    expect(await hosts(page)).toBe(0);
+
+    await page.goto(artworkUrl(EXAMPLE.id));
+    await exposeButton(page);
+    await waitForText(page, 'Download · 12P');
+    await page.click('a[data-spa][href="/users/40285173"]');
+    await expect.poll(() => hosts(page)).toBe(0);
+    // Past the 3 s fallback: no floating button off artwork routes either.
+    await page.waitForTimeout(3_500);
+    expect(await hosts(page)).toBe(0);
+    await page.goBack();
+    await expect.poll(() => hosts(page)).toBe(1);
+    await waitForText(page, 'Download · 12P');
+  });
+
+  test('reduced motion: the pill and the progress ring have no transitions', async ({
+    harness,
+    server,
+  }) => {
+    const page = await harness.newPage();
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.goto(artworkUrl(EXAMPLE.id));
+    await exposeButton(page);
+    await waitForText(page, 'Download · 12P');
+    const hold = server.hold(pagesOf(EXAMPLE, range(3, 11)));
+    await clickButton(page);
+    await waitForText(page, '3 / 12');
+    const motion = await page.evaluate(() => {
+      const root = (window as unknown as Record<string, ShadowRoot>)['__hfpButtonRoot'];
+      const pill = root?.querySelector('button.pill:not(.measure)');
+      const bar = root?.querySelector('.ring .bar');
+      return {
+        pill: pill ? getComputedStyle(pill).transitionDuration : null,
+        bar: bar ? getComputedStyle(bar).transitionDuration : null,
+      };
+    });
+    expect(motion).toEqual({ pill: '0s', bar: '0s' });
+    hold.release();
+    await waitForText(page, 'Saved · 12P');
+  });
+});

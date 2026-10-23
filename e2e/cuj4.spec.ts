@@ -360,3 +360,35 @@ test.describe('CUJ-4: follow several downloads from the toolbar badge', { tag: '
     ).toEqual(artworkFiles(EXAMPLE, EXAMPLE_FOLDER, range(0, 11), true));
   });
 });
+
+// Added by the QA gate (iteration 1): AC 8 end to end (it was L1 only).
+// | AC                                                                          | Test                  |
+// | --------------------------------------------------------------------------- | --------------------- |
+// | 8  ≥ 1000 shows `999+`; the tooltip keeps the exact number                  | '999+'                |
+test.describe('CUJ-4: QA gate additions', { tag: '@cuj4' }, () => {
+  test('999+: five 200-page jobs (1000 files) show 999+, the tooltip the exact count', async ({
+    harness,
+    server,
+  }) => {
+    test.setTimeout(120_000);
+    const hold = server.hold(pagesOf(MANGA, range(0, 199)));
+    const tabs: Page[] = [];
+    for (let i = 0; i < 5; i++) {
+      const tab = await openArtwork(harness, MANGA.id);
+      await waitForText(tab, 'Download · 200P');
+      await clickButton(tab);
+      await waitForText(tab, '0 / 200');
+      tabs.push(tab);
+    }
+    await expect.poll(() => hold.held, { timeout: 10_000 }).toBe(25);
+    await expectBadge(harness, '999+', manyTitle(1000, 5));
+    for (const tab of tabs) expect((await buttonView(tab)).text).toBe('0 / 200');
+    // Cancel one: 800 files left → the plain number again.
+    const first = tabs[0];
+    if (!first) throw new Error('no tab');
+    await first.waitForTimeout(CLICK_GUARD_MS);
+    await cancelWithMouse(first, 0);
+    await waitForText(first, 'Download · 200P');
+    await expectBadge(harness, '800', manyTitle(800, 4));
+  });
+});
