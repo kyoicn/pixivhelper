@@ -7,6 +7,8 @@ export const RING_RADIUS = 8;
 export const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 /** Share of the circle drawn by the indeterminate arc while the zip size is unknown (PRD §4.7.5). */
 export const INDETERMINATE_ARC = 0.25;
+/** The pill's height (PRD §4.7.2); mount.ts positions the floating pill by it. */
+export const PILL_HEIGHT_PX = 40;
 
 export const BUTTON_CSS = `
 :host {
@@ -26,7 +28,7 @@ export const BUTTON_CSS = `
   justify-content: center;
   flex-shrink: 0;
   width: var(--hfp-width, auto);
-  height: 40px;
+  height: ${PILL_HEIGHT_PX}px;
   margin: 0;
   padding: 0 12px;
   border: none;
@@ -41,10 +43,13 @@ export const BUTTON_CSS = `
   cursor: pointer;
   transition: background-color 120ms;
 }
-.face { display: inline-flex; align-items: center; gap: 8px; }
+/* A width locked before the metadata arrived can be too narrow for an ugoira's WebM hint: the
+   hint is cut with an ellipsis, never the label, and nothing overflows the pill's border. */
+.face { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .icon { display: inline-flex; flex: none; width: 18px; height: 18px; }
+.label { flex: none; }
 .dot { opacity: .6; }
-.hint { font-size: 13px; font-weight: 400; opacity: .85; }
+.hint { font-size: 13px; font-weight: 400; opacity: .85; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .count { font-variant-numeric: tabular-nums; }
 
 .pill.primary:hover { background: #0084DC; }
@@ -55,7 +60,7 @@ export const BUTTON_CSS = `
 .pill.error { background: #fff; color: #d93025; border: 1.5px solid #d93025; box-shadow: none; }
 .pill.error:hover { background: #fdeceb; }
 .pill.error .hint { opacity: 1; }
-.pill.disabled { background: #f1f3f4; color: #80868b; box-shadow: none; cursor: not-allowed; }
+.pill.disabled { background: #f1f3f4; color: #5f6368; box-shadow: none; cursor: not-allowed; }
 
 /* Cancel face: only once armed (the pointer left after the starting click), never on focus. */
 .face-cancel { display: none; }

@@ -5,6 +5,7 @@
 
 import { FLOAT_FALLBACK_MS } from '../shared/constants';
 import { createLogger } from '../shared/log';
+import { PILL_HEIGHT_PX } from './button/styles';
 import { type ActionRowHit, findActionRow, findArtworkArea } from './pixiv-dom';
 
 const log = createLogger('mount');
@@ -14,8 +15,6 @@ export type MountMode = 'row' | 'floating' | 'viewport';
 export const HOST_TAG = 'hfp-download';
 /** Floating mode: inset from the artwork area's bottom-right corner (PRD CUJ-5 step 11). */
 const FLOAT_INSET_PX = 16;
-/** The pill's height (PRD §4.7.2), for the floating position. */
-const PILL_HEIGHT_PX = 40;
 /** Viewport mode (no artwork area either): inset from the viewport's bottom-right corner. */
 const VIEWPORT_INSET_PX = 24;
 const FLOAT_Z_INDEX = '2147483000';

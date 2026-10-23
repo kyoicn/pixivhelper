@@ -6,6 +6,7 @@
 // | 1  Exactly one button, immediately left of Like, ≤ 500 ms after the row    | 'placement'             |
 // | 2  `Download · 12P` (12 pages) / `Download` (single page)                  | 'placement'             |
 // | 3  164 px in idle, busy, Cancel-hover, Saved; width never changes          | 'width'                 |
+// |    (also when the metadata arrives after the row, PRD §4.7.2)              | 'width' (late metadata) |
 // | 4  Folder: metadata.json + p0…p11, sizes = Content-Length                  | 'folder'                |
 // | 5  metadata.json: 12 keys in order, literal non-ASCII, `\n` kept           | 'folder'                |
 // | 6  Never more than 5 of this artwork's files in flight                     | 'in flight'             |
@@ -50,6 +51,7 @@ import {
   buttonView,
   clickButton,
   exposeButton,
+  HOST_TAG,
   hostConnectedAt,
   hoverButton,
   labelLog,
@@ -228,6 +230,43 @@ test.describe('CUJ-1: download an illustration or manga', { tag: '@cuj1' }, () =
       () => (window as unknown as { __hfpWidths: number[] }).__hfpWidths,
     );
     expect(widths.every((width) => width === 164)).toBe(true);
+  });
+
+  test('width: late metadata keeps a 12-page illustration at 164 px throughout', async ({
+    harness,
+    server,
+  }) => {
+    // The render-time metadata trickles until released, so the action row renders first.
+    const hold = server.hold('/ajax/illust/135882741');
+    const page = await harness.newPage();
+    await page.addInitScript((hostTag) => {
+      const w = window as unknown as { __hfpWidths: number[] };
+      w.__hfpWidths = [];
+      const found = new MutationObserver(() => {
+        const host = document.querySelector(hostTag);
+        if (!host) return;
+        found.disconnect();
+        new ResizeObserver(() => w.__hfpWidths.push(host.getBoundingClientRect().width)).observe(
+          host,
+        );
+      });
+      found.observe(document, { childList: true, subtree: true });
+    }, HOST_TAG);
+    await page.goto(artworkUrl(EXAMPLE.id));
+    await exposeButton(page);
+    await waitForText(page, 'Download');
+    await expect.poll(() => hold.held).toBe(1);
+    const before = await restingView(page);
+    expect([before.mode, before.text, before.width]).toEqual(['row', 'Download', 164]);
+
+    hold.release();
+    expect((await waitForText(page, 'Download · 12P')).width).toBe(164);
+    // Room for a late re-measure to show up in the record.
+    await page.waitForTimeout(TRANSITION_MS);
+    const widths = await page.evaluate(
+      () => (window as unknown as { __hfpWidths: number[] }).__hfpWidths,
+    );
+    expect([...new Set(widths)]).toEqual([164]);
   });
 
   test('folder: metadata.json and the 12 originals at their served sizes', async ({

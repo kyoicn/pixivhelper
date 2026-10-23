@@ -35,9 +35,13 @@ const FULL_RING = { fraction: 1, indeterminate: false };
 /** Returns the rendered width in px of `face` on the button. */
 export type Measure = (face: Face) => number;
 
-/** Every face the button can show for `work` (null: metadata not known yet). */
+/**
+ * Every face the button can show for `work`. Null (metadata not known yet) is the 2-digit page
+ * width alone, without the ugoira faces: the width never shrinks, so a wider guess would stick to
+ * every illustration whose metadata is late. An ugoira widens once when its metadata arrives.
+ */
 export function candidates(work: WorkInfo | null): Face[] {
-  if (work === null) return [...pageCandidates(UNKNOWN_PAGE_COUNT), ...ugoiraCandidates()];
+  if (work === null) return pageCandidates(UNKNOWN_PAGE_COUNT);
   return work.illustType === 2 ? ugoiraCandidates() : pageCandidates(work.pageCount);
 }
 

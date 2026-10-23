@@ -28,8 +28,12 @@ function work(overrides: Partial<WorkInfo> = {}): WorkInfo {
 
 const UGOIRA = work({ id: '136004512', illustType: 2, pageCount: 1 });
 
+function text(face: Face): string {
+  return face.hint === undefined ? face.label : `${face.label} · ${face.hint}`;
+}
+
 function texts(faces: Face[]): string[] {
-  return faces.map((f) => (f.hint === undefined ? f.label : `${f.label} · ${f.hint}`));
+  return faces.map(text);
 }
 
 /** A fake font: 8 px per character plus padding, icon and gaps like the real pill. */
@@ -39,6 +43,37 @@ const charMeasure: Measure = (face) =>
   face.label.length * 8 +
   (face.hint === undefined ? 0 : 32 + face.hint.length * 8) +
   0.4;
+
+/** The English faces' widths in px, measured with BUTTON_CSS in headless Chromium (macOS). */
+const REAL_EN: Readonly<Record<string, number>> = {
+  'Download · 12P': 159.390625,
+  '12 / 12': 97.765625,
+  'Saved · 12P': 135.59375,
+  'Retry · 11 failed': 157.5625,
+  'Download · 99P': 162.078125,
+  '99 / 99': 97.765625,
+  'Saved · 99P': 138.28125,
+  'Retry · 98 failed': 162.078125,
+  Cancel: 96.328125,
+  'Log in to download': 152.9375,
+  Retry: 88.4375,
+  Unavailable: 102.109375,
+  'Download · MP4': 164.875,
+  'Download · WebM': 175.90625,
+  'Download · ZIP': 157.59375,
+  '100%': 91.015625,
+  'Saved · MP4': 141.078125,
+  'Saved · WebM': 152.109375,
+  'Saved · ZIP': 133.796875,
+  'Retry · MP4': 136.3125,
+  'Retry · WebM': 147.34375,
+};
+
+const realMeasure: Measure = (face) => {
+  const px = REAL_EN[text(face)];
+  if (px === undefined) throw new Error(`no real-size width for ${text(face)}`);
+  return px;
+};
 
 beforeEach(() => {
   stubChromeI18n('en');
@@ -92,11 +127,12 @@ describe('candidates', () => {
     ]);
   });
 
-  it('candidates: an unknown work starts at the 2-digit width plus every ugoira face', () => {
-    expect(texts(candidates(null))).toEqual([
-      ...texts(candidates(work({ pageCount: 99 }))),
-      ...texts(candidates(UGOIRA)),
-    ]);
+  it('candidates: an unknown work starts at the 2-digit width', () => {
+    expect(texts(candidates(null))).toEqual(texts(candidates(work({ pageCount: 99 }))));
+  });
+
+  it('candidates: an unknown work has no ugoira face', () => {
+    expect(texts(candidates(null)).filter((t) => /MP4|WebM|ZIP|%/.test(t))).toEqual([]);
   });
 
   it('candidates: the busy faces carry the ring', () => {
@@ -132,6 +168,18 @@ describe('computeWidth', () => {
     expect(computeWidth(work({ pageCount: 150 }), 'en', charMeasure)).toBeGreaterThan(twoDigit);
   });
 
+  it('computeWidth: an unknown work is the 164 px floor in English at real sizes', () => {
+    expect(computeWidth(null, 'en', realMeasure)).toBe(164);
+  });
+
+  it('computeWidth: a 12-page work is the 164 px floor in English at real sizes', () => {
+    expect(computeWidth(work(), 'en', realMeasure)).toBe(164);
+  });
+
+  it('computeWidth: an ugoira is 176 px in English at real sizes (Download · WebM)', () => {
+    expect(computeWidth(UGOIRA, 'en', realMeasure)).toBe(176);
+  });
+
   it('LOCALE_FLOOR_PX: only English has a floor', () => {
     expect(LOCALE_FLOOR_PX).toEqual({ en: 164, ja: 0, 'zh-CN': 0, 'zh-TW': 0 });
   });
@@ -164,5 +212,22 @@ describe('settleWidth', () => {
     );
     const afterClick = settleWidth(widened, 250, true);
     expect([first, widened, afterClick]).toEqual([164, 191, 191]);
+  });
+
+  it('settleWidth: an illustration whose metadata is late keeps 164 px', () => {
+    const first = settleWidth(null, computeWidth(null, 'en', realMeasure), false);
+    expect(settleWidth(first, computeWidth(work(), 'en', realMeasure), false)).toBe(164);
+  });
+
+  it('settleWidth: an ugoira locked before its metadata widens once to 176 px, then stays', () => {
+    const first = settleWidth(null, computeWidth(null, 'en', realMeasure), false);
+    const widened = settleWidth(first, computeWidth(UGOIRA, 'en', realMeasure), false);
+    const afterClick = settleWidth(widened, 250, true);
+    expect([first, widened, afterClick]).toEqual([164, 176, 176]);
+  });
+
+  it('settleWidth: an ugoira clicked before its metadata keeps the provisional 164 px', () => {
+    const first = settleWidth(null, computeWidth(null, 'en', realMeasure), false);
+    expect(settleWidth(first, computeWidth(UGOIRA, 'en', realMeasure), true)).toBe(164);
   });
 });

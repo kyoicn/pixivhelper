@@ -4,6 +4,7 @@ import { type Glyph, setGlyph } from '../../../src/content/button/icons';
 import {
   BUTTON_CSS,
   createStyleSheet,
+  PILL_HEIGHT_PX,
   RING_CIRCUMFERENCE,
 } from '../../../src/content/button/styles';
 
@@ -26,6 +27,13 @@ describe('BUTTON_CSS', () => {
     );
   });
 
+  it('BUTTON_CSS: the pill height is PILL_HEIGHT_PX, 40 px', () => {
+    expect([PILL_HEIGHT_PX, rule('.pill').includes(`height: ${PILL_HEIGHT_PX}px;`)]).toEqual([
+      40,
+      true,
+    ]);
+  });
+
   it('BUTTON_CSS: the pill takes the locked width', () => {
     expect(rule('.pill')).toContain('width: var(--hfp-width, auto);');
   });
@@ -45,9 +53,18 @@ describe('BUTTON_CSS', () => {
   it('BUTTON_CSS: icon 18 px, 8 px gaps, hint 13 px at 85 %, dot at 60 %', () => {
     expect([rule('.icon'), rule('.face'), rule('.hint'), rule('.dot')]).toEqual([
       'display: inline-flex; flex: none; width: 18px; height: 18px;',
-      'display: inline-flex; align-items: center; gap: 8px;',
-      'font-size: 13px; font-weight: 400; opacity: .85;',
+      'display: inline-flex; align-items: center; gap: 8px; min-width: 0;',
+      'font-size: 13px; font-weight: 400; opacity: .85; min-width: 0; overflow: hidden; text-overflow: ellipsis;',
       'opacity: .6;',
+    ]);
+  });
+
+  it('BUTTON_CSS: a too-narrow pill cuts the hint with an ellipsis, never the icon or label', () => {
+    expect([rule('.face'), rule('.icon'), rule('.label'), rule('.hint')]).toEqual([
+      expect.stringContaining('min-width: 0;'),
+      expect.stringContaining('flex: none;'),
+      'flex: none;',
+      expect.stringContaining('min-width: 0; overflow: hidden; text-overflow: ellipsis;'),
     ]);
   });
 
@@ -73,13 +90,15 @@ describe('BUTTON_CSS', () => {
     ],
     ['.pill.error:hover', 'background: #fdeceb;'],
     ['.pill.error .hint', 'opacity: 1;'],
-    [
-      '.pill.disabled',
-      'background: #f1f3f4; color: #80868b; box-shadow: none; cursor: not-allowed;',
-    ],
     ['.pill.cancel, .pill.busy.armed:hover', 'background: #3c4043; color: #fff;'],
   ])('BUTTON_CSS: %s matches PRD §4.7.3', (selector, declarations) => {
     expect(rule(selector)).toBe(declarations);
+  });
+
+  it('BUTTON_CSS: Unavailable is #5f6368 on #f1f3f4 (AA 5.44:1, system.md §11.5)', () => {
+    expect(rule('.pill.disabled')).toBe(
+      'background: #f1f3f4; color: #5f6368; box-shadow: none; cursor: not-allowed;',
+    );
   });
 
   it('BUTTON_CSS: the cancel face shows only on an armed busy pill under the pointer', () => {

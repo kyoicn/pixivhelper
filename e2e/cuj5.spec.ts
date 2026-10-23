@@ -128,7 +128,7 @@ const LOGIN_TEXT = 'rgb(60, 64, 67)';
 const LOGIN_HOVER_FILL = 'rgb(245, 247, 249)';
 const LOGIN_HOVER_BORDER = 'rgb(138, 143, 148)';
 const GRAY_FILL = 'rgb(241, 243, 244)';
-const GRAY_TEXT = 'rgb(128, 134, 139)';
+const GRAY_TEXT = 'rgb(95, 99, 104)';
 const DARK_RING = 'rgb(95, 185, 251)';
 
 /** Browser logs of the faults these tests inject on purpose. */
