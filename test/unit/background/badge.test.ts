@@ -207,6 +207,36 @@ describe('createBadgeRenderer', () => {
     expect(fake.action.title).toBe('Helper for Pixiv — 2 files remaining');
   });
 
+  it('render: a lone retryMetadata job hides the badge and shows the idle title', async () => {
+    fake.action.badgeText = 'stale';
+    fake.action.title = 'stale';
+    const request = { mode: 'retryMetadata', artworkId: '136004512', folder: 'pixiv/x' } as const;
+    const jobs = [job({ mode: 'retryMetadata', request, phase: 'resolving', expectedFiles: 0 })];
+    await rendered(createBadgeRenderer(() => jobs).render());
+    expect([fake.action.badgeText, fake.action.title]).toEqual([
+      '',
+      'Helper for Pixiv — click to open settings',
+    ]);
+  });
+
+  it('render: a full job resolving with expectedFiles 0 shows the idle title', async () => {
+    fake.action.title = 'stale';
+    const request = { mode: 'full', artworkId: '135882741', expectedFiles: 0 } as const;
+    const jobs = [job({ request, phase: 'resolving', kind: 'unknown', expectedFiles: 0 })];
+    await rendered(createBadgeRenderer(() => jobs).render());
+    expect(fake.action.title).toBe('Helper for Pixiv — click to open settings');
+  });
+
+  it('render: a job that counts 0 is not one of the downloads in the title', async () => {
+    const request = { mode: 'retryMetadata', artworkId: '136004512', folder: 'pixiv/x' } as const;
+    const jobs = [
+      pagesJob(Array<FileState>(5).fill('queued')),
+      job({ mode: 'retryMetadata', request, phase: 'resolving', expectedFiles: 0 }),
+    ];
+    await rendered(createBadgeRenderer(() => jobs).render());
+    expect(fake.action.title).toBe('Helper for Pixiv — 5 files remaining');
+  });
+
   it('render: waits the 50 ms trailing delay before applying', async () => {
     void createBadgeRenderer(() => [ugoiraJob()]).render();
     await vi.advanceTimersByTimeAsync(BADGE_COALESCE_MS - 1);
