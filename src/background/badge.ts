@@ -34,9 +34,13 @@ export function badgeText(total: number): string {
   return total > BADGE_MAX ? `${BADGE_MAX}+` : String(total);
 }
 
-/** `jobs` is the number of running jobs; the title always shows the exact total. */
+/**
+ * `jobs` is the number of running jobs with files left; the title always shows the exact total.
+ * A total of 0 shows the idle title, matching the hidden badge, even while a job that counts 0
+ * (a retryMetadata job, a full job resolving with expectedFiles 0) runs.
+ */
 export function actionTitle(total: number, jobs: number): string {
-  if (jobs === 0) return t('action_title_idle');
+  if (total === 0) return t('action_title_idle');
   if (jobs === 1) return total === 1 ? t('action_title_one_single') : t('action_title_one', total);
   return t('action_title_many', [total, jobs]);
 }
@@ -50,17 +54,17 @@ export interface BadgeRenderer {
   render(): Promise<void>;
 }
 
-/** `jobs` supplies the jobs at render time; jobs in phase 'ended' are not counted. */
+/** `jobs` supplies the jobs at render time; only jobs with files left are counted. */
 export function createBadgeRenderer(jobs: () => Iterable<JobRecord>): BadgeRenderer {
   let pending: Promise<void> | null = null;
   let shownText: string | null = null;
   let shownTitle: string | null = null;
 
   async function apply(): Promise<void> {
-    const running = [...jobs()].filter((job) => job.phase !== 'ended');
-    const total = running.reduce((sum, job) => sum + remaining(job), 0);
+    const counts = [...jobs()].map(remaining).filter((count) => count > 0);
+    const total = counts.reduce((sum, count) => sum + count, 0);
     const text = badgeText(total);
-    const title = actionTitle(total, running.length);
+    const title = actionTitle(total, counts.length);
     const updates: Array<Promise<void>> = [];
     if (text !== shownText) {
       shownText = text;
