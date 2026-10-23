@@ -1,6 +1,6 @@
 # Helper for Pixiv — System Design
 
-> Last updated: 2026-10-23 02:21:28 (UTC-7)
+> Last updated: 2026-10-23 03:39:12 (UTC-7)
 > Serves: prd-000 (CUJ-1 … CUJ-5); rulings R-001, R-002, R-003
 > Chapters: [design-download-engine.md](design-download-engine.md) · [design-offscreen-worker.md](design-offscreen-worker.md) · [design-artwork-button.md](design-artwork-button.md) · [design-settings-model.md](design-settings-model.md) · [design-options-page.md](design-options-page.md) · [design-test-harness.md](design-test-harness.md)
 
@@ -613,7 +613,7 @@ These are owned by the component chapters, which implement the PRD index "Access
 | Budget (PRD NFR) | Design mechanism | Verified by |
 |---|---|---|
 | Button within 500 ms of the action row rendering | `MutationObserver` + rAF-coalesced placement check (≤ 1 frame after the row appears); render-time metadata fetched in parallel, not awaited | e2e timing assertion (fake pixiv renders the row after a delay) |
-| Content script stays cheap on every pixiv page (engineering budget, not a PRD number) | `content.js` ≤ **40 KB minified** and ≤ **15 KB gzip**. Measured at iteration 1: 35.2 KB / 12.9 KB (code review, debug on), 34.4 KB / 12.6 KB with the prod defines. The budget replaces the first design's "< 30 KB", which was a guess made before any code existed; no single module dominates (labels 4.6 KB, retry 3.8, model 3.8, styles 3.2), so meeting 30 KB would mean cutting function, not waste. 40/15 leaves ~15 % headroom for v1 work. | `npm run size` in CI (ENG-010): esbuild-minifies `src/content/content.ts` with the prod defines and fails above either limit |
+| Content script stays cheap on every pixiv page (engineering budget, not a PRD number) | `content.js` ≤ **40 KB minified** and ≤ **15 KB gzip**. Measured at iteration 1: 35.2 KB / 12.9 KB (code review, debug on), 34.4 KB / 12.6 KB with the prod defines; 35.2 KB / 13.0 KB at the end of iteration 2 (`npm run size`, after R-003's `requiresLogin` and the outage changes). The budget replaces the first design's "< 30 KB", which was a guess made before any code existed; no single module dominates (labels 4.6 KB, retry 3.8, model 3.8, styles 3.2), so meeting 30 KB would mean cutting function, not waste. 40/15 leaves ~15 % headroom for v1 work. | `npm run size` in CI (ENG-010): esbuild-minifies `src/content/content.ts` with the prod defines and fails above either limit |
 | Floating fallback within 3 s | 3 s timer from artwork-route entry | e2e |
 | Busy feedback ≤ 100 ms after click | Optimistic local `busy 0/N` before the SW round-trip | e2e (`performance.now` delta) |
 | State change ≤ 300 ms | SW pushes `job/update` synchronously after the final mutation persists | e2e |
@@ -629,7 +629,7 @@ These are owned by the component chapters, which implement the PRD index "Access
 | Command | Does |
 |---|---|
 | `npm run build` | dev build → `dist/` (unminified, sourcemaps inline, `__DEBUG__ = true`) |
-| `npm run build:prod` | prod build → `dist/` (unminified for review readability, no sourcemaps, `__DEBUG__ = false`, `THIRD_PARTY_NOTICES.txt` emitted) |
+| `npm run build:prod` | prod build → `dist/` (esbuild `minifySyntax` only, so dead `if (false)` test-hook branches are dropped (ENG-007) while whitespace and identifiers stay readable for review; no sourcemaps; `__DEBUG__ = false`) |
 | `npm run watch` | rebuild on change. Reload the extension from `chrome://extensions`. |
 | `npm run typecheck` | `tsc -p tsconfig.json --noEmit` (zero errors required) |
 | `npm run lint` | `eslint .` + `prettier --check .` |
@@ -640,7 +640,7 @@ These are owned by the component chapters, which implement the PRD index "Access
 | `npm run golden` | `python3 -I scripts/gen-golden.py` (regenerate golden vectors) |
 | `npm run check` | typecheck + lint + test + build. **The coder's done-gate.** |
 | `npm run size` | minified + gzip size of the content bundle against the §11.6 budget (ENG-010; CI step) |
-| `npm run zip` | `build:prod` → `helper-for-pixiv-<version>.zip` |
+| `npm run zip` | `scripts/zip.mjs`: `build:prod`, then writes `dist/THIRD_PARTY_NOTICES.txt` (each bundled package's name, version, SPDX id, source URL and license text) and packs `dist/` without `.map` files into `helper-for-pixiv-<version>.zip` at the repository root (git-ignored; sorted entries, fixed timestamp, so a commit always yields the same bytes). Refuses to pack when the manifest version differs from `package.json` (ENG-006) |
 
 - **Versioning:** SemVer in `package.json` is the single source. `build.mjs` writes it into `manifest.json`, and the options footer reads `chrome.runtime.getManifest().version` (PRD CUJ-3 step 10).
 - **Test pyramid and QA harness:** [design-test-harness.md](design-test-harness.md).
