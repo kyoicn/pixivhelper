@@ -1,6 +1,6 @@
 # Offscreen Worker (bytes & ugoira encoding)
 
-> Last updated: 2026-10-23 02:21:28 (UTC-7)
+> Last updated: 2026-10-23 16:31:01 (UTC-7)
 > Serves: prd-000 — CUJ-1 (original bytes), CUJ-2 (zip, frames.json, in-browser video), CUJ-5 (encode-failure retry, byte-level failures)
 
 ## Overview
@@ -139,6 +139,8 @@ for (;;) {
 if (total != null && loaded !== total) → Failure{kind:'network', detail:'short-body'}  (retried, like a dropped connection)
 ```
 
+A body-level failure happens after the response arrived, so if the request finally fails with `network` or `timeout`, its `Failure` carries `answered: true` (system.md §9), and `off/failed` passes it to the SW unchanged. The flag tells the job-level "No connection" rule that pixiv answered (system.md §10 row 8, R-004 S3).
+
 - **Originals** (`fetchBytes`) collect chunks into `new Blob(chunks, { type })`. They are never parsed and never re-encoded, so the bytes are byte-for-byte as served (PRD §4.3; AC: size equals `Content-Length`).
 - `cache: 'no-store'` keeps a 200 MB manga from also filling the HTTP cache with bytes we hold anyway.
 - **Concurrency** is bounded by the SW (≤ 5 per job), so peak original-bytes memory per job is ≤ 5 × the largest original (pixiv originals are typically ≤ 32 MB).
@@ -210,7 +212,7 @@ flowchart TD
 | Encoder failure | One retry of the whole encode with `hardwareAcceleration: 'prefer-software'`, then `off/failed { kind: 'encode', detail, attempts }`, where `attempts` is 2 when the prefer-software pass ran and also failed, and 1 otherwise (a failure the retry does not apply to: a missing zip, invalid frames, or an `EncodeError` such as a corrupt zip entry raised inside the first pass). `EncodeError` carries `attempts`; the router copies it instead of the constant 1 it sent in iteration 1 (code review W8, ENG-011). | Hardware encoder session limits or driver faults are the most likely failures; software encoders (OpenH264/libvpx) are always present for these codecs. The attempt count tells a user's error log whether the software path was tried. |
 | Abort | Checked between frames; `output.cancel()`; the canvas and any open frame are closed | PRD §4.6: a cancelled encode writes nothing. |
 
-**Progress:** `done` = frames whose `add()` resolved; `total = frames.length`. The SW maps it to 40–100% ([design-download-engine.md](design-download-engine.md), `progress.ts`): `percent = 40 + floor(60 × done / total)`, capped at 99 until the video file lands. ZIP-only and the zip phase use `floor(40 × loaded / total)` (or `floor(100 × …)` for ZIP only). An unknown total → `indeterminate: true` until the encode phase starts (PRD §4.7.5).
+**Progress:** `done` = frames whose `add()` resolved; `total = frames.length`. The SW maps it to 40–100% ([design-download-engine.md](design-download-engine.md), `progress.ts`): `percent = 40 + floor(60 × done / total)`. ZIP-only and the zip phase use `floor(40 × loaded / total)` (or `floor(100 × …)` for ZIP only). Every running percent is capped at 99: the busy label never shows `100%`, and the button turns Saved when the last file lands (PRD §4.7.5, R-004 S13). An unknown total → `indeterminate: true` until the encode phase starts (PRD §4.7.5).
 
 #### Zip extraction (ugoira/zip.ts)
 

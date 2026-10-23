@@ -1,7 +1,7 @@
 # Test Strategy & QA Harness
 
-> Last updated: 2026-10-23 02:21:28 (UTC-7)
-> Serves: prd-000 — every CUJ's acceptance criteria (CUJ-1 … CUJ-5); PRD Goal 2 (parity with `ref/pixiv-dl`)
+> Last updated: 2026-10-23 16:31:01 (UTC-7)
+> Serves: prd-000 — every CUJ's acceptance criteria (CUJ-1 … CUJ-5), including the R-004 and R-005 amendments; PRD Goal 2 (parity with `ref/pixiv-dl`)
 
 ## Overview
 
@@ -64,14 +64,14 @@ flowchart LR
     - `sanitizeToken(s, { parityOnly: true })` equals `safe_component`;
     - `plainText` equals `plain_text`;
     - `serializeJson(buildMetadata(body))` equals `fileText` byte for byte. The one documented exception is a missing `description`: PRD says `null`, the script wrote `""`, and the test asserts the PRD.
-- **Manifest test:** the built `dist/manifest.json` has exactly the approved permissions, hosts, `minimum_chrome_version: "116"`, no `default_popup`, and no `web_accessible_resources` ([system.md §5](system.md)).
+- **Manifest test:** the manifest has exactly the five approved permissions in the PRD index's order, `["downloads", "storage", "offscreen", "declarativeNetRequestWithHostAccess", "downloads.ui"]` (R-005), exactly the two hosts, `minimum_chrome_version: "116"`, no `default_popup`, and no `web_accessible_resources`, and the whole manifest equals system.md §5 ([system.md §5](system.md)). The iteration-2 case name "requests exactly the four approved permissions" and its literal change with the manifest.
 - **Locale test:** all four `messages.json` files have identical key sets and the same placeholder count per key, and `locale_tag` values are correct.
 
 ### L2: SW integration with chrome fakes
 
 `test/fakes/chrome.ts` provides in-memory fakes for exactly the APIs the extension uses:
 - `storage.{sync, local, session}` with `onChanged`, and injectable quota errors for sync;
-- `downloads.{download, search, cancel, onChanged}` with a controllable completion queue and interrupt reasons;
+- `downloads.{download, search, cancel, onChanged, setUiOptions}` with a controllable completion queue and interrupt reasons. `setUiOptions({ enabled })` (R-005) keeps the current `uiEnabled` (initially `true`), rejects like Chrome when the manifest the fake loads (`src/manifest.json`) lacks `downloads.ui`, accepts an injected failure (`failNextSetUiOptions(message)`), and appends to an ordered **call log shared with `download()`**: `Array<{ op: 'ui'; enabled: boolean } | { op: 'download'; filename: string }>`. Ordering assertions read that log, because Chrome offers no getter for the UI state;
 - `action.{setBadgeText, setTitle, getBadgeText, …}`;
 - `runtime.{sendMessage, onMessage, getContexts, getURL, id, getManifest}`, a router between registered fake contexts;
 - `tabs.{sendMessage, create, update}`, `windows.update`, `offscreen.{createDocument, closeDocument}`, `declarativeNetRequest.updateSessionRules`, `i18n.getMessage` (loads `src/_locales/en/messages.json`).
@@ -83,7 +83,9 @@ A **fake offscreen** context answers `off/*` commands from a scripted table.
 - no lost file;
 - `getBadgeText` is correct right after `ready` resolves.
 
-Every await point in `registry.mutate`, the resolver and the hand-off is enumerated.
+Every await point in `registry.mutate`, the resolver and the hand-off is enumerated, including `await:handoff.hideUi` between the download-UI hide and `downloads.download`.
+
+**R-005 assertions (L2)**, from the fake's call log: no `ui` entry while a job only resolves or fetches; `{ op: 'ui', enabled: false }` precedes the first `download` of every busy period; exactly one `{ enabled: true }` after the last job's record is deleted, for each end reason (saved, partial, needs login after a 403, unavailable, cancel); none when job B ends while job A runs; boot with no `job:*` records → `{ enabled: true }` first; boot with a hydrated running job → no `ui` entry until its next hand-off; a restart at `await:handoff.hideUi` → the file is still handed over exactly once; an injected `setUiOptions` failure never fails a job or a hand-off.
 
 ### L3: E2E harness
 
@@ -159,7 +161,8 @@ Helpers:
 - `downloads.files()`: recursive listing of `D` with sizes;
 - `ffprobe(file)`: `ffprobe -v error -show_frames -show_streams -of json`. Specs tagged `@ffprobe` are skipped with a warning if it is absent;
 - `ssim(video, frames)`: ffmpeg per-frame SSIM against the source frames cropped to even size;
-- `consoleErrors()`: collected from SW, offscreen and page targets; any unexpected `error` fails the test.
+- `consoleErrors()`: collected from SW, offscreen and page targets; any unexpected `error` fails the test;
+- `downloadUi()`: `swEval(() => self.__hfpTest.downloadUi())` → `{ requested, calls: [{ enabled, ok, at }] }`, the download-UI calls the current SW instance made and how Chrome answered (design-download-engine.md "Chrome's download UI"). It reports what the extension asked for and that the real Chrome, with the real manifest, accepted it; Chrome has no getter for the UI state itself, and Playwright cannot capture the toolbar, so the visual effect is an L5 check.
 
 #### Acceptance-criteria mapping (excerpt; the full table lives in `e2e/README.md`)
 
@@ -168,6 +171,8 @@ Helpers:
 | CUJ-1: one button, left of like, ≤ 500 ms after the row renders | Fixture renders the row 300 ms after load, as `flex-direction: row-reverse` like live pixiv. Assert one `hfp-download`, its `previousElementSibling` is the like wrapper (row-reverse: DOM after = screen left), the host's right edge is left of Like's left edge, and the time from the row's `performance.mark` to the host connecting is ≤ 500 ms. |
 | CUJ-1: 164 px when metadata is late | `server.hold('/ajax/illust/135882741')`; the row renders first; width 164 px before and after release (`candidates(null)` = 99-page faces) |
 | CUJ-1: 164 px in idle/busy/cancel-hover/saved (en, ≤ 99 pages) | `getBoundingClientRect().width` of the host in each state, including after `hover` |
+| CUJ-1 (R-005): Chrome's download UI is off from before the job's first file is handed to Chrome until the job ends, then on again | `e2e/cuj1.spec.ts`. With originals held (`server.hold`), `downloadUi()` shows `requested: false` and one `{ enabled: false, ok: true }` whose `at` ≤ the earliest `startTime` of the job's `chrome.downloads.search` items (`metadata.json` first); after `Saved · 12P` the last call is `{ enabled: true, ok: true }`, one of each for the job. A cancel, and a job whose every original answers 504, also end with `{ enabled: true, ok: true }`. |
+| CUJ-2 (R-004 S1): 176 px in idle, busy, Cancel-hover and Saved (en), unchanged by the Ugoira output | `e2e/cuj2.spec.ts`: `toBe(176)` (was `≥ 164`), with the English ugoira floor (design-artwork-button.md "Fixed width") |
 | CUJ-1: folder contents and sizes | `downloads.files()` equals `metadata.json` + `135882741_p0…p11.*`, each size = fixture `Content-Length` |
 | CUJ-1: `metadata.json` 12 keys in order, literal non-ASCII, `\n` kept | parse key order; raw bytes contain `みずき`, not `\u` escapes |
 | CUJ-1: never > 5 in flight | `server.maxInFlight(135882741) ≤ 5` (with 300 ms response delays to force overlap); also `chrome.downloads.search({ state: 'in_progress' })` sampled ≤ 5 |
@@ -177,12 +182,16 @@ Helpers:
 | CUJ-2: percent never decreases, never 100 before the end, ≥ 1 update/s during encode | a `MutationObserver` in the page records label texts with timestamps |
 | CUJ-2: quality | `ssim` mean ≥ 0.98, min ≥ 0.95 (engineering proxy for "no visible blocking or banding") |
 | CUJ-3: all steps | options page in light and dark (`page.emulateMedia({ colorScheme })`) × 4 locales; keyboard-only tab order; reload persistence; two-tab sync |
+| CUJ-3 edge "Paste containing newlines" | `e2e/cuj3.spec.ts` (QA's iteration-2 test): clipboard paste of `pixiv/\n{artist}\r\n-{id}\n` → `pixiv/{artist}-{id}`; a pasted single line with a trailing newline leaves no trailing space; `keyboard.insertText` with a newline; the 200-character test still passes |
+| CUJ-3 step 5 (R-004 S5, S15): unclosed `{`; `Still using:` on one line | `pixiv/{user` and a pause → `Unknown token {user. …`, no `Saved`, reload shows the last valid pattern; `pixiv/a}b` saves; in each of the 4 locales the label element has one client rect and the default pattern one client rect |
 | CUJ-4: badge 23 / tooltip across 2 downloads; SW stop restores the badge ≤ 1 s | two pages; `swEval(getBadgeText/getTitle)`; `stopServiceWorker()`, then poll ≤ 1 s after the next event |
+| CUJ-4 (R-005): Chrome's downloads button stays hidden until both jobs end; SW restart; boot with no job | `e2e/cuj4.spec.ts`. Job B ends while job A runs → no new `downloadUi()` call; A ends → `{ enabled: true, ok: true }`. `stopServiceWorker()` mid-job → the new instance makes no call at boot, and `{ enabled: true }` follows the job's end. Boot with no job: `swEval(() => chrome.downloads.setUiOptions({ enabled: false }))` (a dead instance's leftover), `stopServiceWorker()`, wake it by loading a pixiv page (`job/listForTab`) → the new instance's first call is `{ enabled: true, ok: true }`. |
 | CUJ-5: 403 never retried; 429/5xx up to 4 attempts; `Retry-After` honored (capped) | `server.log` attempt counts; inter-attempt gaps match `1.5·2ⁿ·scale` ± jitter, or `min(RA, 30)·scale` |
-| CUJ-5: offline | every byte request `{ reset: true }` → `Retry` + `tip_offline` |
-| CUJ-5: needs-login round-trip, refused, Unavailable, encode failure, 403 mid-job, floating fallback ≤ 3 s | fixtures 145892669 (logged out / login), `r18Hidden`, 199999999, 136004516, fault 403 on p5, `__fake.removeRow()` |
+| CUJ-5: offline (R-004 S3) | API and byte requests `{ reset: true }` after the page loaded → `Retry` + `tip_offline`. Byte requests only (the API answers) → `tip_server`: the PRD's accepted cost, so the iteration-2 test "offline: every original drops its connection" now expects `tip_server` and keeps its "Retry re-runs the whole job" half |
+| CUJ-5: needs-login round-trip, refused, Unavailable, encode failure, 403 mid-job | fixtures 145892669 (logged out / login), `r18Hidden`, 199999999, 136004516, fault 403 on p5 |
+| CUJ-5 step 11 (R-004 S4): floating pill within 3 s of the page loading or the in-app navigation, measured to the pill on screen | `__fake.removeRow()`. Direct load: from `performance.getEntriesByType('navigation')[0].domInteractive` (the HTML is parsed) to a `requestAnimationFrame` stamp taken right after a page `MutationObserver` sees the host connect → ≤ 3000 ms. SPA: from `performance.now()` in the page at the click to the same stamp → ≤ 3000 ms. QA's `diagFloat.ts` (5 direct + 5 SPA samples, dev build) is the cross-check |
 | CUJ-5 (R-003): logged out, all-ages work behind the sensitive-content wall → `Log in to download` before any click, same styling and tooltip as R-18, accessible name `Log in to pixiv to download this work.`; login → `Download · 4P` | fixture 135882745 logged out, then the fake login; plus a click while `/ajax/illust` is held → `Log in to download`, and `server.log` shows no `/pages` and no `i.pximg.net` request for 135882745 |
-| CUJ-5 step 6: "pixiv isn't responding" after throttled attempts | Unit-level (`retry.test.ts`: 503 then three `TypeError`s → `{ kind: 'network', lastStatus: 503 }`; `outcome.test.ts`: such a failure → `server`). The e2e build cannot reproduce Chromium's throttling deterministically (×0.01 backoff makes it throttle on the first job); QA's replay against the dev build (`docs/qa-artifacts/iter1-20-23-42/walk-scripts/diagOutage.ts`, 7 Retry clicks against a sustained 503) is the end-to-end check |
+| CUJ-5 step 6 and AC "sustained outage, 7th Retry" (R-004 S3) | Deterministic in e2e now: with every original answering 503 (the API answering), 7 consecutive clicks each end `Retry` + `tip_server`, because the job's API calls answered whatever Chromium's throttling does to the image requests. Unit: `retry.test.ts` (503 then three `TypeError`s → `{ kind: 'network', answered: true }`; a short body then `TypeError`s → `answered: true`; `TypeError`s only → no flag), `outcome.test.ts` (the job-level rule, design-download-engine.md Testing). QA's dev-build replay (`docs/qa-artifacts/iter2-03-48-13/walk-scripts/diagOutage.ts`, ≥ 3 replays × 7 clicks for 503 and 500, plus the stopped server → `tip_offline`) is the real-timing check |
 
 ### L4: Live smoke (`e2e/live/smoke.spec.ts`, `@live`)
 - Uses the dev build, no host mapping, real network.
@@ -208,7 +217,8 @@ Branded Chrome stable on macOS and Windows:
 - Load unpacked from the `npm run zip` contents;
 - H.264 hardware encode of 136004512-equivalent live ugoira;
 - MP4 plays in QuickTime, Windows Photos/Media Player and VLC; WebM plays in Chrome and VLC;
-- "Ask where to save each file" on: behavior matches the PRD's known limitation;
+- "Ask where to save each file" on: behavior matches the PRD's known limitation, and the Save As dialog still appears while Chrome's download UI is hidden (R-005);
+- **Chrome's download UI (R-005):** during a 12-page download Chrome shows no fly-to-toolbar animation and no downloads button, not even for `metadata.json`; after `Saved · 12P` the button is back and its bubble lists the 13 files; with two jobs it returns only after both end; a file downloaded from another site while a job runs shows no animation either (the accepted browser-wide side effect) and is listed once the UI returns. On Windows with Enhanced Safe Browsing, an ugoira's zip raises no deep-scan prompt that the hidden bubble would swallow (system.md §15 gap 1). QA can watch the same in the headed harness browser with an OS-level screenshot, since Playwright captures only page content;
 - **logged in** (owner's session, `npm run qa:live`): the action-row placement and like detection on the logged-in DOM; pixiv's dark theme (`html[data-theme="dark"]`) and the `#5fb9fb` focus ring; an R-18 download after a real login (CUJ-5 AC 2); R-18 display off → `Retry` + `tip_refused` (CUJ-5 AC 7); and, for the deferred R-003 stale-page case ([system.md §8.5](system.md) miss 2), whether `/ajax/illust` returns a non-null `urls.original` for every work the logged-in viewer can see (an `sl` 4 all-ages work, an R-18 work with display on) and `null` with R-18 display off;
 - each of the 4 locales renders without clipping;
 - store listing assets present.
@@ -267,7 +277,7 @@ sequenceDiagram
 
 - **devDependencies:** `vitest@^5`, `happy-dom@^21`, `@playwright/test@^1.64`, `selfsigned@^5.5`, `typescript@~6.0.3`, `eslint@^10`, `typescript-eslint@^8.72`, `prettier@^3`, `@types/chrome@^0.3`, `esbuild@^0.28`.
 - **System tools:** `python3` ≥ 3.10 (golden), `ffprobe`/`ffmpeg` (optional; `@ffprobe` specs skip without them).
-- **ENG backlog:** done in iteration 1: ENG-001 (scaffold incl. test runners), ENG-002 (platform spike + live DOM capture → fixture source), ENG-003 (golden generator), ENG-004 (L3 harness), ENG-005 (CI). Open: ENG-006 (packaging + release checklist, incl. the L5 list above), ENG-007 (prod bundle free of test hooks, CI), ENG-009 (fake-server zip prebuild), ENG-010 (content bundle size budget, CI).
+- **ENG backlog:** ENG-001 … ENG-011 are done (scaffold, platform spike, golden generator, L3 harness, CI, packaging and the release checklist, prod bundle free of test hooks, layering, fake-server zip prebuild, content bundle size budget, encoder pass count). None is open. The release checklist (`docs/release-checklist.md`) gains the R-005 L5 items above with the R-005 task.
 
 ## Open Questions & Risks
 
@@ -275,4 +285,4 @@ sequenceDiagram
 - **macOS UI-locale switching** via `-AppleLanguages` is less reliable than Linux `--lang`. If it fails, 4-locale UI checks run on Linux only.
 - **H.264 in CI:** if the CfT Linux build has no usable H.264 encoder (the probe returns `avc: null`), MP4 assertions are skipped there and covered by L5. WebM is always covered.
 - **`e2e/README.md` CUJ-5 mapping** still says "next iteration"; `e2e/cuj5.spec.ts` (QA, iteration 1) owns those rows now and the README must point to it (QA recommendation 6).
-- **Chromium extension-request throttling** affects the e2e build: with the ×0.01 time scale, repeated 500/503 answers get later attempts refused locally on the first job. Specs keep using 502/504 for exhausted-retry scenarios (QA iteration 1). `--disable-extensions-http-throttling` in the launcher would lift this, but would also hide the very behavior §9's `lastStatus` rule exists for, so it is not added.
+- **Chromium extension-request throttling** affects the e2e build: with the ×0.01 time scale, repeated 500/503 answers get later attempts refused locally on the first job. Since R-004 S3 the button's diagnosis no longer depends on it (the job-level rule), but attempt counts at the server still do, so specs that assert 4 server attempts keep using 502/504 (QA iteration 1). `--disable-extensions-http-throttling` is still not added: the sustained-503 e2e above exists to prove the diagnosis holds while Chromium throttles.

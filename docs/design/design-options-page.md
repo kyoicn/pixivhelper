@@ -1,7 +1,7 @@
 # Options Page
 
-> Last updated: 2026-10-23 02:21:28 (UTC-7)
-> Serves: prd-000 — CUJ-3 (all steps and edge cases), CUJ-2 step 1 / CUJ-3 step 7 (hint reactivity, via storage), R-001 (Report-an-issue URL), R-002 (product name)
+> Last updated: 2026-10-23 16:31:01 (UTC-7)
+> Serves: prd-000 — CUJ-3 (all steps and edge cases), CUJ-2 step 1 / CUJ-3 step 7 (hint reactivity, via storage), R-001 (Report-an-issue URL), R-002 (product name), R-004 S2 (contrast), S5 (unclosed `{`), S15 ("Still using:" on one line)
 
 ## Overview
 
@@ -101,9 +101,9 @@ interface PageState {
 | chip bg / border / hover | `#fff` / `#d0d5db` / border+text `#0096FA`, fill `#f0f8ff` | `#1f1f1f` / `#3a3f45` / fill `#102a3f` |
 | segment bg / border / hover / selected | `#fff` / `#d0d5db` / `#f5f7f9` / `#0096FA` + white 600 | `#1f1f1f` / `#3a3f45` / `#2a2f35` / same |
 | switch on / off | `#0096FA` knob right / `#bdc1c6` knob left | same / `#5f6368` |
-| saved | **`#188038`**, 12.5 px, check icon (4.68:1 on `#f6f7f9`; the PRD's `#1a9f5a` is 3.19:1) | `#1a9f5a` (5.49:1 on `#121212`) |
-| error text (validation message) | **`#c5221f`**, 13 px, info icon (5.41:1; the PRD's `#d93025` is 4.45:1) | **`#f28b82`** (7.84:1; `#d93025` would be 3.93:1) |
-| "Still using" trailing sentence (`— your last valid pattern stays in effect …`) | **`#5c6166`** (5.84:1; the mock's `#8a8f94` is 3.04:1) | `#8a8f94` (5.74:1) |
+| saved | `#188038`, 12.5 px, check icon (4.68:1 on `#f6f7f9`; CUJ-3 step 3) | `#1a9f5a` (5.49:1 on `#121212`) |
+| error text (validation message) | `#c5221f`, 13 px, info icon (5.41:1; CUJ-3 step 5) | `#f28b82` (7.84:1) |
+| "Still using" trailing sentence (`— your last valid pattern stays in effect …`) | `#5c6166` (5.84:1; CUJ-3 step 5) | `#8a8f94` (5.74:1) |
 | links, focus ring | `#0096FA`; focus 2 px `#0096FA` on `:focus-visible` | same |
 | footer rule | `#e3e6ea` | `#2a2f35` |
 
@@ -116,6 +116,26 @@ Geometry:
 Fonts: system stack (as the mocks), mono `ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`.
 
 `@media (prefers-reduced-motion: reduce)` removes the `Saved` fade and the switch knob transition.
+
+#### The preview / "Still using" line (CUJ-3 steps 2 and 5; R-004 S15)
+
+PRD CUJ-3 step 5: "The `Still using:` label never breaks across lines; the pattern and the trailing sentence flow after it as running text, so the pattern breaks only when it is longer than the line." AC: the label renders on a single line in all four locales, and the default pattern after it is not broken. The iteration-2 layout broke this: `.preview-text { display: contents }` made each part a flex item of `.preview`, so the label item shrank and wrapped (`Still` / `using:`) whenever the trailing sentence needed room. That layout followed the iteration-1 mock; the R-004 mock (`cuj-3-error.html`) lays the line out as running text.
+
+```
+<p id="preview" class="preview">                 display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 20px
+  <svg …>                                         flex-shrink: 0; margin-top: 2px (centres the 16 px icon on the first 20 px line)
+  <span class="preview-text">                     flex: 1 1 auto; min-width: 0   (a block of running text; replaces display: contents)
+    <span class="label">Still using:</span>       white-space: nowrap
+    " "                                           text node: the break opportunity after the label
+    <span class="mono pattern">pixiv/{artist}-{id}</span>   display: inline-block; max-width: 100%; overflow-wrap: anywhere; color: var(--text)
+    <span class="muted"> — your last valid pattern …</span> inline, wraps normally
+```
+
+- **Label.** `stillUsingLine()` splits `opt_still_using` on its placeholder as today and puts the text before it in a `.label` span with trailing whitespace moved out of the span into a text node (en `Still using: ` → `Still using:` + ` `; ja `使用中: ` likewise; zh_CN/zh_TW `仍在使用：` have none). `white-space: nowrap` then keeps the label whole in every locale without suppressing the line break after it.
+- **Pattern as an atomic inline.** `inline-block` with `max-width: 100%` moves the pattern to the next line as a whole when it does not fit after the label, and wraps inside it (`overflow-wrap: anywhere`) only when it is longer than a full line: exactly "breaks only when it is longer than the line". A plain inline span (the mock's markup) would let a pattern shorter than the line break at its `-` or `/` when it starts near the end of the label's line.
+- **Trailing sentence**: inline, `.muted` colour (table above), flows after the pattern.
+- **The preview line** uses the same box: `Preview:` in a `.label` span, then the path inline with `.path { overflow-wrap: anywhere }` as today (a resolved path is often longer than the line, and the PRD sets no rule for it).
+- The old comment "Its parts are laid out as the preview line's own flex items, as in the mocks" goes with the `display: contents` rule it described.
 
 ### Logic & Behavior
 
@@ -141,10 +161,42 @@ flowchart TD
   W -- not ok --> N["keep the value in the field · warn log · no Saved"]
 ```
 
-- **Messages** come from the PRD keys `err_empty`, `err_absolute`, `err_backslash`, `err_dotdot`, `err_unknown_token` (placeholder = the offending token, rendered mono semibold) and `err_illegal_chars`, in the validator's order ([design-settings-model.md](design-settings-model.md)).
+- **Messages** come from the PRD keys `err_empty`, `err_absolute`, `err_backslash`, `err_dotdot`, `err_unknown_token` (placeholder = the first offending fragment, an unknown `{…}` token or an unclosed `{…`, rendered mono semibold; R-004 S5) and `err_illegal_chars`, in the validator's order ([design-settings-model.md](design-settings-model.md) rule 5). Because an unclosed `{` is invalid, a pause mid-token (`pixiv/{user`) shows `Unknown token {user. …` and is never autosaved; chips insert whole tokens, so the main path never shows it.
 - **Preview** always uses the fixed sample `SAMPLE` through the real `resolveFolder` (PRD CUJ-3 step 2 Details). The word `Downloads` comes from the message (`opt_preview` + literal path). It is not localized in the path, because the PRD shows `Downloads/…` as a generic label.
-- **Paste:** `<input type="text">` strips CR/LF by HTML value sanitization (CUJ-3 edge "drops newlines on paste"). `maxlength=200` truncates typing and paste (CUJ-3 edge).
+- **Paste, drop and inserted text** are kept on one line by `bindSingleLine` (below; CUJ-3 edge "drops newlines on paste"). `maxlength=200` truncates native typing and paste (CUJ-3 edge), and `bindSingleLine` applies the same cap to the insertions it performs itself.
 - **Closing the tab with an invalid edit** loses only the draft. Storage still holds the last valid pattern, and reopening shows it with no error (CUJ-3 edge).
+
+#### Line breaks in inserted text (CUJ-3 edge "Paste containing newlines"; QA iteration 2)
+
+Chromium does **not** strip CR/LF from text the user inserts into an `<input type="text">`: it replaces each line break with a space before the `input` event fires (QA iteration 2: `pixiv/⏎{artist}⏎-{id}` → `pixiv/ {artist} -{id}`, which validated and saved a folder with a literal space). The HTML value-sanitization algorithm that strips line breaks applies only to programmatic `.value` writes; the first design wrongly relied on it for paste. By the time `input` fires, the spaces are indistinguishable from typed ones, so the page intercepts the insertion before Chromium edits the value.
+
+```ts
+// src/options/single-line.ts
+/** Keeps CR and LF out of text inserted into `field` by paste, drop or insertText. `maxChars` is the field's cap. */
+export function bindSingleLine(field: HTMLInputElement, maxChars: number): void;
+```
+
+On `beforeinput`:
+1. Act only for `inputType` ∈ {`insertText`, `insertFromPaste`, `insertFromDrop`} with `event.cancelable`. The text is `event.data ?? event.dataTransfer?.getData('text/plain') ?? null` (Chromium fills `data` for these types on text controls; `dataTransfer` is the fallback). If the text is `null` or contains no `\r` or `\n`, return and let the browser insert natively, so native undo, `maxlength` and the caret stay untouched. The common path costs one regex test.
+2. `event.preventDefault()`. `clean = text.replace(/[\r\n]/g, '')`: CRLF, CR and LF all disappear (PRD: "drops newlines"). Tabs and other control characters stay; validation and the D8 path-safety pass handle them as before (PRD: "Validation then runs as usual").
+3. Insertion range `[start, end]` = `field.selectionStart`, `field.selectionEnd`. For a drop, Blink has already moved the selection to the drop point when it dispatches `insertFromDrop` (`DragController::ConcludeEditDrag` sets the selection to the drag caret before the replace step that fires `beforeinput`). The `deleteByDrag` half of an in-field move is a separate event and is left alone.
+4. Cap: `room = maxChars − (field.value.length − (end − start))`; `clean = clean.slice(0, Math.max(room, 0))`, and drop a final lone high surrogate (as Chromium's own `maxlength` truncation does), so the field never exceeds 200 UTF-16 units and never holds half a character.
+5. If `clean === ''` and `start === end`, nothing changes: stop, with no `input` event. (`clean === ''` over a selection still deletes the selection, as a native paste of nothing would.)
+6. `field.setRangeText(clean, start, end, 'end')`: the selection is replaced and the caret lands right after the inserted text, as with a native paste.
+7. `field.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: event.inputType, data: clean }))`. `setRangeText` fires no `input` event, and every existing listener must run unchanged: the 400 ms debounce → validate → autosave path, and the chips' caret tracker.
+
+It is bound in `initOptionsPage` right after `field.maxLength = PATTERN_MAX_CHARS`, with the same constant, before the `input` listener and `bindChips` (order does not matter for correctness; it keeps the field's wiring in one place).
+
+**Cost:** an insertion that carried line breaks is not on the field's native undo stack, because `setRangeText` bypasses it. Accepted: it is rare, and the result is one line the user can edit.
+
+| Criteria | **`beforeinput` + `setRangeText` + synthetic `input`** | `paste`/`drop` listeners reading `clipboardData`/`dataTransfer` | Repair in the `input` handler | `document.execCommand('insertText')` from inside `beforeinput` |
+|---|---|---|---|---|
+| Sees the line breaks | Yes | Yes | **No**: they are already spaces | Yes |
+| Covers `insertText` (IME, assistive tech, CDP `Input.insertText`) | Yes | No | — | Yes |
+| Drop position | The selection, already at the drop point | Not exposed at `drop` | — | Same as selected |
+| Native undo | Lost for this insertion only | Lost | — | Kept |
+| Reliability | Deterministic; unit-testable in happy-dom | Deterministic | — | A nested editing command during an editing event's dispatch is not reliably honoured |
+| **Verdict** | **Selected** | Rejected | Rejected | Rejected |
 
 #### Chips (CUJ-3 step 4)
 - `caret` is tracked from the field's `select`, `keyup`, `mouseup`, `input` and `blur` events. It stays `null` until the field first receives focus.
@@ -206,7 +258,7 @@ There is no confirmation (PRD).
 - Chips are `<button type="button">`. The segmented control is `role="group"` with `aria-pressed` buttons. The switch is `role="switch"` + `aria-checked`. Reset is a `<button>`; Report is an `<a>`.
 - The DOM order equals the PRD tab order: field → 4 chips → MP4 → WebM → ZIP only → switch → Reset to defaults → Report an issue.
 - Every control shows a 2 px `#0096FA` `:focus-visible` ring. Help text is linked via `aria-describedby` on each section's primary control.
-- Contrast: all text pairs in the token table meet 4.5:1 except selected-segment white on `#0096FA` (3.1:1), which the PRD accepts (index "Contrast"). Three PRD/mock values did not (saved green, validation red in light and dark, the "Still using" gray); the design follows the index's 4.5:1 rule with the values in the Styles table, and pm syncs CUJ-3 steps 3 and 5 and the `cuj-3-*` mocks ([system.md §11.5](system.md), §15 item 7).
+- Contrast: the Saved, validation and "Still using" colours are the PRD's AA values (CUJ-3 steps 3 and 5, R-004 S2; [system.md §11.5](system.md)). Selected-segment white on `#0096FA` (3.1:1) is the pixiv-blue pair the index accepts. The chip hover (`#0096FA` on `#f0f8ff`, 2.90:1) shows only under the pointer and leaves the token text unchanged, the index's hover-tint case. One PRD value is below 4.5:1 **at rest** and is not covered by either acceptance: the footer links, `#0096FA` 13 px on the page's `#f6f7f9` (2.91:1, CUJ-3 step 10). The page ships the PRD value; the conflict with the index rule is with pm ([system.md §15](system.md) gap 2).
 
 ## Data Flow
 
@@ -250,8 +302,8 @@ sequenceDiagram
 - **Performance:** the page is static; validation and preview take < 1 ms per debounce. Bundle < 15 KB.
 - **i18n:** every string comes from `_locales` (keys in PRD Appendix A "Settings page"). Placeholder parts are styled via `splitOnPlaceholder` ([system.md §11.4](system.md)). The layout must not clip in any locale: the segmented control widths are intrinsic, and the column wraps.
 - **Testing:**
-  - Unit (happy-dom, fake timers): debounce timing; each validation message rendered with the right ARIA; "Still using" shows the last valid pattern; a valid save then an invalid edit within 2 s leaves the folder indicator empty the moment the error renders; a write that resolves after the field turned invalid does not flash; `clear()` cancels a pending fade; chip insertion at caret, with a selection, never-focused append and the 200-char guard; reset's changed-section detection; cross-tab update rules (invalid-draft and typing exemptions; own-echo suppression).
-  - E2E: real page in Chromium in light and dark (`emulateMedia`) × 4 locales (launch flag `--lang`), keyboard-only walkthrough in PRD tab order, reload persistence, two-tab sync ([design-test-harness.md](design-test-harness.md)); regression for the CUJ-3 bug: insert a chip (valid, saves), then within 2 s type `pixiv/{artst}-{id}` → no `Saved` beside Download folder while the error shows; computed colours of the Saved, error and "Still using" texts in light and dark equal the Styles table.
+  - Unit (happy-dom, fake timers): `bindSingleLine` with synthetic `InputEvent`s: `insertFromPaste` of `pixiv/\n{artist}\r\n-{id}\n` into an empty field → `pixiv/{artist}-{id}`, caret at the end, one `input` event; the same over a selection replaces it; `insertFromDrop` at a caret inside the value; `insertText` with a newline; text without line breaks is not prevented; a non-cancelable event is not prevented; only newlines with a collapsed selection → no change and no `input`; the 200 cap with a surrogate pair at the cut; `stillUsingLine` returns the label span without trailing whitespace, a space text node, the pattern span and the muted sentence, in all 4 locales; debounce timing; each validation message rendered with the right ARIA, including `pixiv/{user` → `Unknown token {user. …` with no write; "Still using" shows the last valid pattern; a valid save then an invalid edit within 2 s leaves the folder indicator empty the moment the error renders; a write that resolves after the field turned invalid does not flash; `clear()` cancels a pending fade; chip insertion at caret, with a selection, never-focused append and the 200-char guard; reset's changed-section detection; cross-tab update rules (invalid-draft and typing exemptions; own-echo suppression).
+  - E2E: real page in Chromium in light and dark (`emulateMedia`) × 4 locales (launch flag `--lang`), keyboard-only walkthrough in PRD tab order, reload persistence, two-tab sync ([design-test-harness.md](design-test-harness.md)); regression for the CUJ-3 bug: insert a chip (valid, saves), then within 2 s type `pixiv/{artst}-{id}` → no `Saved` beside Download folder while the error shows; computed colours of the Saved, error and "Still using" texts in light and dark equal the Styles table; QA's paste test (`pixiv/\n{artist}\r\n-{id}\n` → `pixiv/{artist}-{id}`, preview `Downloads/pixiv/みずき-135882741/135882741_p0.jpg`) plus a single-line paste with a trailing newline (no trailing space) and `keyboard.insertText` with a newline; `pixiv/{user` paused → the message, no `Saved`, reload shows the last valid pattern; `pixiv/a}b` saves; in the error state of all 4 locales the `.label` has one client rect and the default pattern one client rect.
 
 ## Dependencies & Integration Points
 
@@ -261,4 +313,5 @@ sequenceDiagram
 ## Open Questions & Risks
 
 - **No PRD copy for a total storage failure** (both areas reject). The design shows no `Saved` and keeps the value. pm may want a message. Low priority.
-- `err_illegal_chars` and the D8 normalization of literal text ([design-settings-model.md](design-settings-model.md)) overlap. If pm prefers rejecting unsafe literal text (e.g. a trailing space in a segment) over normalizing it, that adds validation rule(s) and copy here.
+- **Footer link contrast** (system.md §15 gap 2): PRD CUJ-3 step 10's `#0096FA` links on `#f6f7f9` measure 2.91:1, while the index requires 4.5:1 at rest for every pair outside the pixiv-blue acceptance and says CUJ-3's colours pass. Kept as specified until pm decides; a darker link blue is a one-token change in `options.css`.
+- **Drop placement is verified once by QA.** `bindSingleLine` reads the drop point from the selection, which Blink sets before `insertFromDrop` (Line breaks in inserted text, step 3). Synthesizing a native text drag in Playwright is fiddly, so the unit tests cover the handler and QA drags multi-line text into the field once per run. If the text ever lands at the old caret instead, leave `insertFromDrop` to the browser: the PRD names paste only.

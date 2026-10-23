@@ -1,7 +1,7 @@
 # Artwork Button (content script)
 
-> Last updated: 2026-10-23 02:21:28 (UTC-7)
-> Serves: prd-000 — CUJ-1 (button, states, SPA, memory), CUJ-2 (ugoira hint/progress), CUJ-4 (per-tab progress only), CUJ-5 (needs-login incl. pixiv's login walls per R-003, error states, floating fallback); PRD §4.7 entirely; index "Accessibility", "Internationalization", "Theming"
+> Last updated: 2026-10-23 16:31:01 (UTC-7)
+> Serves: prd-000 — CUJ-1 (button, states, SPA, memory), CUJ-2 (ugoira hint/progress), CUJ-4 (per-tab progress only), CUJ-5 (needs-login incl. pixiv's login walls per R-003, error states, floating fallback); PRD §4.7 entirely; index "Accessibility", "Internationalization", "Theming"; R-004 S1 (widths), S2 (contrast), S4 (floating-fallback anchor), S7 (keyboard order), S13 (no busy 100%)
 
 ## Overview
 
@@ -9,7 +9,7 @@ The content script (`src/content/`, bundled as one classic IIFE `content.js`) ru
 
 1. detects artwork routes, including pixiv's SPA navigations;
 2. fetches render-time metadata (`/ajax/illust/{id}`, first-party) and reads the page's login state and theme, and from them decides the pre-emptive needs-login state, including pixiv's sensitive-content wall (R-003, [system.md §8.5](system.md));
-3. finds pixiv's action row and keeps **exactly one** Download button in it, immediately left of pixiv's Like on screen, re-inserting within 500 ms after pixiv re-renders, or floats it after 3 s if the row cannot be found;
+3. finds pixiv's action row and keeps **exactly one** Download button in it, immediately left of pixiv's Like on screen, re-inserting within 500 ms after pixiv re-renders, or floats it within 3 s, measured to the pill on screen, if the row cannot be found;
 4. renders the button's state machine with locale-locked fixed width, full a11y, and a live region;
 5. remembers per-artwork state for the life of the document, and reattaches to its own running jobs after a reload;
 6. acts as the first-party API proxy (`api/fetchJson`) for the SW's jobs ([system.md §8.3](system.md)).
@@ -111,7 +111,7 @@ The legacy `meta[name="global-data"]` / `#meta-preload-data` markers are absent 
 - `enter(id)`:
   - get or create the memory entry;
   - start the render-time metadata fetch if `entry.work` is absent;
-  - start the 3 s fallback timer;
+  - start the floating-fallback timer (fires 2750 ms after entry so the pill is on screen within 3 s; "Mounting");
   - `mount.show(entry)`.
 - `leave()`: `mount.hide()` (host removed from the DOM; memory kept).
 - Artwork → artwork navigation is `leave()` then `enter(newId)` in the same tick.
@@ -204,12 +204,15 @@ ensurePlaced():                                  // rAF-coalesced; called from M
   if hit:
      if not in place: (hit.side === 'after' ? hit.like.after(host) : hit.like.before(host)); clear floating styles;
                       copy spacing; mode = 'row'
-  else if fallbackFired (FLOAT_FALLBACK_MS = 3 s since the route was entered):
+  else if fallbackFired (the fallback timer fired: FLOAT_FALLBACK_MS − FLOAT_PLACEMENT_BUDGET_MS = 2750 ms after route entry):
      area = findArtworkArea(document)
      mode = area has a box ? 'floating' : 'viewport'; ensure host is a child of document.body; position()
 ```
 
-- **Fallback timer.** `show()` (route entry) resets and starts a 3 s timer; it is **not** cancelled when the row is found. Once it has fired, any later moment without a row (pixiv removed the row, or a re-render left it missing for a frame) floats the host at once instead of waiting another 3 s; when the row returns, the next `ensurePlaced()` moves the host back. `hide()` (route left) resets it. PRD §4.7.1 measures the 3 s "of the artwork page rendering"; route entry is the closest observable moment, and SPA navigations enter the route before pixiv renders the column, so the timer can only run long, never short.
+- **Fallback timer** (PRD §4.7.1, CUJ-5 step 11 and its AC; R-004 S4, D14). The PRD measures the 3 s from the artwork page loading (the extension starts once the page's HTML has been parsed) or from pixiv's in-app navigation to it (the URL change), **to the floating pill appearing on screen**, so the time needed to place it counts inside the 3 s.
+  - **Anchor: route entry.** `show()` runs synchronously at both PRD anchors. On a full load, `router.start()` enters the route when the content script starts (`run_at: document_end`, after the HTML is parsed). On SPA navigation, the Navigation API's `currententrychange` fires in the same task as pixiv's `pushState`. Navigation start is not used as an anchor: pixiv renders its action row after `document_end`, so an earlier anchor would float the pill on slow loads and then jump it into the row (pm-review iteration 2, priority 3).
+  - **Placement budget.** `show()` starts a timer of `FLOAT_FALLBACK_MS − FLOAT_PLACEMENT_BUDGET_MS` = 3000 − 250 = **2750 ms** (both in `src/shared/constants.ts`; `FLOAT_FALLBACK_MS` stays the PRD's 3000). Its callback sets `fallbackFired` and calls `ensurePlaced()` synchronously: `float()` appends the host to `body`, `onPlaced` locks the width, and `position()` sets `left`/`top`, so the pill is painted at the next frame. The iteration-2 timer fired at exactly 3000 ms, and the pill appeared 11–23 ms late in QA's runs (direct load 3018–3023 ms, SPA 3011–3013 ms) and up to 79 ms late in the code review's loaded runs: timer lateness behind pixiv's main-thread work, plus placement, plus one frame. 250 ms covers three times the worst measurement. The cost: if pixiv renders its row between 2.75 s and 3 s after entry, the pill floats for that moment and then moves into the row. That is rarer than the slow-render case the PRD already accepts at 3 s, and the state is kept.
+  - The timer is **not** cancelled when the row is found. Once it has fired, any later moment without a row (pixiv removed the row, or a re-render left it missing for a frame) floats the host at once instead of waiting again; when the row returns, the next `ensurePlaced()` moves the host back. `hide()` (route left) resets it, and the next `show()` starts a fresh one.
 
 - **Re-insertion latency:** pixiv re-renders → mutation records → next animation frame → `ensurePlaced()`. Typical latency is one frame (≤ 17 ms), far inside the 500 ms requirement. The host keeps its shadow root and state when moved, so the state is unchanged (PRD §4.7.1).
 - **Spacing:** if `hit.group` has a positive computed `column-gap`, nothing is needed (12 px in mocks). Otherwise the host copies the like wrapper's computed `margin-left`/`margin-right` (pixiv is left-to-right only). Live, the group has `column-gap: normal` and the like wrapper `margin: 0 20px 0 0`; under `row-reverse` the copied `margin-right: 20px` is exactly the gap between the pill and Like.
@@ -310,25 +313,29 @@ stateDiagram-v2
 
 ### Fixed width (button/width.ts)
 
-PRD §4.7.2: the width equals the widest label this button can show for this artwork in the active locale. It is locked at first render and never changes between states. In English it is 164 px for ≤ 99 pages.
+PRD §4.7.2: the width equals the widest label this button can show for this artwork in the active locale. It is locked at first render and never changes between states or when Ugoira output changes. In English it is 164 px for illustrations and manga up to 99 pages, and 176 px for every ugoira (R-004 S1).
 
 ```
 candidates(work | null, locale):
   pages(n):  idle(n) · busy(`n / n`) · cancel · saved(n) · needsLogin · retry(`n failed`) · retry · unavailable
   ugoira:    idle(MP4|WebM|ZIP) · busy(`100%`) · cancel · saved(MP4|WebM|ZIP) · needsLogin · retry · retry(MP4|WebM) · unavailable
+             // busy(`100%`) is an upper bound for the percent face: the label never shows 100% (PRD §4.7.5, R-004 S13),
+             // and the face is far narrower than `Download · WebM`, so it never decides the width
   null:      pages(99)                                  // metadata not known yet: "starts at the 2-digit width"
-width = max(ceil(measure(c)) for c in candidates, LOCALE_FLOOR_PX[locale])
-LOCALE_FLOOR_PX = { en: 164, ja: 0, 'zh-CN': 0, 'zh-TW': 0 }
+width = max(ceil(measure(c)) for c in candidates, floor(work, locale))
+floor(work, locale) = work?.illustType === 2 ? UGOIRA_LOCALE_FLOOR_PX[locale] : LOCALE_FLOOR_PX[locale]
+LOCALE_FLOOR_PX        = { en: 164, ja: 0, 'zh-CN': 0, 'zh-TW': 0 }   // pages, and metadata unknown
+UGOIRA_LOCALE_FLOOR_PX = { en: 176, ja: 0, 'zh-CN': 0, 'zh-TW': 0 }   // iteration 3 (R-004 S1)
 ```
 
 - **Provisional width (`work === null`).** Before the metadata arrives the button cannot know whether the work is an ugoira, so it uses the 99-page faces only, exactly the PRD's "starts at the 2-digit width" (§4.7.2): 164 px in English. The first design used `pages(99) ∪ ugoira` there, which measures 176 px in English (`Download · WebM`), and because the width never shrinks, every illustration whose metadata lost the race against the action row stayed at 176 px, breaking the CUJ-1 AC "164 px … on a work of 99 or fewer pages" (PM iteration-1 review). With the fix:
   - an illustration or manga ≤ 99 pages keeps 164 px whether or not its metadata was late;
   - a 100+ page work or an ugoira widens **once**, when its metadata arrives, if the user has not interacted yet (the existing widen-once rule);
-  - if the user clicks **before** the metadata arrives (`interacted` is set), the width stays provisional for the life of the document. On an ugoira whose effective format is WebM, the hint of `Download · WebM` / `Saved · WebM` / `Retry · WebM` can then exceed the pill by up to ~12 px in English. The `.hint` span therefore has `min-width: 0; overflow: hidden; text-overflow: ellipsis` inside the flex pill, so the label stays whole and the hint is cut (`Saved · We…`) instead of overflowing the pill's border. This is a rare edge (a click inside the metadata window, on an ugoira, with WebM effective) and keeps the PRD's "never changes after interaction" rule.
-- **Ugoira width.** An ugoira's candidates include every format's faces (§4.7.2: "the widest label the button can show for this artwork", and the format can change with settings or codec support), which measures 176 px in English. PRD CUJ-2 step 1 and the `cuj-2-*` mocks say 164 px; that is a PRD-internal conflict already with pm (QA iteration 1, system.md §15 item 10). This chapter implements §4.7.2 until pm resolves it.
+  - if the user clicks **before** the metadata arrives (`interacted` is set), the width stays provisional for the life of the document. On an ugoira whose effective format is WebM, the hint of `Download · WebM` / `Saved · WebM` / `Retry · WebM` can then exceed the pill by up to ~12 px in English. The `.hint` span therefore has `min-width: 0; overflow: hidden; text-overflow: ellipsis` inside the flex pill, so the label stays whole and the hint is cut (`Saved · We…`) instead of overflowing the pill's border. This is a rare edge (a click inside the metadata window, on an ugoira, with WebM effective), keeps the "never changes after interaction" rule, and is accepted in PRD §4.7.2 (R-004 S1).
+- **Ugoira width** (PRD §4.7.2, CUJ-2 step 1 and AC; R-004 S1). An ugoira's candidates include every format's faces, because `Download · WebM` is a label the button can reach whatever the setting (the output follows the setting and codec support). That measures **176 px** in English, the PRD's and the widened mocks' number, in idle, busy, Cancel-hover and Saved, and across Ugoira-output changes.
 
 - **Measurement:** a hidden `<button>` in the same shadow root (`position: absolute; visibility: hidden; width: auto; left: -9999px`) is rendered with each candidate's `Presentation` by the same `view.ts` renderer. Its `getBoundingClientRect().width` is read. This takes ~15 candidates per artwork, under 2 ms. It runs after `document.fonts.ready` (system fonts resolve immediately).
-- **Why the English floor:** AC CUJ-1 fixes 164 px for every ≤ 99-page English work, including single-page works whose widest label measures narrower. System fonts differ by OS (SF, Segoe UI, Roboto), so a measured-only width would not hit 164 everywhere. Other locales use the measured value, as the PRD rule states.
+- **Why the English floors:** AC CUJ-1 fixes 164 px for every ≤ 99-page English work, including single-page works whose widest label measures narrower, and since R-004 S1 the CUJ-2 AC fixes 176 px for every English ugoira. System fonts differ by OS (SF, Segoe UI, Roboto), so a measured-only width would not hit either number everywhere: `Download · WebM` measures 176 px with the fonts of the dev and e2e machines and may measure less elsewhere. A floor never cuts a label: where a font measures wider, the measured value wins, exactly as for 164. The provisional width (`work === null`) keeps the 164 floor, and an ugoira widens once to its floor or its measured width when the metadata arrives (before any interaction). Other locales use the measured value, as the PRD rule states. The e2e ugoira check becomes `toBe(176)` in English (it was `≥ 164` while the PRD said 164; pm-review iteration 2, 5b).
 - **Lock and widen-once:** `entry.width` is set at first render. When metadata arrives later, the width is recomputed. If the new value is larger and `entry.interacted === false`, it widens once (PRD §4.7.2: 100+ page works, "may widen once … before any interaction"). It never shrinks. The width is stored per artwork, so SPA back/forward shows the same width.
 - Settings changes (MP4 ↔ WebM ↔ ZIP) never change the width, because all formats are already candidates.
 
@@ -347,7 +354,7 @@ Shadow DOM structure:
 Styles follow PRD §4.7.2–4.7.4 exactly:
 - **`:host`:** `all: initial` then explicit `font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", "Noto Sans SC", "Noto Sans TC", sans-serif`.
 - **`.pill`:** `height: 40px; border-radius: 9999px; padding: 0 12px; gap: 8px; white-space: nowrap; flex-shrink: 0; width: var(--hfp-width)`, label 14 px 600, hint 13 px 400 at opacity .85, dot at .6, counters `font-variant-numeric: tabular-nums`, `transition: background-color 120ms`.
-- **Variants:** primary `#0096FA`/hover `#0084DC`, shadow `0 1px 2px rgba(0,0,0,.08)`; saved white/1.5 px `#0096FA`/hover `#e6f4fe`; neutral white/`#c4c7c5`/`#3c4043`, hover `#f5f7f9` + border `#8a8f94`; error white/`#d93025` (hint opacity 1)/hover `#fdeceb`; disabled `#f1f3f4` fill with **`#5f6368` text** (5.44:1; the PRD's `#80868b` is 3.31:1, below the index's 4.5:1 rule, so the design follows the index and pm syncs §4.7.3 and CUJ-5 step 7, [system.md §11.5](system.md)), `cursor: not-allowed`, no hover; cancel face `#3c4043` + white.
+- **Variants:** primary `#0096FA`/hover `#0084DC`, shadow `0 1px 2px rgba(0,0,0,.08)`; saved white/1.5 px `#0096FA`/hover `#e6f4fe`; neutral white/`#c4c7c5`/`#3c4043`, hover `#f5f7f9` + border `#8a8f94`; error white/`#d93025` (hint opacity 1)/hover `#fdeceb`; disabled `#f1f3f4` fill with `#5f6368` text (5.44:1; PRD §4.7.3, CUJ-5 step 7, R-004 S2), `cursor: not-allowed`, no hover; cancel face `#3c4043` + white.
 - **Pill height** `40px` is exported from `styles.ts` as `PILL_HEIGHT_PX` and interpolated into the stylesheet; `mount.ts` imports it for the floating position instead of keeping its own copy (code review W9).
 - **Focus:** `.pill:focus-visible { outline: 2px solid #0096FA; outline-offset: 3px }`; `:host([data-theme=dark]) .pill:focus-visible { outline-color: #5fb9fb }`.
 - **Ring:** SVG 18×18, `viewBox 0 0 20 20`, `r = 8`, track `rgba(255,255,255,.2)`, stroke 2.5, round caps, `rotate(-90deg)` (12 o'clock start, clockwise). `C = 2π·8 = 50.265`; `stroke-dashoffset = C × (1 − fraction)`, `transition: stroke-dashoffset 300ms ease`. The indeterminate variant is a 25 % arc rotating 360° per second.
@@ -461,7 +468,7 @@ sequenceDiagram
 | Criteria | **Measured width + English floor** | Hard-coded per-locale widths | CSS `min-width` only |
 |---|---|---|---|
 | Meets "widest label for this artwork" | Yes | No (page-count dependent) | No (shifts between states) |
-| Meets English 164 px AC on all OS fonts | Yes (floor) | Yes | No |
+| Meets the English 164 px (CUJ-1) and 176 px (CUJ-2) ACs on all OS fonts | Yes (floors) | Yes | No |
 | Robust to translation edits | Yes | No (needs re-tuning) | — |
 | **Verdict** | **Selected** | Rejected | Rejected |
 
@@ -485,14 +492,15 @@ Vanilla TS vs a UI framework: see [system.md §3](system.md). The login-wall sig
   - Zero work on non-artwork routes beyond a string compare.
   - Memory map entries ~1 KB each.
 - **Accessibility:**
-  - Native `<button type="button">` placed next to pixiv's Like in DOM order. In pixiv's live `row-reverse` row it follows the like wrapper, so Tab reaches it right after Like; the PRD edge "between More and Like" assumed a left-to-right DOM (spec-sync, [system.md §15](system.md) item 11).
+  - Native `<button type="button">` placed next to pixiv's Like in DOM order. In pixiv's live `row-reverse` row it follows the like wrapper, so Tab reaches it right after Like: pixiv's own row order, next to Like (PRD index "Accessibility", CUJ-1 edge "Keyboard and screen reader", R-004 S7).
+  - Contrast: every state's text passes 4.5:1 at rest except pixiv blue with white (accepted); the error and Saved hover tints (4.18:1, 2.78:1) use the PRD's hover-tint exemption ([system.md §11.5](system.md)).
   - Enter/Space by default; `aria-busy`, `aria-disabled` (still focusable); full-meaning `aria-label` per state; polite live region; focus ring per theme; reduced motion.
   - `lang` on the host for CJK glyph selection (index "CJK rendering").
 - **Observability:** `debug` for route changes, placement mode changes (row → floating), selector strategy used, and width computed. A `warn` when the floating fallback engages ("action row not found"), the first signal of a pixiv redesign.
 - **Testing:**
   - Unit (happy-dom): router regex and change detection; `pixiv-dom` strategies against committed live fixtures (ENG-002), including both `side` branches with a stubbed `flexDirection`; `reduce()` transitions, including `metadata` with `{ xRestrict: 0, withheld: true }` and `loggedIn` `false` / `true` / `null` (needs-login only for `false`); `present()` for every row of the presentation table in all 4 locales; width candidates (`candidates(null)` = the 99-page faces only; an ugoira widens once before interaction and never after); click guard and arming with fake timers; live-region throttle.
   - Unit (`pixiv-api.ts`): `parseIllust` sets `withheld` from reduced live bodies (`test/fixtures/api/illust-walled.json` from 151107515, `illust-visible.json` from 151061734), from a body without `urls` and `sl` 4 (fallback → true) or `sl` 2 (→ false), and `requiresLogin` over the truth table of [system.md §8.5](system.md).
-  - E2E: placement latency, re-insertion after a simulated React re-render, single-host invariant, floating fallback, SPA memory, reload reattach, dark theme focus ring, 4-locale width snapshots; logged out on the fake walled work (`135882745`, [design-test-harness.md](design-test-harness.md)) → `Log in to download` before any click with `aria-label` `Log in to pixiv to download this work.`, and the login round-trip → `Download · 4P`; a click while `/ajax/illust` is held (`server.hold()`) on that work → `Log in to download` with no `/pages` or `i.pximg.net` request in the server log; a late `/ajax/illust` on a ≤ 99-page illustration → 164 px throughout.
+  - E2E: placement latency, re-insertion after a simulated React re-render, single-host invariant, floating fallback ≤ 3000 ms from the PRD anchors (`performance.getEntriesByType('navigation')[0].domInteractive` on a direct load; `performance.now()` at the in-page click on SPA navigation) to the first animation frame after the host connects (a page `MutationObserver` sees the host, then `requestAnimationFrame` stamps the time), SPA memory, reload reattach, dark theme focus ring, 4-locale width snapshots; logged out on the fake walled work (`135882745`, [design-test-harness.md](design-test-harness.md)) → `Log in to download` before any click with `aria-label` `Log in to pixiv to download this work.`, and the login round-trip → `Download · 4P`; a click while `/ajax/illust` is held (`server.hold()`) on that work → `Log in to download` with no `/pages` or `i.pximg.net` request in the server log; a late `/ajax/illust` on a ≤ 99-page illustration → 164 px throughout.
 
 ## Dependencies & Integration Points
 
@@ -503,6 +511,5 @@ Vanilla TS vs a UI framework: see [system.md §3](system.md). The login-wall sig
 
 - **Logged-in DOM and dark theme are unverified live.** ENG-002 pinned the selectors from logged-out captures. P1 (always logged in) may see extra row controls; validation is structural, so an extra control does not break the hit, and a missing row still floats. Needs an owner-run `npm run qa:live` with a session, or the L5 checklist, before release.
 - **Login-wall signal (R-003): what it misses** ([system.md §8.5](system.md)): a page whose login marker cannot be read (`null`) never shows needs-login; a page that still says logged in after the user logged out elsewhere downloads a walled all-ages work (pixiv serves it to that session); pixiv changing how it hides walled works would show idle until the L4 live smoke catches it.
-- **Provisional-width edge:** a click on an ugoira before its metadata arrives keeps the 99-page width, so a WebM hint may be cut with an ellipsis (Fixed width).
 - **React reconciliation and foreign nodes:** inserting a node into a React-managed container is common practice (other pixiv extensions do it), but React may remove or reorder it on re-render. `ensurePlaced()` re-inserts within a frame. If pixiv's React ever throws on our sibling, the floating fallback still works. Watch during QA.
-- **Derived copy** (`live_start_ugoira`, `live_progress_*`, `live_saved_ugoira`, `_one` variants) is flagged for pm in [system.md §15](system.md).
+- **Floating fallback budget** (250 ms, Mounting): if a slower machine ever shows the pill after 3 s, raise `FLOAT_PLACEMENT_BUDGET_MS`; the only cost is a slightly wider float-then-jump window.

@@ -1,513 +1,477 @@
 # Task Plan
 
-Last updated: 2026-10-23 02:29:26 (UTC-7)
+Last updated: 2026-10-23 16:51:22 (UTC-7)
 
 ## Current State
 
-- **Dev-cycle iteration 2.** All five CUJs of prd-000 are implemented and merged on `main` (`aea2be3`). Iteration-1 QA (`docs/qa-report.md`) is FAIL with 4 LOW bugs only (0 CRITICAL/HIGH/MEDIUM). PM (`docs/pm-review.md`) rates CUJ-1, CUJ-2 and CUJ-4 Satisfied and CUJ-3 and CUJ-5 Caveats. Since iteration 1:
-  - the owner ruled R-003 (`docs/rulings.md`): `Log in to download` covers every work pixiv withholds from a logged-out visitor, and pm amended PRD-000 CUJ-5 Part A, the CUJ-1 precondition and `aria_login`;
-  - tl updated all seven design docs (system.md §6, §8.5 D10, §9, §10, §11.4–11.6, D11; the six chapters) and filed ENG-008 … ENG-011.
-  - The owner queue is empty and no routed defects exist.
+- **Dev-cycle iteration 3, Phase 2.** Iteration 2's plan (12 tasks, ENG-006 … ENG-011) is merged on `main`. Iteration-2 QA (`docs/qa-report.md`, run `iter2-03-48-13`) is FAIL with 4 LOW findings only:
+  - CUJ-3: pasted line breaks become spaces. `e2e/cuj3.spec.ts` "edge: newlines …" is **red on `main`** by design until task 1.3 lands.
+  - CUJ-5: 1 of 7 Retries during a sustained 503/500 still reads "No connection".
+  - CUJ-5: the floating fallback lands at 3011–3079 ms.
+  - CUJ-2: the 176 px ugoira pill. Since R-004 S1 this is PRD text, so it is no longer a deviation.
+- **PM iteration 2:** CUJ-1, CUJ-2 and CUJ-4 Satisfied; CUJ-3 and CUJ-5 Caveats.
+- **Since then:**
+  - The owner ruled R-004 (approve S1–S15) and R-005 (hide Chrome's download UI while a job runs), and pm applied both to prd-000 and the mocks (`053621c`, `c7b0595`).
+  - `docs/status.md` resets CUJ-1/2/4/5 per R-005.
+  - tl updated all seven design docs:
+    - system.md D12 (`download-ui.ts`), D13 (`Failure.answered` + `JobRecord.answered`, replacing `lastStatus`) and D14 (fallback timer at 3000 − 250 ms);
+    - §5 (five permissions), §9, §10 row 8, §11.5 and §11.6;
+    - the chapters' "Chrome's download UI", "Mounting", "Fixed width" (`UGOIRA_LOCALE_FLOOR_PX`), `single-line.ts`, the S15 layout, rule 5 (S5) and the e2e `__hfpTest.downloadUi()` check.
+  - The owner queue is empty, `docs/eng-backlog.md` is empty, and no routed defects exist.
 - **Focus (priority ladder):**
-  - Tiers 1–2 are empty: no MEDIUM+ bugs and no `blocking` ENG entries.
-  - Tier 3 follows the pm-review "Recommended Next-Iteration Priorities", ENG `Ordering` and tl's file constraints:
-    - **Group 1:** ENG-008 (P1 layering refactor) runs alone first, because it moves `src/background/types.ts` → `src/shared/job.ts`, which almost every later task imports (ENG-008 Ordering).
-    - **Group 2:** one combined CUJ-5 task carries R-003 needs-login plus the outage classification (`internal` kind, `lastStatus`). The two must not be split across parallel tasks, because both edit `src/shared/types.ts`, `outcome.ts`, `messages.ts` and `src/background/resolver.ts`. Beside it run the disjoint fixes:
-      - CUJ-3: clear `Saved` when a validation error shows, plus the options contrast values;
-      - pattern `~` edge trim;
-      - badge idle title at 0;
-      - ENG-010 (P2, files disjoint from everything else in the group).
-  - Tier 4 (P2) and the work that needs Group 2 merged run in **Group 3**:
-    - the button provisional width and Unavailable contrast (it must update `e2e/cuj5.spec.ts`, which the Group 2 CUJ-5 task owns);
-    - ENG-009 plus the e2e README;
-    - the live smoke (it can only pass once R-003 has merged);
-    - ENG-011 (after the outage change to `offscreen.ts`);
-    - ENG-007 (after ENG-008, after the resolver edits, and after ENG-010's `ci.yml` step);
-    - ENG-006 (its `package.json` edit comes after ENG-010's).
-- **Orchestrator prerequisite.** The iteration-2 doc changes are uncommitted on `main`: `docs/design/*.md`, `docs/prd/*.md`, `docs/eng-backlog.md`, `docs/rulings.md`, `docs/owner-queue.md`, `docs/loop-state.md` and this file. Commit them (Checkpoint A) before creating Group 1 worktrees. Every task cites design sections that exist only in the working tree today.
+  - Tier 1 (MEDIUM+ bugs) and tier 2 (`blocking` ENG) are empty.
+  - Tier 3 is the open CUJ work. tl pre-split it into four tasks that touch disjoint sets of files, and this plan keeps that split, so all four run in **one parallel group**:
+    - 1.1: the S3 job-level outage rule (CUJ-5);
+    - 1.2: R-005, Chrome's download UI (CUJ-1/2/4/5);
+    - 1.3: the CUJ-3 fixes (paste, S5, S15);
+    - 1.4: the content-script fixes (D14 timer, 176 px ugoira floor).
+  - Tier 4 (LOW bugs, P2) has nothing left.
+- **Orchestrator prerequisite.** tl's iteration-3 design-doc edits are **uncommitted** on `main`: `docs/design/*.md` and `docs/loop-state.md`, plus this file. Commit them before creating worktrees. Every task cites design sections that exist only in the working tree today, and a worktree branched from `HEAD` would not see them.
 - **Rules for every task:**
-  - The done-gate is `npm run check` (typecheck + eslint + prettier + vitest + build).
-  - Tasks that touch e2e also run their CUJ spec: `HFP_HEADLESS=1 npm run test:e2e -- --grep @cujN`.
-  - Read the design sections named in the task before coding. Do not edit `docs/prd/**` or `docs/design/**`; report a design gap in the commit message or task summary instead.
-  - From Group 2 on, the job model and protocol types (`JobRecord`, `FileTask`, `FileRole`, `FileState`, `UgoiraState`, `StartRequest`, `ErrorCode`) are imported from `src/shared/job.ts`. No context directory imports another one, and `src/shared` imports no context directory; ESLint enforces this after Group 1.
-  - Only tasks 2.5 and 3.6 may edit `package.json` / `package-lock.json`, and no task adds or upgrades a dependency.
-  - In the e2e build, Chromium throttles repeated 500/503 answers, so exhausted-retry e2e scenarios use 502/504 (see the note in `e2e/cuj5.spec.ts`).
-  - Commit with conventional messages; split a task into several commits where it has separate parts.
-- **QA expectations for iteration 2 (deliberate, not bugs):**
-  - **New contrast colours** differ from the PRD values and mocks until pm's `/spec-sync` (system.md §11.5, §15 item 7):
-    - options `Saved` light `#188038` (dark keeps `#1a9f5a`);
-    - options validation message text light `#c5221f`, dark `#f28b82` (the invalid field's 2 px border stays `#d93025`);
-    - "Still using" trailing sentence light `#5c6166` (dark keeps `#8a8f94`);
-    - button `Unavailable` text `#5f6368`.
-  - **Live work 151107515** (`xRestrict` 0, behind pixiv's sensitive-content wall) must now show `Log in to download` when logged out; iteration 1 downloaded it. The live smoke's download case now picks only works pixiv shows logged out.
-  - `aria_login` is now neutral, `Log in to pixiv to download this work.`, also for a mid-job 403 on an all-ages work.
-  - A click made before the render-time metadata arrived ends in `Log in to download` on an R-18 or walled work; iteration 1 showed `Retry` + `tip_refused` for an R-18 work (system.md §15 item 9d).
-  - **The sustained-outage replay** `docs/qa-artifacts/iter1-20-23-42/walk-scripts/diagOutage.ts` (main checkout, dev build) should show `pixiv isn't responding. Retry in a few minutes.` on all 7 clicks. A stopped server still shows `No connection. Retry when you're back online.`
-  - **Ugoira pill width** stays 176 px in English, per PRD §4.7.2 (a PRD-internal conflict with CUJ-2 step 1, still with pm).
-  - **Accepted R-003 residual** (system.md §8.5, miss 2): a page that still says "logged in" after the user logged out in another tab downloads a walled all-ages work.
-  - **Unclosed `{`** in the folder pattern is still literal text, because the PRD is unchanged.
-- **Document-authority notes (recorded for pm/tl; not tasks):**
-  1. **Contrast is a PRD-internal conflict.** The PRD index "Accessibility" says: "Every other text/background pair the extension introduces must meet WCAG 2.1 AA (4.5:1)." The specific values in CUJ-3 steps 3 and 5, §4.7.3 (Unavailable `#80868b`, "assumption — confirm; not mocked") and the `cuj-3-*` mocks fall below that line, and §4.7.7 claims "Every other state passes 4.5:1". Tasks 2.2 and 3.1 follow the index rule with the design's values, as PM recommended (pm-review item 5h). pm syncs the PRD values and mocks. The error pill's hover tint (`#d93025` on `#fdeceb`, 4.18:1) is flagged for pm only, and no task changes it.
-  2. **Open spec-sync items, system.md §15** (pm via `/spec-sync`):
-     - (1) Chrome-bubble wording under the blob hand-off (CUJ-1 steps 2 and 5, CUJ-4 edge).
-     - (2) Drop the §4.5.2 `Retry-After` "(assumption — confirm)" marker.
-     - (3) D8 path safety vs §4.4.3 "literal text … used as typed".
-     - (4) Derived `_one` copy keys.
-     - (5) Derived outcome mappings (§10 rows 4, 8 and 9; VP9 → MP4; ugoira metadata-only failure).
-     - (6) CUJ-5 step 6 detection vs Chromium throttling. Task 2.1 implements the design's per-request `lastStatus` rule; PM's broader job-level variant stays open for pm.
-     - (7) Contrast values (note 1).
-     - (8) §4.8 title with 0 counted files (task 2.4 implements the idle title).
-     - (9) R-003 residuals:
-       - (a) the CUJ-5 edge "Logged out in another tab … The click is refused" is not true for walled all-ages works;
-       - (b) the Part A step 1 "System response" still names only `xRestrict` 1;
-       - (c) §4.2 probe facts;
-       - (d) the pending-click needs-login outcome.
-     - (10) §4.7.2 provisional width, the WebM-hint ellipsis edge, and CUJ-2 step 1's "164 × 40 px" vs §4.7.2.
-     - (11) Keyboard order in pixiv's `row-reverse` row.
-     - (12) CUJ-3 step 5, unclosed `{`.
+  - **Done-gate.** `npm run check` (typecheck + eslint + prettier + vitest + build), plus the task's `HFP_HEADLESS=1 npm run test:e2e -- --grep @cujN`. Task 1.2 also runs the full e2e suite and the prod-bundle grep.
+  - **Design docs.** Read the design sections named in the task before coding. Do not edit `docs/prd/**` or `docs/design/**`; report a design gap in the commit message or task summary instead.
+  - **Dependencies.** No task adds a dependency or edits `package.json`/`package-lock.json`.
+  - **Exhausted-retry e2e.** Under the e2e build, Chromium throttles an extension's repeated 500/503 answers, so a test that asserts 4 server attempts keeps using 502/504. Only task 1.1's sustained-outage test uses 503 on purpose.
+  - **Commits.** Use conventional messages, one commit per separable part.
+  - **Shared files.** Edit only your own blocks of `e2e/cuj5.spec.ts` and only your own sections of `e2e/README.md` (see Conflict Risks). After `npx prettier --write e2e/README.md`, `git diff e2e/README.md` must show changes only inside your sections.
+- **QA expectations for iteration 3** (deliberate behaviour, not bugs):
+  - **Floating fallback.** The floating pill now appears at about **2.75 s** after route entry: the timer fires at 2750 ms, so placement lands inside the 3 s. The e2e and `diagFloat.ts` measure from `domInteractive` on a direct load and from the in-page click on SPA navigation, to the first frame after the host connects; both must be ≤ 3000 ms. Cost (accepted in D14): a row that pixiv renders between 2.75 s and 3 s shows the pill floating for a moment, then moves it into the row.
+  - **Ugoira width.** An English ugoira is **exactly 176 px** in idle, busy, Cancel-hover and Saved (`UGOIRA_LOCALE_FLOOR_PX.en`), whatever the Ugoira output. Illustrations and manga stay 164 px, also with late metadata.
+  - **"Every original resets" case.** A click where pixiv's API answered but every original's connection reset now reads `pixiv isn't responding. Retry in a few minutes.` (PRD CUJ-5 step 6 "Accepted cost"). The iteration-2 e2e "offline: every original drops its connection" therefore now expects `tip_server`. "No connection" now needs that nothing in the click got an HTTP answer: the network is disconnected, or the fake server is stopped.
+  - **Sustained outage.** Every click reads `pixiv isn't responding` (7 of 7), whatever Chromium's throttling does to the image requests. A stopped server still reads `No connection`.
+  - **Chrome's download UI (R-005).**
+    - Playwright cannot see Chrome's toolbar, bubble or fly-to-toolbar animation. The e2e suite asserts the toggle through `self.__hfpTest.downloadUi()` → `{ requested, calls: [{ enabled, ok, at }] }`, which reports what the extension asked for and that the real Chrome accepted it.
+    - The visual effect is an owner/L5 check (`docs/release-checklist.md`), or QA's OS-level screenshot of the headed harness browser: no animation and no downloads button during a job, then the button returns.
+    - Side effect accepted by R-005: a download from another site during a job also shows no animation.
+  - **Paste.** A paste with line breaks lands as one line without them: `pixiv/⏎{artist}⏎-{id}` becomes `pixiv/{artist}-{id}`. Such a paste is not on the field's native undo stack (accepted design cost).
+  - **Unclosed `{` (S5).** `pixiv/{user` and a pause show `Unknown token {user. …` and save nothing. A lone `}` is literal.
+  - **"Still using:" (S15)** stays on one line in all four locales.
+- **Two new pm spec gaps from tl** (system.md §15 "Open spec gaps"; not tasks, for pm via `/design-feature` or `/spec-sync`):
+  1. **A Chrome prompt hidden while the UI is off (R-005).** If Chrome holds a job file for a user decision (a dangerous-file warning, or an Enhanced Safe Browsing deep-scan prompt), that prompt sits in the hidden bubble. The job does not end, so the UI stays hidden until the user acts in `chrome://downloads`. The design follows the PRD as written and does not re-enable early. The L5 checklist covers it on Windows.
+  2. **Footer link contrast.** `Reset to defaults` and `Report an issue` are `#0096FA` 13 px on `#f6f7f9`, which is **2.91:1**. That is below the index's 4.5:1 rule, and outside its pixiv-blue acceptance. The build ships the PRD value; pm either extends the acceptance or specifies an AA link colour (tl suggests `#0b6fc2`, 4.82:1).
+- **Document-authority notes** (no PRD/design contradiction on user-visible behaviour was found):
+  - `docs/design/design-test-harness.md` "Open Questions & Risks" still says the `e2e/README.md` CUJ-5 mapping says "next iteration". That has been stale since iteration 2 (design-only, for tl).
+  - `docs/owner-queue.md` reads `Next-ID: R-005`, but R-005 is already ruled in `docs/rulings.md`. The next ID is R-006 (for the orchestrator's owner sweep).
 
 ## Parallel Group 1
 
-### Task: 1.1 Move the job model and protocol types into src/shared; enforce the layering rule (ENG-008)
-- **Do**:
-  - **Background.**
-    - `src/shared/{messages,outcome,progress,pixiv-api}.ts` and `src/content/button/model.ts` import `JobRecord`, `FileTask`, `StartRequest`, `UgoiraState` and `ErrorCode` from `src/background/types.ts`. That inverts the layering: the pure shared core depends on the service worker's directory (iteration-1 code review W6).
-    - `docs/design/system.md` §4 "Layering rule (D11)" and `docs/design/design-download-engine.md` "Data Model" put these types in `src/shared/job.ts`.
-    - This is a pure refactor with no behavior change. Record the vitest test count before you start; it must be identical at the end.
-  1. `git mv src/background/types.ts src/shared/job.ts`:
-     - Keep every declaration, field and comment unchanged.
-     - Change its import from `'../shared/types'` to `'./types'`.
-     - Update its header comment to cite design-download-engine.md "Data Model" and system.md §4 D11.
-  2. Update every importer, with no re-export shim left behind. `grep -rn "background/types\|from './types'" src test e2e` lists them:
-     - `src/background/{reconcile,scheduler,engine,downloads,resolver,view,badge,handlers,registry,pusher}.ts`: `'./types'` → `'../shared/job'`. Keep the imports from `'../shared/types'` as they are.
-     - `src/shared/{messages,pixiv-api,progress,outcome}.ts`: `'../background/types'` → `'./job'`.
-     - `src/content/button/model.ts`: `'../../background/types'` → `'../../shared/job'`.
-     - Tests: `test/unit/{progress,registry,view,outcome}.test.ts`, `test/unit/background/{badge,engine-scheduler,engine-transitions,engine-handlers,engine-resolver,engine-pusher}.test.ts` and `test/integration/{sw-boot,sw-restart,sw-pages}.test.ts`.
-  3. `eslint.config.js`: add one config block per directory, each using `no-restricted-imports` with `patterns`. The message cites system.md §4 D11.
-     - `src/shared/**`: forbid `background`, `content`, `offscreen` and `options`.
-     - `src/background/**`: forbid `content`, `offscreen` and `options`.
-     - `src/content/**`: forbid `background`, `offscreen` and `options`.
-     - `src/offscreen/**`: forbid `background`, `content` and `options`.
-     - `src/options/**`: forbid `background`, `content` and `offscreen`.
-     - The patterns must match relative specifiers at any depth (`../background/x`, `../../background/x`); use gitignore-style `**/background/**` groups or `regex`.
-     - Prove it: temporarily add `import type { JobRecord } from '../background/registry'` to a `src/shared` file and check that `npm run lint` fails. Then revert.
-  4. Update any remaining file-header comments in `src/` and `test/` that cite `src/background/types.ts`.
-- **Files**: `src/background/types.ts` → `src/shared/job.ts`, `src/background/{reconcile,scheduler,engine,downloads,resolver,view,badge,handlers,registry,pusher}.ts`, `src/shared/{messages,pixiv-api,progress,outcome}.ts`, `src/content/button/model.ts`, the test files listed in step 2, `eslint.config.js`
-- **Done when**:
-  - ENG-008 Verify prints `LAYERING OK`: `test ! -e src/background/types.ts && test -f src/shared/job.ts && ! grep -rEn "from '(\.\./)+(background|content|offscreen|options)/" src/shared && ! grep -rEn "from '(\.\./)+(background|offscreen|options)/" src/content && ! grep -rEn "from '(\.\./)+(background|content|options)/" src/offscreen && ! grep -rEn "from '(\.\./)+(background|content|offscreen)/" src/options && grep -q "no-restricted-imports" eslint.config.js && npm run check && echo LAYERING OK`
-  - The vitest test count is unchanged, and `git diff --stat` shows no change to any declaration in the moved file beyond its import line and header comment.
-  - The deliberate bad import from step 3 failed `npm run lint` before it was reverted (say so in the summary).
-
-## Parallel Group 2 (depends on Group 1)
-
-### Task: 2.1 CUJ-5: needs-login on pixiv's login walls (R-003) and honest outage causes (`internal` kind, `lastStatus`)
+### Task: 1.1 CUJ-5: "No connection" only when pixiv answered nothing in the click (R-004 S3, D13)
 - **Do**:
   - **Why.**
-    - **(1) Owner ruling R-003** (`docs/rulings.md`). PRD-000 CUJ-5 acceptance criterion, verbatim: "Logged out, on an all-ages work (`xRestrict` 0) that pixiv hides behind its `This work may contain sensitive content. Please log in to view this work.` wall, the button renders `Log in to download` before any click, with the same styling and tooltip as on an R-18 work and the accessible name `Log in to pixiv to download this work.` Clicking it navigates to `https://accounts.pixiv.net/login?return_to=` followed by the URL-encoded artwork URL, and after logging in the returned page shows the normal idle `Download · NP` (per R-003)."
-      - Today the extension keys needs-login on `xRestrict ≥ 1` only.
-      - Live work 151107515 (all-ages, walled) shows `Download · 4P` and saves all four originals.
-    - **(2) QA iteration-1 LOW bug (CUJ-5).** "During a sustained 500/503 from `i.pximg.net`, from the user's 4th `Retry` onward Chromium's extension-request throttling refuses 3 of the 4 attempts locally. … server hits per click went 4, 3, 2, 1, 1, 1, 1. The extension maps the refusal to `network` (`src/shared/retry.ts:126`) and `errorCause` (`src/shared/outcome.ts:24-33`) then reports 'No connection. Retry when you're back online.', although the user is online and pixiv is failing."
-      - Same class (code review W2): a refused or unreachable offscreen command also ends as "No connection".
+    - **QA iteration-2 LOW bug (CUJ-5).** In QA's dev-build replay (`docs/qa-artifacts/iter2-03-48-13/walk-scripts/diagOutage.ts`), single-page work 135882742 had every original answering 503 (or 500), and the user clicked Retry 7 times. Server hits per click were 4, 3, 2, 2, 1, **0**, 1. On the click with 0 hits, Chromium's extension-request throttling refused all 4 attempts locally, so no request carried `lastStatus`. `isUnanswered` (`src/shared/outcome.ts:27,35`) then classified the job `offline`, and the tooltip read "No connection. Retry when you're back online." This happened although `/ajax/illust` and `/pages` had answered 200 through the tab in that same click. It occurred in 5 of 5 replays.
+    - **PRD CUJ-5 step 6 table (R-004 S3), verbatim:**
+      - "No connection": "0 pages saved, and either `navigator.onLine === false`, or pixiv answered nothing in this click: no request of this click's job (to `www.pixiv.net` or `i.pximg.net`) got any HTTP response, and every failure is a network error (per R-004 S3)".
+      - "pixiv server failure": "0 pages saved, no other cause in this table applies, and pixiv answered at least one request of this click's job (any HTTP status, including the artwork API's 200) or a request timed out. The extension's own internal failures also land here (per R-004 S3, S10)".
+    - **PRD CUJ-5 acceptance criteria, verbatim:**
+      - "With the network disconnected, clicking Download ends in `Retry` with the tooltip `No connection. Retry when you're back online.`"
+      - "During a sustained pixiv outage (every image request answered 500 or 503), every click ends in `Retry` with the tooltip `pixiv isn't responding. Retry in a few minutes.`, including the 7th consecutive Retry; none reads `No connection…` (per R-004 S3)."
   - **Read first:**
-    - `docs/design/system.md`: §6 (`WorkInfo.withheld`, `FailureKind` `internal`, `Failure.lastStatus`), §8.5 "pixiv's login walls: the needs-login signal (R-003)" (D10, including the exact `isWithheld`/`requiresLogin` code), §9 (row "Final failure after server answers (`lastStatus`)"), §10 (rows 4 and 8, "Why `internal` reads as `server`"), and §11.4 ("Translations of `aria_login`").
-    - `docs/design/design-download-engine.md`: "Data Model" (`StartRequest.full.loggedIn`), "Resolving" steps 2 and 3a (`Resolution` with `loginRequired`), the event table rows "`off/ready` without `blobUrl`" and "Dispatch refused …", "Testing", and "Migration / Rollout".
-    - `docs/design/design-artwork-button.md`: "Render-time metadata", "Needs-login decision (R-003)", the state diagram, the click-payload table, and "Testing".
-    - `docs/design/design-offscreen-worker.md`: "Cross-Cutting Concerns" → "Error handling".
-    - `docs/design/design-test-harness.md`: "Fake pixiv server" (the login-walls paragraph), the fixtures row 135882745, and the L3 rows "CUJ-5 (R-003)" and "CUJ-5 step 6".
-  - **Part A: outage classification.** Commit as e.g. `fix(engine): classify throttled 5xx and internal failures as server errors`.
-    1. `src/shared/types.ts`:
-       - `FailureKind` gains `'internal'`.
-       - `Failure` gains `lastStatus?: number`, with the field comments of system.md §6.
-    2. `src/shared/retry.ts`:
-       - When the final attempt fails with `network` or `timeout`, and an earlier attempt of the **same request** got HTTP 429/5xx, the returned `Failure` keeps its final `kind` and adds `lastStatus` = the most recent such status.
-       - Nothing else in the policy changes: still 4 attempts, 403 never retried, `Retry-After` ≤ 30 s.
-    3. `src/shared/outcome.ts`, row 8. The cause from the job's failures, first match wins:
-       - (a) at least one failure, and all are `disk`/`dismissed` → `disk`;
-       - (b) `navigator.onLine === false`, or at least one failure and every failure is `kind === 'network'` **with no `lastStatus`** → `offline`;
+    - `docs/design/system.md`:
+      - §6: `Failure.answered`, and the `JobRecord.answered` comment;
+      - §9: the row "Final failure after an answer (`answered`)";
+      - §10: row 8, "How 'answered' is tracked (D13)" with the exact `gotAnswer` / `errorCause` code and its bullets, and "`internal` reads as `server`";
+      - §14: D13.
+    - `docs/design/design-download-engine.md`:
+      - "Data Model" (`JobRecord.answered`);
+      - "Resolving": the `Resolution` type with `answered: boolean`, and the "`answered` (R-004 S3, D13)" paragraph with its examples;
+      - "Cross-Cutting Concerns → Testing": the row-8 and resolver cases;
+      - "Migration / Rollout → Iteration 3".
+    - `docs/design/design-offscreen-worker.md`: the body-level-failure paragraph under the fetch pseudo-code.
+    - `docs/design/design-test-harness.md`, L3 mapping: the rows "CUJ-5: offline (R-004 S3)" and "CUJ-5 step 6 and AC 'sustained outage, 7th Retry' (R-004 S3)".
+  1. **`src/shared/types.ts`.**
+     - Remove `Failure.lastStatus`.
+     - Add `answered?: true`, with the §6 comment: kind `network` | `timeout` only; some attempt of this request got an HTTP response before it finally failed.
+  2. **`src/shared/job.ts`.** `JobRecord` gains `answered?: true`, with the Data Model comment.
+  3. **`src/shared/retry.ts`.**
+     - Replace `lastStatus` / `withLastStatus` with `answered`. An attempt "got an answer" when `fetch()` resolved with a response (status line and headers). That covers:
+       - an earlier 429/5xx `http` failure;
+       - a final attempt that failed while reading the body: short or long body, a reset mid-body, or a stall (timeout) mid-body.
+     - A `fetch()` that rejects before any response is unanswered. Examples: DNS failure, a refused or reset connection, offline, Chromium's local "Request throttled" refusal.
+     - When the request finally fails with `network` or `timeout` and any of its attempts got an answer, the returned `Failure` keeps its `kind` and adds `answered: true`.
+     - `http` and `pixivError` never carry the flag (they are answered by definition), and neither does `aborted`.
+     - Nothing else in the policy changes: 4 attempts, 403 never retried, `Retry-After` ≤ 30 s, the 30 s stall timer. Update the doc comments that cite `lastStatus`.
+  4. **`src/shared/messages.ts` `isFailure`.**
+     - Drop the `lastStatus` check.
+     - Accept an optional `answered` that is exactly `true`. Any other value under that key (`false`, `1`, `'yes'`) → not a `Failure`.
+     - `FAILURE_KINDS` already contains `internal`; keep it.
+  5. **`src/shared/outcome.ts`.** Row 8 becomes the job-level rule, exactly as in system.md §10:
+     - `const gotAnswer = (f) => f.kind === 'http' || f.kind === 'pixivError' || f.answered === true`.
+     - `errorCause(job, list, navigatorOnLine)`:
+       - (a) all failures `disk`/`dismissed` → `disk`;
+       - (b) `answered = job.answered === true || list.some(gotAnswer)`. `!navigatorOnLine`, or `!answered` with at least one failure and every failure `network` → `offline`;
        - (c) otherwise → `server`.
-    4. Use `internal` at the four plumbing points (system.md §10):
-       - `src/background/resolver.ts` `fetchJson` catch (neither the tab nor the offscreen document answered): `kind: 'internal'`.
-       - `src/background/engine.ts` `dispatch`, for a refused or undeliverable offscreen command: `internal` for every role except `video`, which stays `encode`.
-       - `src/background/downloads.ts` `onOffReady` without `blobUrl` for a file that must be saved: `{ kind: 'internal', detail: 'no blob' }`.
-       - `src/offscreen/offscreen.ts` `failureOf`, for an exception in a non-encode task: `{ kind: 'internal', detail: 'exception', attempts: 1 }`. Leave the encode branch's `attempts` alone; ENG-011 (task 3.4) changes it.
-    5. `src/shared/messages.ts`:
-       - `FAILURE_KINDS` includes `internal`.
-       - `isFailure` accepts an optional integer `lastStatus` and rejects a non-integer one.
-  - **Part B: R-003 needs-login.** Commit as e.g. `feat(content): needs-login on pixiv's login walls (R-003)`.
-    1. **Shared core:**
-       - `src/shared/types.ts`: `WorkInfo.withheld: boolean`.
-       - `src/shared/constants.ts`: `WITHHELD_MIN_SANITY_LEVEL = 4`.
-       - `src/shared/pixiv-api.ts`:
-         - `parseIllust` sets `withheld` with exactly the `isWithheld` logic of system.md §8.5: `urls.original === null` → true; a string → false; `urls`/`original` missing or unrecognized → `sl >= 4`.
-         - Log a `warn` (`createLogger` from `src/shared/log.ts`) whenever the `sl` fallback is used.
-         - Export `requiresLogin(work, loggedIn) = loggedIn === false && (work.xRestrict >= 1 || work.withheld)`.
-    2. **Protocol:**
-       - `src/shared/job.ts`: `StartRequest` `full` gains `loggedIn: boolean | null`.
-       - `src/shared/messages.ts` `isStartRequest`: `full` requires `loggedIn` to be exactly `true`, `false` or `null`. A missing or any other value → `BAD_REQUEST`.
-       - `src/background/handlers.ts` `startRequest()` copies `loggedIn`.
-    3. **Resolver** (`src/background/resolver.ts`):
-       - `Resolution` gains `{ ok: false; loginRequired: true }`.
-       - In `resolveFull`, right after the illust parses and **before** `/pages` or `ugoira_meta` is called: if `requiresLogin(work, request.loggedIn ?? null)`, return `loginRequired`.
-       - `applyResolution` sets `stopReason = 'forbidden'` for it and finalizes.
-       - Retry modes skip the check.
-    4. **Classifier** (`src/shared/outcome.ts`, row 4): `needsLogin` also when `stopReason === 'forbidden'` and no byte file failed. Both the first byte 403 and the resolver stop set `stopReason = 'forbidden'` (system.md §10 row 4).
-    5. **Content script:**
-       - `src/content/button/model.ts`: on the `metadata` event, use `requiresLogin(event.work, event.loggedIn)` instead of the `xRestrict` check.
-       - Every `full`-mode start payload carries `loggedIn`: `pending` (`expectedFiles: 0`), `idle`, `saved`, and `error` with a cause.
-       - `src/content/content.ts`: pass the page's marker, read once per document by `readIsLoggedIn`, into the start payload. Log each needs-login decision at `debug` with its reason (`xRestrict` or `withheld`).
-    6. **Copy.** In all four `src/_locales/*/messages.json`, change `aria_login` and nothing else:
-       - en `Log in to pixiv to download this work.`
-       - ja `この作品をダウンロードするには、pixivにログインしてください。`
-       - zh_CN `登录 pixiv 以下载此作品。`
-       - zh_TW `登入 pixiv 以下載此作品。`
-    7. **API fixtures.** Add `test/fixtures/api/illust-walled.json`, a reduced 151107515 body (`xRestrict` 0, `sl` 4, all five `urls` keys `null`, illustType 0, pageCount 4), and `test/fixtures/api/illust-visible.json`, a reduced 151061734 body (`xRestrict` 0, `sl` 2, `urls.original` an `https://i.pximg.net/img-original/…_p0.jpg` string).
-       - Use the same `{ error, message, body }` envelope as `test/fixtures/api/illust-manga.json`.
-       - Capture them logged out: `curl` with a desktop Chrome User-Agent, no cookies. Reduce each to the keys `parseIllust` reads plus `urls`, `sl` and `xRestrict`.
-       - If pixiv is unreachable, build them from the evidence table in system.md §8.5 and say so in the commit message.
-    8. **Fake pixiv** (`e2e/fixtures/works.ts`, `e2e/server/{ajax,server,page}.ts`), per design-test-harness.md "Login walls mirror live pixiv":
-       - Add `sensitiveWall?: boolean` to `WorkBase`.
-       - Add fixture **135882745**: a 4-page illust, `xRestrict` 0, `sensitiveWall: true`, with a `purpose`.
-       - `/ajax/illust` sends `sl` 6 for `xRestrict ≥ 1`, 4 for `sensitiveWall`, else 2. For a logged-out request it nulls every `urls` key when the work is R-18/R-18G **or** `sensitiveWall`; logged in, the URLs are present.
-       - `/pages` and `ugoira_meta` of a `sensitiveWall` work answer normally while logged out, as pixiv does, so the tests prove the **extension** withholds the download.
-       - The logged-out artwork page of a `sensitiveWall` work replaces the image with `This work may contain sensitive content.` … `Please log in to view this work.`; the action row stays.
-       - Do **not** edit `e2e/README.md` (task 3.2 documents the fixture) or the zip-building code (task 3.2, ENG-009).
-    9. **Unit tests** (one case per item):
-       - `retry.test.ts`:
-         - 503, then three `TypeError`s → `{ kind: 'network', lastStatus: 503 }`;
-         - a timeout after 429 → `{ kind: 'timeout', lastStatus: 429 }`;
-         - all network errors → no `lastStatus`;
-         - 403 → 1 attempt.
-       - `outcome.test.ts`:
-         - all `network` without `lastStatus` → offline;
-         - a `network` with `lastStatus` 503 → server;
-         - any `internal` → server;
-         - `navigator.onLine === false` → offline;
-         - all `disk`/`dismissed` → disk;
-         - row 4 via `stopReason 'forbidden'` with no failed file → needsLogin.
-       - `pixiv-api.test.ts`:
-         - `withheld` from both new fixtures;
-         - a body without `urls` and `sl` 4 → true, and with `sl` 2 → false;
-         - the `requiresLogin` truth table of system.md §8.5.
-       - `messages.test.ts`:
-         - `internal` and `lastStatus` accepted;
-         - a non-integer `lastStatus` rejected;
-         - `job/start` `full` with `loggedIn` missing or `'yes'` → rejected.
-       - `test/unit/background/engine-resolver.test.ts`:
-         - `full` with `loggedIn: false` on a withheld body → `loginRequired`, and the fake API saw no `/pages` or `ugoira_meta` call;
-         - `loggedIn: true` or `null` → proceeds;
-         - retry modes skip the check;
-         - a transport error from both tab and offscreen → `apiFailure` with `kind: 'internal'`.
-       - Engine tests: a refused dispatch → `internal` (video → `encode`); `off/ready` without `blobUrl` → `internal`.
-       - `test/unit/offscreen/offscreen.test.ts`: a non-encode exception → `internal`.
-       - `test/unit/button/model.test.ts`:
-         - metadata `{ xRestrict: 0, withheld: true }` with `loggedIn` `false` → needsLogin;
-         - with `true` or `null` → idle;
-         - start payloads carry `loggedIn`.
-       - `test/unit/button/labels.test.ts`: the new `aria_login` text.
-       - `test/unit/content/content.test.ts`: the walled case.
-       - Add `withheld` to every `WorkInfo` literal the compiler flags, wherever it is (e.g. `test/unit/button/*`, `test/unit/content/*`).
-    10. **E2E** (`e2e/cuj5.spec.ts`, `@cuj5`). Update `ARIA_LOGIN` to `Log in to pixiv to download this work.` and the AC→test comment at the top, then add:
-        - (i) Logged out on 135882745:
-          - `Log in to download` before any click: white fill, 1.5 px `#c4c7c5` border, `#3c4043` text, no icon, the tooltip `Opens pixiv login and returns you here`, and the `aria-label` above;
-          - the click goes to `https://accounts.pixiv.net/login?return_to=` + the encoded artwork URL;
-          - after the fake login, the page shows `Download · 4P`, and a click saves 4 originals.
-        - (ii) Pending click:
-          - `server.hold('/ajax/illust/135882745')` before opening the page. It drip-feeds and never stalls; see e2e/README.md "Stall timeout".
-          - Click while the button is still `Download` with no hint, then release.
-          - The button ends `Log in to download`, and `server.requests()` shows no `/ajax/illust/135882745/pages` and no `i.pximg.net` request for 135882745.
-        - (iii) Logged in on 135882745: `Download · 4P`, and the download saves 4 files.
+     - Remove `isUnanswered`, and update the header comments.
+  6. **`src/background/resolver.ts`.**
+     - `Resolution`'s failure variant becomes `{ ok: false; apiFailure: ApiFailure; answered: boolean }`.
+     - The resolve is answered when any of its API steps got a `RetryResult` that is `ok`, or whose failure `gotAnswer()` (export `gotAnswer` from `outcome.ts`, or keep an equivalent module-local predicate).
+     - The failure returned for a later step carries the flag. Examples:
+       - `full`, `/ajax/illust` 200 then `/pages` with an unanswered `network` failure → `answered: true`;
+       - `full`, `/ajax/illust` unanswered `network` → `false`;
+       - `retryPages`, `/pages` got 503, 503, then refused attempts → the failure has `answered: true` → `true`;
+       - a transport failure of both proxies (`internal`) → `false`, which row 8 still reads as `server`.
+     - `applyResolution` sets `job.answered = true`, in the same mutation that applies the resolution, when the resolution is `ok`, is the login-wall stop (`loginRequired`), or is a failure with `answered: true`. It is never cleared.
+     - Do not edit `engine.ts`; task 1.2 owns it, and `engine.start()` needs no change because the field is optional.
+  7. **Unit tests** (one case per item):
+     - `test/unit/retry.test.ts`. Replace the `lastStatus` describe block with an `answered` one:
+       - 503, then three `TypeError`s → `{ kind: 'network', answered: true, attempts: 4 }`;
+       - a timeout after a 429 → `{ kind: 'timeout', answered: true }`;
+       - a short body, then `TypeError`s → `answered: true`;
+       - a stall mid-body on every attempt → `timeout` with `answered: true`;
+       - `TypeError` on every attempt → no `answered` key;
+       - a final `http` failure → its `status`, no `answered`;
+       - 403 → 1 attempt, no `answered`;
+       - aborted → no `answered`.
+     - `test/unit/outcome.test.ts`. Replace the `lastStatus` cases with:
+       - a job without `answered` whose only failure is an unanswered `network` API failure → `offline`;
+       - a resolved job (`answered: true`) whose every original failed with unanswered `network` → `server`;
+       - an API `network` failure with `answered: true` → `server`;
+       - any `internal` → `server`;
+       - any `timeout` → `server`;
+       - `navigator.onLine === false` → `offline`, even when answered;
+       - all `disk`/`dismissed` → `disk`;
+       - keep row 4 via `stopReason 'forbidden'` with no failed file.
+     - `test/unit/messages.test.ts`:
+       - `answered: true` on a `network` and on a `timeout` failure → accepted;
+       - `answered: false`, `1` and `'yes'` → rejected;
+       - delete the `lastStatus` rows.
+     - `test/unit/background/engine-resolver.test.ts`:
+       - `Resolution.answered` for each example in step 6;
+       - `applyResolution` sets `job.answered` for `ok`, for the login-wall stop and for an answered failure, and leaves it absent for an unanswered failure;
+       - fix the existing literal `{ ok: false, apiFailure: failure }` (around line 527) to include `answered`.
+     - If another unit test (e.g. `test/unit/offscreen/*`, `test/unit/content/api-proxy.test.ts`) asserts an exact failure shape that now gains `answered`, update only that assertion. Do not edit `test/integration/**` or `test/fakes/**` (task 1.2 owns them). No integration test is expected to change; if one fails, stop and report rather than edit it.
+  8. **E2E, `e2e/cuj5.spec.ts`.** You own these blocks only:
+     - **(a)** the header comment, lines 1–52. Renumber its AC table to the PRD's current 16 CUJ-5 acceptance criteria:
+       - 7 = network disconnected;
+       - 8 = sustained outage (new, mapped to the new test below);
+       - 9–16 shift by one;
+       - 15's wording becomes "within 3 s of the page loading or of the in-app navigation, measured to the pill appearing (R-004 S4)".
+       - Keep the test title prefixes as they are. Rewrite the Chromium-throttling note and the "Not covered here" paragraph, which no longer applies to the sustained-outage case.
+     - **(b)** the test `'offline: every original drops its connection → …'`. Rename it, e.g. `'server failure: every original drops its connection while the API answered → Retry with "pixiv isn’t responding"; Retry re-runs the whole job'`. Expect `TIP_SERVER` (title, `aria-label` and live text); keep the 4-requests-per-page check and the "back online → Saved · 12P" half.
+     - **(c)** a new test right after `'server failure: 5xx on every original after 4 attempts …'`, e.g. `'sustained outage: every original answers 503; 7 consecutive clicks each end Retry with "pixiv isn’t responding", never "No connection"'`:
+       - `server.fault({ match: originalUrl(SINGLE, 0), responses: 503 })`, open SINGLE (135882742) and click.
+       - Do this 7 times: wait for the resting `Retry`, assert `title === TIP_SERVER` and the `aria-label`, then click again.
+       - Allow Chromium's throttling console line with `harness.allowConsoleErrors(...FAULT_LOGS, /Request throttled/)`.
+       - Record the server hits per click in a `test.info().annotations` entry; do not assert them (throttling decides them).
+     - **(d)** the "QA gate additions (iteration 2)" comment block above `test.describe('CUJ-5: QA gate additions (iteration 2)' …)`, and the `'server failure: a ${name} answer, then dropped connections …'` loop: replace the `lastStatus` wording with `answered`. The tests themselves should pass unchanged.
+     - Do **not** touch the two `'floating fallback: …'` tests in "Part C" (task 1.4 owns them) or the import block.
+  9. **`e2e/README.md`.** You own the `### CUJ-5 (cuj5.spec.ts, @cuj5)` section only:
+     - renumber its rows as in 8(a), with the same AC 15 wording;
+     - add the sustained-outage row;
+     - update the "offline" row (1 test now) and the trailing paragraph about 502/504 and throttling.
 - **Files**:
-  - Shared: `src/shared/{types,job,constants,pixiv-api,messages,retry,outcome}.ts`
-  - Service worker: `src/background/{resolver,handlers,engine,downloads}.ts`
-  - Offscreen: `src/offscreen/offscreen.ts` (`failureOf`, non-encode branch only)
-  - Content script: `src/content/content.ts`, `src/content/button/model.ts`
-  - Copy: `src/_locales/{en,ja,zh_CN,zh_TW}/messages.json`
-  - Fixtures: `test/fixtures/api/illust-walled.json`, `test/fixtures/api/illust-visible.json`
-  - Unit tests: `test/unit/{retry,outcome,pixiv-api,messages}.test.ts`, `test/unit/background/engine-*.test.ts`, `test/unit/offscreen/offscreen.test.ts`, `test/unit/button/{model,labels}.test.ts` (plus `WorkInfo`-literal fixes in other `test/unit/button/*` and `test/unit/content/*` files), `test/unit/content/content.test.ts`, `test/integration/*` as needed
-  - E2E: `e2e/fixtures/works.ts`, `e2e/server/{ajax,server,page}.ts`, `e2e/cuj5.spec.ts`
+  - Shared: `src/shared/{types,job,retry,messages,outcome}.ts`
+  - Service worker: `src/background/resolver.ts`
+  - Unit tests: `test/unit/{retry,outcome,messages}.test.ts`, `test/unit/background/engine-resolver.test.ts`, and exact-shape assertions elsewhere under `test/unit/**` only if they break
+  - E2E: `e2e/cuj5.spec.ts` (blocks 8a–d), `e2e/README.md` (CUJ-5 section)
 - **Done when**:
-  - `npm run check` passes.
-  - `HFP_HEADLESS=1 npm run test:e2e -- --grep @cuj5` passes, and the full `HFP_HEADLESS=1 npm run test:e2e` passes, because the fake server and fixtures are shared by every spec.
-  - `grep -rn "R-18 work" src/_locales` prints nothing.
-  - Every unit case listed in step B9 exists and passes.
-  - **QA bug repro, unit level:** a pages job whose failures are all `{ kind: 'network', lastStatus: 503 }` classifies as `{ type: 'error', cause: 'server' }`, and one with plain `network` failures classifies as `offline`. QA re-runs the end-to-end replay `diagOutage.ts` against the merged dev build.
-  - A logged-out click on a withheld work, made before its metadata arrived, never reaches `/pages`, `ugoira_meta` or `i.pximg.net` (e2e (ii)).
+  - `npm run check` passes, and `npm run size` passes (retry.ts is in the content bundle).
+  - `HFP_HEADLESS=1 npm run test:e2e -- --grep @cuj5` passes, including the renamed test (now `tip_server`) and the new 7-click test. Run the new test 3 times with `--grep "sustained outage" --repeat-each=3`; it passes every time.
+  - `! grep -rn "lastStatus" src test e2e` prints nothing.
+  - **QA repro, unit level.**
+    - A job with `answered: true` whose failures are all `{ kind: 'network' }` without the flag classifies as `{ type: 'error', cause: 'server' }`.
+    - The same job without `answered` classifies as `offline`.
+    - QA re-runs `diagOutage.ts` against the merged dev build: ≥ 3 replays × 7 clicks for 503 and 500 must all read "pixiv isn't responding", and the stopped server must still read "No connection".
 
-### Task: 2.2 CUJ-3: clear `Saved` when a validation error shows; options-page contrast values
+### Task: 1.2 Hide Chrome's download UI while a job runs; the `downloads.ui` permission (R-005, D12)
 - **Do**:
   - **Why.**
-    - **QA iteration-1 LOW bug (CUJ-3).** "A green `✓ Saved` from the previous valid save stays visible (up to 2 s) beside the **Download folder** heading while the field shows a validation error. This contradicts PRD CUJ-3 step 5 ('No `Saved` appears') and the `cuj-3-error` mock. Repro: insert a chip (valid, saves), then within 2 s type `pixiv/{artst}-{id}`." The cause: `showError` (`src/options/page.ts`) never cancels the indicator, which runs on its own timer (`src/options/saved.ts`).
-    - **Contrast.** PRD index "Accessibility", verbatim: "Every other text/background pair the extension introduces must meet WCAG 2.1 AA (4.5:1)."
-  - **Read** `docs/design/design-options-page.md`: "Styles" (token table), "Validation, preview and save" (flowchart), "`Saved` indicator" (the `SavedIndicator` interface and "An error always clears the folder section's `Saved`"), "A11y" and "Testing". Also read `docs/design/system.md` §11.5 (contrast table).
-  1. `src/options/saved.ts`: add `clear()` to `SavedIndicator`. It cancels both timers, empties the element and sets opacity 0 at once, with no fade. A later `flash()` still works.
-  2. `src/options/page.ts`:
-     - `showError()` calls the folder section's indicator `clear()` before it renders the message.
-     - In `save()`, the folder flash runs only if the field shows no error (`error === null`) when `writeSettings` resolves. The write itself still counts.
-     - The Ugoira and metadata indicators are untouched.
-  3. `src/options/options.css`. Give text and border separate variables, so the field border no longer shares the text colour:
-     - `Saved` text: light `#188038`; dark keeps `#1a9f5a`.
-     - Validation message text: light `#c5221f`, dark `#f28b82`.
-     - Invalid field border: stays 2 px `#d93025` in both modes.
-     - "Still using" trailing sentence (`.muted`): light `#5c6166`; dark keeps `#8a8f94`.
-  4. Unit tests:
-     - `test/unit/options/saved.test.ts`: `clear()` cancels a pending hide and fade, empties the element immediately, and a re-flash after `clear()` shows `Saved` again.
-     - `test/unit/options/page.test.ts`:
-       - a valid save, then an invalid edit within 2 s → the folder indicator is empty the moment the error renders;
-       - a write that resolves after the field turned invalid does not flash;
-       - the other two indicators are unaffected.
-  5. `e2e/cuj3.spec.ts` (`@cuj3`):
-     - Add the regression: insert the `{id}` chip, then within 2 s fill `pixiv/{artst}-{id}`. While the error shows, `saved('folder')` is empty, both at once and for the next 2 s.
-     - Update the colour assertions to the new values in light and dark: the error text colour, the `Saved` colour (currently `rgb('#1a9f5a')` around line 698) and the "Still using" trailing text. The field border assertions stay `#d93025`.
-- **Files**: `src/options/saved.ts`, `src/options/page.ts`, `src/options/options.css`, `test/unit/options/saved.test.ts`, `test/unit/options/page.test.ts`, `e2e/cuj3.spec.ts`
+    - **Owner ruling R-005** (`docs/rulings.md`). Each file handed to Chrome triggers Chrome's fly-to-toolbar animation, so a 20-page manga produced 20 of them; the owner observed this on first install.
+    - **PRD §4.1 #3, verbatim:** "From the moment the first file of a job is handed to Chrome until the last running job ends, for any reason (Saved, cancelled, failed, needs login, or Unavailable), the extension turns Chrome's download UI off with `chrome.downloads.setUiOptions({ enabled: false })`: no per-file fly-to-toolbar animation and no downloads button in Chrome's toolbar. When the last running job ends, it turns the UI back on … it never starts before the job's first file is handed to Chrome and ends as soon as the last running job ends. Whenever the background worker starts and no job is running, it turns the UI back on. This needs the `downloads.ui` permission."
+    - **CUJ-1 acceptance criterion, verbatim:** "During a 12-page download Chrome's download bubble does not appear or animate, for any of the job's files including the first; after the job ends it is available again and lists `metadata.json` and the 12 originals (per R-005)."
+    - **CUJ-4 edge, verbatim:** "With two concurrent jobs it stays hidden until both have finished: when job B ends while job A still runs, it stays hidden, and it returns only when job A ends too (Saved, cancelled, or failed)."
+    - **PRD index:** permissions `downloads`, `storage`, `offscreen`, `declarativeNetRequestWithHostAccess`, `downloads.ui`. The `downloads.ui` justification is "Hides Chrome's per-file download animation while a multi-page artwork saves, then restores it."
+  - **Read first:**
+    - `docs/design/design-download-engine.md`:
+      - "Chrome's download UI (download-ui.ts, R-005)", in full: the platform facts, the `DownloadUi` interface, the state/call table, the three call sites, error handling and the test API;
+      - "Boot sequence" (the `restoreDownloadUiIfIdle()` line and why it sits between `hydrate()` and `reconcile()`);
+      - "Finalize" step 5;
+      - "Offscreen events → file transitions" (the `off/ready` row, `handOff()`);
+      - "Cancel";
+      - the "Where Chrome's download UI is toggled" alternatives table;
+      - "Cross-Cutting Concerns → Testing" (the `download-ui.ts` and R-005 integration bullets);
+      - "Migration / Rollout → Iteration 3".
+    - `docs/design/system.md`: §2 data flow, §5 (manifest, permission justifications, the manifest-test paragraph), §13 (the two R-005 rows), §14 D12, §15 (risks: SW killed before restore, another extension).
+    - `docs/design/design-test-harness.md`:
+      - "L1 Manifest test";
+      - "L2: SW integration with chrome fakes" (the `setUiOptions` fake and the shared call log, `await:handoff.hideUi`, the "R-005 assertions (L2)" paragraph);
+      - the L3 helper `downloadUi()`;
+      - the mapping rows "CUJ-1 (R-005)" and "CUJ-4 (R-005)";
+      - L5 "Chrome's download UI (R-005)".
+  1. **`src/background/download-ui.ts` (new).**
+     - `createDownloadUi(setUiOptions = (o) => chrome.downloads.setUiOptions(o))` returns `{ hideForHandOff(), restore() }`.
+     - In-memory state per SW instance only (nothing persisted): `requested: boolean | null`, a serializing `chain` promise, and a `hideRefused` latch.
+     - Follow the design's call table exactly. `requested` is updated **synchronously** before enqueueing, so concurrent callers stay ordered and one hide serves every racing hand-off.
+     - Neither method ever rejects:
+       - a refused hide → `warn` once per instance, then latch;
+       - a refused restore → `debug`, and `requested` stays `true`.
+     - Record `{ enabled, ok, at: Date.now() }` per settled call for the test API (below).
+  2. **`src/background/engine.ts`.**
+     - Create the engine's `DownloadUi`, injectable for tests.
+     - **`handOff()`:** after its `saving` guard and before `chrome.downloads.download`:
+       - `await downloadUi.hideForHandOff()`;
+       - then `if (__TEST_HOOKS__) await __testHook('await:handoff.hideUi')`;
+       - then `if (!registry.get(job.jobId)) return`. A job cancelled while the hide was in flight never hands that file to Chrome.
+       - Keep the existing `await:handoff.download` point right before the download call.
+     - **`finalize()`:** after the mutation that deletes the record, when `registry.list().length === 0`: `await downloadUi.restore()`, then `scheduleClose()` unless `probePending()`.
+     - Add `restoreDownloadUiIfIdle(): Promise<void>` to `Engine`: restore only when the registry is empty, otherwise resolve.
+  3. **`src/background/sw.ts` boot.** `await engine.restoreDownloadUiIfIdle()` after the first `engine.badge.render()` and before `engine.reconcile()`. Listener registration stays synchronous at top level.
+  4. **Test API.**
+     - `src/shared/test-hooks.ts` gains `exposeTestApi(api: Record<string, unknown>)`, which **merges** into `globalThis.__hfpTest` instead of replacing it.
+     - `src/background/options-tab.ts` switches `installTestApi()` to it, so `clickAction` and `downloadUi` coexist.
+     - The download-UI installer exposes `downloadUi(): { requested, calls }`. Like `options-tab.ts`, it is a function referenced only from `if (__TEST_HOOKS__)`, so prod bundles carry no trace (ENG-007).
+  5. **Manifest.**
+     - `src/manifest.json` `permissions` becomes exactly `["downloads", "storage", "offscreen", "declarativeNetRequestWithHostAccess", "downloads.ui"]`, in this order.
+     - `test/unit/manifest.test.ts`: rename the case to "requests exactly the five approved permissions" and update it and the whole-manifest literal (system.md §5).
+  6. **Chrome fake (`test/fakes/chrome.ts`, per design-test-harness L2).**
+     - `downloads.setUiOptions({ enabled })` keeps `uiEnabled` (initially `true`).
+     - It rejects like Chrome when the manifest the fake loads (`src/manifest.json`) lacks `downloads.ui`.
+     - It supports `failNextSetUiOptions(message)`.
+     - It appends to an ordered **call log shared with `download()`**: `Array<{ op: 'ui'; enabled: boolean } | { op: 'download'; filename: string }>`.
+     - Extend `test/unit/background/chrome-fake.test.ts` for these.
+  7. **Unit tests.**
+     - `test/unit/background/download-ui.test.ts` (new), with a fake `setUiOptions`:
+       - concurrent `hideForHandOff()` calls make one Chrome call, and all resolve after it;
+       - `restore()` then `hideForHandOff()` in the same tick apply in that order;
+       - a refused hide warns once, latches, and still resolves;
+       - a refused restore resolves and logs at `debug`;
+       - `requested === null` at start makes both methods call Chrome.
+     - Engine tests (`test/unit/background/engine-*.test.ts` other than `engine-resolver.test.ts`, which task 1.1 owns): the hand-off awaits the hide before `download`; a cancel during the hide → no `download`.
+     - `test/unit/background/sw.test.ts`: the boot order.
+     - `test/unit/background/options-tab.test.ts`: `exposeTestApi` merges.
+  8. **Integration (`test/integration/**`).**
+     - Add `await:handoff.hideUi` to the await points `sw-restart.test.ts` enumerates. A restart there → the file is still handed over exactly once.
+     - The R-005 assertions of design-test-harness L2, from the fake's call log:
+       - no `ui` entry while a job only resolves or fetches;
+       - `{ op: 'ui', enabled: false }` precedes the first `download` of every busy period;
+       - exactly one `{ enabled: true }` after the last job's record is deleted, for each end reason: saved, partial, needs login after a 403, unavailable, and cancel;
+       - none when job B ends while job A runs;
+       - an ugoira job keeps the UI hidden through its encode and restores at its end (CUJ-2 step 4);
+       - boot with no `job:*` records → `{ enabled: true }` first;
+       - boot with a hydrated running job → no `ui` entry until its next hand-off;
+       - an injected `setUiOptions` failure never fails a job or a hand-off.
+  9. **E2E.**
+     - Add a helper `downloadUi(harness)` = `harness.swEval(() => self.__hfpTest.downloadUi())`, in `e2e/harness/flows.ts` (or as a `Harness` member).
+     - `e2e/cuj1.spec.ts`, new tests. With the originals held (`server.hold`):
+       - `downloadUi()` shows `requested: false` and one `{ enabled: false, ok: true }` whose `at` ≤ the earliest `startTime` (`Date.parse`) of the job's `chrome.downloads.search` items (`metadata.json` first);
+       - after `Saved · 12P`, the last call is `{ enabled: true, ok: true }`, one of each for the job;
+       - a cancelled job, and a job whose every original answers 504, also end with `{ enabled: true, ok: true }`.
+     - `e2e/cuj4.spec.ts`, new tests:
+       - job B ends while job A runs → no new call; A ends → `{ enabled: true, ok: true }`;
+       - `stopServiceWorker()` mid-job → the new instance makes no call at boot, and `{ enabled: true }` follows the job's end;
+       - boot with no job: `swEval(() => chrome.downloads.setUiOptions({ enabled: false }))`, then `stopServiceWorker()`, then wake the worker by loading a pixiv page (`job/listForTab`) → the new instance's first call is `{ enabled: true, ok: true }`.
+     - `e2e/README.md`: you own the "Harness API" section (document the helper) and the `### CUJ-1` and `### CUJ-4` sections (add the R-005 rows). Edit nothing else in the file.
+  10. **`docs/release-checklist.md`:**
+      - §5 table: add a `downloads.ui` row with the justification text verbatim: "Hides Chrome's per-file download animation while a multi-page artwork saves, then restores it."
+      - §2: add the L5 item "Chrome's download UI (R-005)" from design-test-harness L5, and extend the "Ask where to save each file" item: the Save As dialog still appears while the UI is hidden.
+- **Files**:
+  - Service worker: `src/background/download-ui.ts` (new), `src/background/{engine,sw,options-tab}.ts`
+  - Shared: `src/shared/test-hooks.ts`
+  - Manifest: `src/manifest.json`, `test/unit/manifest.test.ts`
+  - Fakes: `test/fakes/chrome.ts`
+  - Unit tests: `test/unit/background/{download-ui (new),chrome-fake,sw,options-tab}.test.ts`, `test/unit/background/engine-{transitions,handlers,scheduler,pusher}.test.ts` as needed
+  - Integration: `test/integration/**`
+  - E2E: `e2e/harness/**`, `e2e/cuj1.spec.ts`, `e2e/cuj4.spec.ts`, `e2e/README.md` (Harness API, CUJ-1, CUJ-4 sections)
+  - Docs: `docs/release-checklist.md`
 - **Done when**:
   - `npm run check` passes.
-  - `HFP_HEADLESS=1 npm run test:e2e -- --grep @cuj3` passes, including the new regression test.
-  - QA's repro (chip, then `pixiv/{artst}-{id}` within 2 s) shows no `Saved` beside Download folder at any moment while the error is visible.
-  - The computed colours match design-options-page.md "Styles" in light and dark.
+  - `HFP_HEADLESS=1 npm run test:e2e -- --grep "@cuj1|@cuj4"` passes, and the **full** `HFP_HEADLESS=1 npm run test:e2e` passes, because the fake and the manifest are shared. The one known exception is `e2e/cuj3.spec.ts` "edge: newlines …", which is red on `main` until task 1.3 merges: report it as pre-existing if it is the only failure.
+  - `npm run build:prod && ! grep -qE 'testHook|__hfpTest|await:(registry|resolver|handoff)' dist/*.js` succeeds, so the new hook name and the test API stay out of prod.
+  - `node -e "const m=require('./src/manifest.json'); process.exit(JSON.stringify(m.permissions)===JSON.stringify(['downloads','storage','offscreen','declarativeNetRequestWithHostAccess','downloads.ui'])?0:1)"` exits 0.
+  - Every L2 R-005 assertion listed in step 8 exists and passes, including the restart at `await:handoff.hideUi`.
 
-### Task: 2.3 CUJ-1/CUJ-3: token values made only of `~`/`.` resolve to `unknown`; Golden rows
-- **Do**:
-  - **Why.** Code review W3/W4 and pm-review priority 4: `resolveFolder('pixiv/{artist}/{title}', artist '~')` returns `pixiv/T` and loses a folder level. This contradicts PRD §4.4 step 1.6 ("If the result is empty, use `unknown`") and the CUJ-1 edge case "A name that sanitizes to nothing becomes `unknown` (`pixiv/unknown-135882741`). The folder never gets an empty segment."
-  - **Read** `docs/design/design-settings-model.md`: "Resolution" (sanitization table, step **4+** and "Why step 4+"), "Golden examples", and "Testing".
-  1. `src/shared/pattern.ts` `sanitizeToken`: when `parityOnly` is false, the step-4 edge trim and the re-trim after step 5's truncation use the class `[._ ~]` instead of `[._ ]`. With `parityOnly: true`, the script's `[._ ]` stays exactly as is.
-  2. `test/unit/pattern.test.ts`: one test per Golden row, and fix any existing expectation of the old wrong `sora~-1`:
-     - artist `~`, pattern `pixiv/{artist}/{title}`, title `T` → `pixiv/unknown/T`;
-     - title `.~.`, pattern `{title}` → `unknown`;
-     - artist `~sora~`, pattern `{artist}-{id}`, id `1` → `sora-1`, while `sanitizeToken('~sora~', { parityOnly: true })` is still `~sora~`;
-     - artist `so~ra` → `so_ra-1`;
-     - literal pattern `~sora~-1` → `sora_-1`.
-  3. The property test (`test/unit/pattern-property.test.ts`) and the golden parity test must pass unchanged.
-- **Files**: `src/shared/pattern.ts`, `test/unit/pattern.test.ts`
-- **Done when**:
-  - `npm run check` passes.
-  - `python3 -I scripts/gen-golden.py --check` exits 0, and `git diff --exit-code test/golden/` shows that the golden vectors are unchanged.
-  - `npx vitest run test/unit/pattern.test.ts test/unit/pattern-property.test.ts test/unit/golden-safe-component.test.ts` passes, including `resolveFolder('pixiv/{artist}/{title}', { artist: '~', id: '1', title: 'T', userId: null }) === 'pixiv/unknown/T'`.
-
-### Task: 2.4 CUJ-4: the action title is idle when no file is counted
-- **Do**:
-  - **Why** (code review W1, pm-review item 5i). A lone `retryMetadata` job, or a `full` job clicked before its metadata arrived (`expectedFiles` 0) while it resolves, makes the title read "Helper for Pixiv — 0 files remaining" while the badge is hidden. PRD §4.8: "With nothing in flight, the badge is hidden (empty text)", and "Nothing in flight: `Helper for Pixiv — click to open settings`".
-  - **Read** `docs/design/design-download-engine.md` "Badge and action title (badge.ts)": the pseudo-code and the "Zero counted files" bullet.
-  1. `src/background/badge.ts`:
-     - `total === 0` → `action_title_idle`.
-     - The job count passed to `action_title_many`, and used to choose the one-job form, counts only running jobs with `remaining(job) > 0`.
-     - Badge text, `999+` and the singular form are unchanged.
-  2. `test/unit/background/badge.test.ts`:
-     - a lone `retryMetadata` job → idle title and empty badge;
-     - a resolving `full` job with `expectedFiles` 0 → idle title;
-     - one counting job plus one 0-count job → the one-job form (`Helper for Pixiv — 5 files remaining`);
-     - the existing `999+` and singular cases still pass.
-- **Files**: `src/background/badge.ts`, `test/unit/background/badge.test.ts`
-- **Done when**:
-  - `npm run check` passes.
-  - `HFP_HEADLESS=1 npm run test:e2e -- --grep @cuj4` passes as a regression check (no spec edits needed).
-
-### Task: 2.5 Content bundle size budget, checked in CI (ENG-010)
-- **Do**:
-  - **Why.** The content script runs on every pixiv page. `docs/design/system.md` §11.6 replaces the old "< 30 KB" guess with a measured budget: `content.js` ≤ **40 KB minified** and ≤ **15 KB gzip** (34.4 KB / 12.6 KB with the prod defines on 2026-10-23). The shipped `build:prod` stays unminified for Web Store review, so the check minifies separately. Read `docs/design/design-test-harness.md` "Bundle budget".
-  1. `scripts/size.mjs`:
-     - esbuild-bundle `src/content/content.ts` with `format: 'iife'`, `target: 'chrome116'`, `minify: true` and the prod defines `__DEBUG__=false`, `__RETRY_TIME_SCALE__=1`, `__TEST_HOOKS__=false`, written in memory (`write: false`).
-     - gzip the output with `node:zlib` at level 9.
-     - Print both sizes in KB, and exit 1 above either limit.
-     - The limits default to 40 / 15 KB and can be overridden with `--max-min-kb N` and `--max-gzip-kb N`.
-  2. `package.json`: script `"size": "node scripts/size.mjs"`. No dependency changes.
-  3. `.github/workflows/ci.yml`: a step `npm run size` right after `npm run check`.
-- **Files**: `scripts/size.mjs`, `package.json`, `.github/workflows/ci.yml`
-- **Done when**:
-  - ENG-010 Verify prints `SIZE OK`: `npm run size && ! node scripts/size.mjs --max-min-kb 1 --max-gzip-kb 1 && grep -q "npm run size" .github/workflows/ci.yml && echo SIZE OK`
-  - `npm run check` passes, which includes eslint and prettier on the new `.mjs`.
-
-## Parallel Group 3 (depends on Group 2)
-
-### Task: 3.1 CUJ-1/CUJ-5: provisional button width from the 2-digit faces, hint ellipsis, Unavailable text contrast, shared pill height
+### Task: 1.3 CUJ-3: pasted line breaks dropped; unclosed `{` is invalid (S5); "Still using:" on one line (S15)
 - **Do**:
   - **Why.**
-    - **pm-review CUJ-1 caveat.** "If pixiv renders the action row before `/ajax/illust` answers … the width locks on `candidates(null)` (`src/content/button/width.ts:40`): the 99-page faces plus every ugoira face. That measures 176 px in English (`Download · WebM`). `settleWidth` never shrinks. … So an illustration whose metadata arrives late stays at 176 px. That breaks the AC '164 px … on a work of 99 or fewer pages' and §4.7.2."
-    - PRD §4.7.2, verbatim: "If the page count is unknown at first render, the button starts at the 2-digit width and may widen once, when the metadata arrives and before any interaction."
-    - **Contrast.** The Unavailable text `#80868b` on `#f1f3f4` is 3.31:1. PRD §4.7.3 marks these colours "(assumption — confirm; not mocked)", and the index rule requires 4.5:1 for every other pair.
-    - **Code review W9.** `PILL_HEIGHT_PX` is duplicated in `src/content/mount.ts`.
-  - **Read** `docs/design/design-artwork-button.md`: "Fixed width (button/width.ts)" (the "Provisional width" and "Ugoira width" bullets) and "Styles" (Variants, "Pill height"). Also `docs/design/system.md` §11.5.
-  1. `src/content/button/width.ts`: `candidates(null)` returns the 99-page faces only (`pageCandidates(99)`). Ugoira works keep every format's faces once their metadata is known.
-  2. `src/content/button/styles.ts`:
-     - `.hint` gets `min-width: 0; overflow: hidden; text-overflow: ellipsis`, and the icon and label do not shrink. On a provisional-width ugoira with WebM effective, the hint then reads `Saved · We…` instead of overflowing the pill's border.
-     - `.pill.disabled` text becomes `#5f6368`.
-     - Export `PILL_HEIGHT_PX = 40` and interpolate it into the stylesheet's `height`.
-  3. `src/content/mount.ts`: import `PILL_HEIGHT_PX` from `./button/styles` and delete the local constant.
-  4. Unit tests:
+    - **QA iteration-2 LOW bug (CUJ-3).**
+      - Repro: copy `pixiv/⏎{artist}⏎-{id}` and paste it (⌘V, or `keyboard.insertText`) into the empty field.
+      - Observed: the field holds `pixiv/ {artist} -{id}`, which validates and autosaves; the preview reads `Downloads/pixiv/みずき -135882741/…`.
+      - Cause: Chromium replaces CR/LF with spaces for **user-inserted** text before `input` fires, and `src/options/page.ts:76` only sets `maxLength`.
+      - Pinned by the red e2e `e2e/cuj3.spec.ts` "edge: newlines: a pasted pattern with line breaks lands on one line without them and validates as usual". Do not weaken its assertions.
+    - **PRD CUJ-3 edge, verbatim:** "**Paste containing newlines or control characters**: the single-line field drops newlines on paste. Validation then runs as usual."
+    - **PRD CUJ-3 acceptance criteria (R-004 S5, S15), verbatim:**
+      - "Typing `pixiv/{user` and pausing shows `Unknown token {user. Available tokens: {artist}, {id}, {title}, {userId}.` and saves nothing: no `Saved` appears, and reloading the settings page shows the last valid pattern. A pattern with a lone `}` (e.g. `pixiv/a}b`) is valid and saved (per R-004 S5)."
+      - "In the error state, the `Still using:` label renders on a single line in all four locales, and the default pattern `pixiv/{artist}-{id}` after it is not broken across lines (per R-004 S15)."
+  - **Read first:**
+    - `docs/design/design-options-page.md`:
+      - "Line breaks in inserted text": the `bindSingleLine` contract, steps 1–7, the cost and the alternatives table;
+      - "The preview / 'Still using' line (CUJ-3 steps 2 and 5; R-004 S15)";
+      - "Validation, preview and save": the Messages and Paste bullets;
+      - "A11y" (contrast);
+      - "Testing";
+      - "Open Questions" (drop placement).
+    - `docs/design/design-settings-model.md`: "Validation" rule 5 (the scan regex `/\{[^{}]*(?:\}|(?=\{)|$)/g`), "Rule 5 fragments", the lone-`}` bullet, the rule-6 bullet, "Testing" (rule 5's fragments), and "Open Questions" (stored fragments from earlier builds).
+  1. **`src/options/single-line.ts` (new): `bindSingleLine(field, maxChars)`**, exactly per the design's steps:
+     - On `beforeinput`, act only when `inputType` is `insertText`, `insertFromPaste` or `insertFromDrop` and the event is `cancelable`.
+     - Text = `event.data ?? event.dataTransfer?.getData('text/plain') ?? null`. If there is no `\r`/`\n`, return and leave it native.
+     - Otherwise:
+       - `preventDefault()`;
+       - strip every `\r` and `\n`;
+       - insert at `[selectionStart, selectionEnd]`, capped at `maxChars − (value.length − (end − start))` without leaving a lone high surrogate;
+       - do nothing if the result is empty over a collapsed selection;
+       - `setRangeText(clean, start, end, 'end')`;
+       - dispatch `new InputEvent('input', { bubbles: true, inputType, data: clean })`, so the existing debounce → validate → autosave path and the chips' caret tracker run unchanged.
+  2. **`src/options/page.ts`.** Call `bindSingleLine(field, PATTERN_MAX_CHARS)` right after `field.maxLength = PATTERN_MAX_CHARS`.
+  3. **`src/options/strings.ts`.**
+     - `stillUsingLine()` returns:
+       - a `.label` span with the text before the placeholder, its trailing whitespace moved out (en `Still using: ` → `Still using:` plus a `' '` text node; ja likewise; zh_CN/zh_TW `仍在使用：` have none);
+       - the pattern in a `mono pattern` span;
+       - the `.muted` trailing sentence.
+     - `previewLine()` puts `Preview:` in a `.label` span the same way, then the path.
+  4. **`src/options/options.css` (S15 layout, design-options-page.md):**
+     - `.preview`: `display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 20px`.
+     - The icon: `flex-shrink: 0; margin-top: 2px`.
+     - `.preview-text`: `flex: 1 1 auto; min-width: 0`. This replaces `display: contents`; delete its old comment.
+     - `.label`: `white-space: nowrap`.
+     - `.pattern`: `display: inline-block; max-width: 100%; overflow-wrap: anywhere; color: var(--text)`.
+     - `.path` keeps `overflow-wrap: anywhere`.
+     - Colours are unchanged. The footer links stay `#0096FA` (2.91:1 is an open pm gap; do not change it).
+  5. **`src/shared/pattern.ts` `validatePattern`, rule 5 (S5).**
+     - Scan `/\{[^{}]*(?:\}|(?=\{)|$)/g` left to right. The first match that does not end in `}` (unclosed), or ends in `}` but is not a known token, → `{ code: 'unknownToken', token: <that fragment> }`.
+     - A `}` that closes no `{` stays literal. Rule 6 and resolution are unchanged; `sanitizeToken`/`resolveFolder` must not change.
+  6. **Unit tests.**
+     - `test/unit/options/single-line.test.ts` (new; happy-dom, synthetic `InputEvent`s):
+       - `insertFromPaste` of `pixiv/\n{artist}\r\n-{id}\n` into an empty field → `pixiv/{artist}-{id}`, caret at the end, exactly one `input` event;
+       - the same over a selection replaces it;
+       - `insertFromDrop` at a caret inside the value;
+       - `insertText` with a newline;
+       - text without line breaks is not prevented;
+       - a non-cancelable event is not prevented;
+       - only newlines with a collapsed selection → no change and no `input`;
+       - the 200 cap with a surrogate pair at the cut.
+     - `test/unit/options/strings.test.ts`: `stillUsingLine` returns label (no trailing whitespace), space text node, pattern span and muted sentence, in all 4 locales.
+     - `test/unit/options/page.test.ts`: `pixiv/{user` → `Unknown token {user. …` with no write and no `Saved`; a paste with newlines goes through the normal debounce and save.
+     - `test/unit/pattern.test.ts`, rule 5 fragments:
+       - `pixiv/{user` → `{user`;
+       - `pixiv/{artist` → `{artist`;
+       - `{id}{` → `{`;
+       - `a{b{id}` → `{b`;
+       - `pixiv/{artst}-{` → `{artst}`;
+       - `pixiv/a}b` and `}{id}` → valid.
+  7. **E2E, `e2e/cuj3.spec.ts` (`@cuj3`).**
+     - The red "edge: newlines …" test must now pass as written.
+     - Add:
+       - a single-line paste copied with a trailing newline → no trailing space;
+       - `keyboard.insertText` with a newline;
+       - `pixiv/{user` and a pause → the exact message, no `Saved`, and a reload shows the last valid pattern;
+       - `pixiv/a}b` saves (`Saved`, stored);
+       - in the error state of each of the 4 locales (`test.use({ uiLocale })`, as the locale tests do), the `.label` element has exactly one client rect, and the pattern span showing the default `pixiv/{artist}-{id}` has exactly one client rect.
+     - `e2e/README.md`: you own the `### CUJ-3` section only; add rows for the paste edge, S5 and S15.
+- **Files**:
+  - Options page: `src/options/single-line.ts` (new), `src/options/{page,strings}.ts`, `src/options/options.css` (and `src/options/options.html` only if the markup must change)
+  - Shared: `src/shared/pattern.ts` (`validatePattern` only)
+  - Unit tests: `test/unit/options/{single-line (new),strings,page}.test.ts`, `test/unit/pattern.test.ts`
+  - E2E: `e2e/cuj3.spec.ts`, `e2e/README.md` (CUJ-3 section)
+- **Done when**:
+  - `npm run check` passes.
+  - `HFP_HEADLESS=1 npm run test:e2e -- --grep @cuj3` passes, **including** the previously red "edge: newlines …", the 200-character test and the new S5/S15 cases.
+  - `git diff --exit-code test/golden/` shows that the golden vectors are unchanged, and `npx vitest run test/unit/pattern.test.ts test/unit/pattern-property.test.ts test/unit/golden-safe-component.test.ts` passes.
+  - **QA repro:** pasting `pixiv/⏎{artist}⏎-{id}` leaves `pixiv/{artist}-{id}` with the preview `Downloads/pixiv/みずき-135882741/135882741_p0.jpg`.
+
+### Task: 1.4 Content script: floating fallback inside 3 s (R-004 S4, D14); English ugoira exactly 176 px (R-004 S1)
+- **Do**:
+  - **Why.**
+    - **QA iteration-2 LOW bug (CUJ-5).**
+      - The floating pill appeared 11–23 ms *after* 3 s, measured in-page with `performance.now()`, 5 samples each (`docs/qa-artifacts/iter2-03-48-13/logs/diag-float.log`): direct load, `<figure>` inserted → host inserted, 3018–3023 ms; SPA click → host inserted, 3011–3013 ms.
+      - The code review measured 3016–3079 ms under parallel load.
+      - Cause: the timer fires at exactly 3000 ms from route entry, before the placement work (`src/content/mount.ts:213`).
+    - **PRD CUJ-5 acceptance criterion, verbatim:** "With pixiv's action row removed (simulated by deleting it in DevTools before navigation), the button appears as a floating pill at the bottom-right of the artwork area within 3 s of the page loading or of the in-app navigation to it, measured to the pill appearing, and downloads normally (per R-004 S4)."
+    - **PRD CUJ-2 acceptance criterion, verbatim:** "In English, on an ugoira whose metadata arrived before the first click, the button is 176 px wide in idle, busy, Cancel-hover, and Saved states, and its width does not change across any transition or when Ugoira output changes (per R-004 S1)."
+    - **PRD §4.7.2:** "In English this is **164 px** for illustrations and manga up to 99 pages, and **176 px** for every ugoira … If the metadata is unknown at first render, the button starts at the 2-digit illustration width (164 px in English) and may widen once, when the metadata arrives and before any interaction."
+  - **Read first:**
+    - `docs/design/design-artwork-button.md`:
+      - "Mounting": the "Fallback timer (… D14)" bullets — the anchor, the placement budget, the not-cancelled rule;
+      - the `ensurePlaced()` pseudo-code;
+      - "Fixed width (button/width.ts)": `floor(work, locale)`, `UGOIRA_LOCALE_FLOOR_PX`, "Why the English floors", "Provisional width";
+      - "Testing";
+      - "Open Questions" (floating fallback budget).
+    - `docs/design/system.md`: §11.6 (the floating-fallback row) and §14 D14.
+    - `docs/design/design-test-harness.md`, L3 mapping: the rows "CUJ-5 step 11 (R-004 S4)" and "CUJ-2 (R-004 S1)".
+  1. **`src/shared/constants.ts`.** Add `FLOAT_PLACEMENT_BUDGET_MS = 250` next to `FLOAT_FALLBACK_MS` (which stays 3000, the PRD's number), with a comment citing D14.
+  2. **`src/content/mount.ts` `show()`.**
+     - The fallback timer's delay becomes `FLOAT_FALLBACK_MS − FLOAT_PLACEMENT_BUDGET_MS` (2750 ms).
+     - Make sure its callback places the pill **synchronously**: `fallbackFired = true; ensurePlaced()`, which runs `float()`, the width lock and `position()` with no `requestAnimationFrame` in between.
+     - The timer is still not cancelled when the row is found, `hide()` still resets it, and the anchor is still route entry.
+     - Update the header comment.
+  3. **`src/content/button/width.ts`.**
+     - Add `export const UGOIRA_LOCALE_FLOOR_PX = { en: 176, ja: 0, 'zh-CN': 0, 'zh-TW': 0 }`.
+     - `computeWidth` uses the floor `work?.illustType === 2 ? UGOIRA_LOCALE_FLOOR_PX[locale] : LOCALE_FLOOR_PX[locale]`.
+     - `candidates(null)` stays the 99-page faces (164 floor), and `settleWidth` is unchanged.
+     - Update the doc comments.
+  4. **Unit tests.**
      - `test/unit/button/width.test.ts`:
-       - `candidates(null)` has no ugoira face;
-       - `computeWidth(null, 'en', …)` with real-size measures gives the 164 floor;
-       - an ugoira widens once through `settleWidth` before interaction and never after.
-     - `test/unit/button/styles.test.ts`: the disabled colour, the `.hint` rule, and the interpolated height.
-     - `test/unit/content/mount.test.ts`, if it referenced the old constant.
-  5. E2E:
-     - `e2e/cuj1.spec.ts` (`@cuj1`): `server.hold('/ajax/illust/135882741')` before opening 135882741. The action row renders first. The host width is 164 px before the release and still 164 px in idle `Download · 12P` after it.
-     - `e2e/cuj5.spec.ts`: change only the `GRAY_TEXT` constant to `'rgb(95, 99, 104)'` (`#5f6368`).
-     - Do **not** edit `e2e/cuj2.spec.ts`; task 3.2 owns it.
-- **Files**: `src/content/button/width.ts`, `src/content/button/styles.ts`, `src/content/mount.ts`, `test/unit/button/width.test.ts`, `test/unit/button/styles.test.ts`, `test/unit/content/mount.test.ts`, `e2e/cuj1.spec.ts`, `e2e/cuj5.spec.ts` (the `GRAY_TEXT` line only)
+       - an English ugoira with narrower measures → 176;
+       - a wider measured face wins;
+       - `null` → the 164 floor;
+       - ja/zh use the measured width;
+       - an ugoira widens once from 164 to 176 when its metadata arrives before interaction, and never after interaction.
+     - `test/unit/content/mount.test.ts`:
+       - not floating at 2749 ms;
+       - floating at 2750 ms, with the host in `body` and `left`/`top` set before any animation frame runs;
+       - `hide()` then `show()` starts a fresh 2750 ms timer.
+     - `test/unit/content/content.test.ts`: only if its `settle(FLOAT_FALLBACK_MS)` uses break.
+  5. **E2E, `e2e/cuj5.spec.ts`.** You own only the two tests whose titles start `'floating fallback:'` in "Part C". You may add a local helper directly above them inside Part C. Keep the `'floating fallback:'` title prefix, and do **not** touch the header comment, the import block or any other test (task 1.1 owns them).
+     - **Direct load.** Replace the `<figure>`-to-host measurement with the PRD anchor:
+       - start = `performance.getEntriesByType('navigation')[0].domInteractive`;
+       - end = a `requestAnimationFrame` stamp taken right after the page `MutationObserver` sees `hfp-download` connect;
+       - expect `end − start ≤ 3000`.
+     - **SPA.** Stamp `performance.now()` in the page at the click. For example, install a capture-phase `click` listener in the page that records the time, then click the `a[data-spa]` link. The end is the same rAF stamp, and the expectation is ≤ 3000 (replacing the Node-side `Date.now()` with 3000 + 300).
+     - Annotate both delays, and keep every other assertion: the mode, the 16 px inset, the shadow, the 164 px width, the download, the move into the row, the dark ring and the viewport fallback.
+  6. **E2E, `e2e/cuj2.spec.ts`.**
+     - In `'idle: Download · WebM and Download · ZIP follow the setting …'`, assert `toBe(176)` instead of `toBeGreaterThanOrEqual(164)`, and fix the comment (PRD text since R-004 S1).
+     - Add a test, e.g. `'width: 176 px in idle, busy, Cancel-hover and Saved'`, on 136004512:
+       - hold the zip (`server.hold`) to observe busy;
+       - hover to Cancel after the pointer has left once, as `e2e/cuj1.spec.ts` "width" does;
+       - release, and read the width again at `Saved · MP4`.
+  7. **`e2e/README.md`.** You own the `### CUJ-2` section only; add the 176 px row. Do not edit the CUJ-5 section: task 1.1 updates its floating row's wording.
+- **Files**:
+  - Shared: `src/shared/constants.ts`
+  - Content script: `src/content/mount.ts`, `src/content/button/width.ts`
+  - Unit tests: `test/unit/button/width.test.ts`, `test/unit/content/mount.test.ts`, `test/unit/content/content.test.ts` (only if needed)
+  - E2E: `e2e/cuj5.spec.ts` (the two `'floating fallback:'` tests only), `e2e/cuj2.spec.ts`, `e2e/README.md` (CUJ-2 section)
 - **Done when**:
-  - `npm run check` passes.
-  - `HFP_HEADLESS=1 npm run test:e2e -- --grep "@cuj1|@cuj2|@cuj5"` passes. `@cuj2` is a read-only regression: the ugoira pill stays 176 px in English once its metadata is known.
-  - A ≤ 99-page illustration with late metadata is 164 px throughout (new e2e).
-  - The Unavailable pill's computed text colour is `rgb(95, 99, 104)`.
-
-### Task: 3.2 Fake pixiv prebuilds its fixture zips; e2e README brought up to date (ENG-009)
-- **Do**:
-  - **Why** (code review W11).
-    - The fake server builds an ugoira zip synchronously on its first request. For 136004517 (1920×1080, 300 frames) that takes ~1.5 s, beyond the e2e build's 300 ms stall timeout, so specs must call `warmZip()` first, a trap for every new spec.
-    - `e2e/README.md` is also stale: its CUJ-5 mapping still says "next iteration", and it lacks the R-003 fixture that task 2.1 added.
-  - **Read** `docs/design/design-test-harness.md`: "Fake pixiv server" (the login-walls paragraph), "Fixtures" (row 135882745, the "Zip prebuild (ENG-009)" and "Holding a response" bullets), "L3 → PRD AC mapping" and "L4: Live smoke".
-  1. **ENG-009 scope:**
-     - `e2e/server/server.ts` `FakePixiv.start()` builds every ugoira fixture's zip (`ugoiraZip(work)` for each `illustType === 2` work in `WORKS`) **before** `listen`.
-     - Remove `warmZip()` and all its calls from `e2e/cuj2.spec.ts`.
-     - Add a self-test to `e2e/harness.spec.ts`, named exactly `fake server: fixture zips are prebuilt`. It starts a fresh server, times the first request for 136004517's zip, and expects the response headers within 300 ms.
-  2. **`e2e/README.md`:**
-     - Delete the `warmZip` trap paragraph under "Fixtures", and state that zips are prebuilt at server start.
-     - Add fixture row **135882745** (4-page illust, `xRestrict` 0, `sensitiveWall`, R-003).
-     - Document the `sensitiveWall` flag and the login-wall behaviour under "Fake server": `sl` 6/4/2; `urls` null for a logged-out viewer of R-18 or `sensitiveWall` works; `/pages` answers normally for `sensitiveWall`; the wall text on the page.
-     - Retitle the CUJ-5 section `### CUJ-5 (cuj5.spec.ts, @cuj5)` and replace its rows with the AC→test mapping from the top of `e2e/cuj5.spec.ts`, including the R-003 rows task 2.1 added.
-     - Under "Running", note that the live smoke navigates with `domcontentloaded` and has a login-wall case (design-test-harness.md L4).
-     - Run `npx prettier --write e2e/README.md`; prettier checks this file.
-- **Files**: `e2e/server/server.ts` (start-up only), `e2e/cuj2.spec.ts`, `e2e/harness.spec.ts`, `e2e/README.md`, and `e2e/fixtures/assets.ts` only if the cache needs an export
-- **Done when**:
-  - ENG-009 Verify prints `PREBUILD OK`, with every listed test passing: `! grep -rn "warmZip" e2e && npm run build:e2e && npx playwright test e2e/harness.spec.ts e2e/cuj2.spec.ts --reporter=line && npx playwright test e2e/harness.spec.ts -g "fixture zips are prebuilt" --reporter=line && echo PREBUILD OK`
-  - `npm run check` passes.
-  - `HFP_HEADLESS=1 npm run test:e2e` (full suite) passes, because server start-up changes for every worker.
-
-### Task: 3.3 Live smoke: domcontentloaded, visible-work filter, login-wall case, live ugoira walk
-- **Do**:
-  - **Why.**
-    - **QA iteration-1 LOW FLAKY.** "`e2e/live/smoke.spec.ts` failed 2 of 5 runs with 'Test timeout of 180000ms exceeded' … `page.goto` at `e2e/live/smoke.spec.ts:115` waits for pixiv's `load` event, which took 43 s, 119 s and 46 s … The extension saved 4–10 s after the button appeared every time."
-    - **R-003.** Without a `urls.original` filter, the smoke picks a walled work about one time in five (31 of 150 ranking works on 2026-10-23), and that work now correctly shows `Log in to download`. The walled case is also the drift alarm for the system.md §8.5 signal.
-    - **pm-review priority 7a.** A live all-ages ugoira walk, which needs no account.
-  - **Read** `docs/design/design-test-harness.md` "L4: Live smoke" and `docs/design/system.md` §8.5 (evidence).
-  1. Every `page.goto` in `e2e/live/` passes `{ waitUntil: 'domcontentloaded' }`; the button and file waits keep their own timeouts.
-  2. **Download case selection.** For each ranking entry, fetch its logged-out `/ajax/illust/<id>` body. Require `xRestrict === 0`, `illustType === 0`, ≤ the existing page cap, **and** `typeof body.urls.original === 'string'`. The existing assertions stay as they are: row placement, each file's size = HEAD `Content-Length` with the pixiv Referer, and the 12 metadata keys.
-  3. **New login-wall test** (`@live`). Pick the first entry of the illust ranking with `xRestrict === 0` and `urls.original === null`; fall back to the manga ranking. Then:
-     - Before any click, the button reads `Log in to download`, with `aria-label` `Log in to pixiv to download this work.` and title `Opens pixiv login and returns you here`.
-     - Clicking navigates to a URL that starts with `https://accounts.pixiv.net/login?return_to=` followed by the URL-encoded artwork page URL as it was (keep any `/en/` prefix pixiv redirected to).
-     - If the day's rankings have no walled all-ages entry, `test.skip` with a logged reason.
-  4. **New live ugoira test** (`@live`). Use `ranking.php?mode=daily&content=ugoira&format=json` and take the first entry with `xRestrict === 0` and `urls.original` a string.
-     - (a) Default settings:
-       - the button shows `Download · MP4`, or `Download · WebM` if the browser's H.264 probe fails, then `Saved · <format>`;
-       - the folder holds `<id>_ugoira.zip` (size = HEAD `Content-Length` of `ugoira_meta.body.originalSrc` with the pixiv Referer), `frames.json` deep-equal to `ugoira_meta.body.frames`, a non-empty `<id>.mp4`/`.webm`, and `metadata.json` with the 12 keys.
-     - (b) Ugoira output set to ZIP only, the same way `e2e/cuj2.spec.ts` sets it:
-       - the button shows `Download · ZIP`, then `Saved · ZIP`;
-       - the folder holds the zip and `frames.json`, and no video.
-     - Skip with a logged reason if no candidate exists.
-  5. Edit only `e2e/live/smoke.spec.ts`; task 3.2 owns `e2e/README.md`.
-- **Files**: `e2e/live/smoke.spec.ts`
-- **Done when**:
-  - `npm run check` passes.
-  - `HFP_LIVE=1 npm run test:e2e -- --grep @live` passes **twice in a row** (needs network to `www.pixiv.net` and `i.pximg.net`). Report the work IDs used and whether any case was skipped, with its reason.
-  - Without network, report the live run BLOCKED instead of claiming a pass. `npm run check` must still pass.
-
-### Task: 3.4 Encode failures report how many encoder passes ran (ENG-011)
-- **Do**:
-  - **Why** (code review W8). `src/offscreen/offscreen.ts` `failureOf` reports every encode failure with `attempts: 1`, because `EncodeError` does not record whether the prefer-software retry ran. The fix is observability only; no outcome changes.
-  - **Read** `docs/design/design-offscreen-worker.md`, row "Encoder failure" of the encode table.
-  - Task 2.1 already changed `failureOf`'s non-encode branch to `internal`; keep that branch as it is.
-  1. `src/offscreen/ugoira/encode.ts`:
-     - `EncodeError` gains `attempts: 1 | 2`.
-     - The prefer-software path rethrows with `attempts: 2` when that second pass also failed.
-     - Every failure the retry does not apply to has `attempts: 1`: a missing zip, invalid frames, or an `EncodeError` such as a corrupt zip entry raised inside the first pass.
-  2. `src/offscreen/offscreen.ts` `failureOf`: for an encode task, copy `error.attempts`, or 1 when the error is not an `EncodeError`.
-  3. Unit tests whose names contain `encode failure attempts`:
-     - a failure before any retry → 1;
-     - a hardware failure followed by a failing prefer-software pass → 2.
-- **Files**: `src/offscreen/ugoira/encode.ts`, `src/offscreen/offscreen.ts` (encode branch of `failureOf`), `test/unit/ugoira/encode.test.ts`, `test/unit/offscreen/offscreen.test.ts`
-- **Done when**:
-  - ENG-011 Verify prints `ATTEMPTS OK`: `npx vitest run -t "encode failure attempts" --reporter=json --outputFile=.eng011.json; node -e "const r=require('./.eng011.json'); process.exit(r.numPassedTests>=2&&r.numFailedTests===0?0:1)" && rm -f .eng011.json && npm test && echo ATTEMPTS OK`
-  - `npm run check` passes.
-
-### Task: 3.5 Prod bundle carries no test-hook code, checked in CI (ENG-007)
-- **Do**:
-  - **Why** (code review W5).
-    - `engine.ts`, `registry.ts` and `resolver.ts` import `__testHook` under the alias `testHook`, so the guard `! grep -qE '__testHook|__hfpTest' dist/sw.js` passes by name only. The unminified prod `dist/sw.js` still carries 8 dead `if (false) await testHook("await:…")` statements.
-    - esbuild drops dead `if (false)` branches only with `minifySyntax`.
-    - **Read** `docs/design/design-test-harness.md` "Build variant".
-  1. `scripts/build.mjs`: for `--prod`, set esbuild `minifySyntax: true`. Keep `minifyWhitespace` and `minifyIdentifiers` off, so the bundle stays readable for store review. The dev and e2e builds are unchanged.
-  2. Remove the `__testHook as testHook` alias imports and their comments in `src/background/{engine,registry,resolver}.ts`, importing `__testHook` under its own name. Touch only those import lines and call sites; `resolver.ts` and `engine.ts` were just changed by task 2.1.
-  3. `.github/workflows/ci.yml`: after `npm run check`, keep ENG-010's `npm run size` step and add `npm run build:prod && ! grep -qE 'testHook|__hfpTest|await:(registry|resolver|handoff)' dist/*.js`.
-  4. If `test/unit/build-script.test.ts` asserts the build options, extend it for `minifySyntax` in prod.
-- **Files**: `scripts/build.mjs`, `src/background/{engine,registry,resolver}.ts` (hook imports only), `.github/workflows/ci.yml`, `test/unit/build-script.test.ts` if applicable
-- **Done when**:
-  - ENG-007 Verify prints `PROD CLEAN`: `npm run build:prod && ! grep -qE 'testHook|__hfpTest|await:(registry|resolver|handoff)' dist/*.js && grep -q 'build:prod' .github/workflows/ci.yml && npm run check && echo PROD CLEAN`
-  - `HFP_HEADLESS=1 npm run test:e2e` (full suite) passes, because the e2e builds keep their hooks.
-
-### Task: 3.6 Store packaging, third-party notices, release checklist (ENG-006)
-- **Do**:
-  - **Why.**
-    - Web Store submission (PRD index "Store readiness") needs a reproducible production zip.
-    - mediabunny is MPL-2.0 and fflate is MIT, so their license texts must ship with the package.
-    - Several release checks cannot be automated (design-test-harness.md "L5: Manual release checklist").
-  - **Read** `docs/design/system.md` §5 (manifest and permission justifications) and §12 (`npm run zip`), `docs/design/design-test-harness.md` L5, `docs/pm-review.md` priority 7 (items 7a and 7d), and `docs/rulings.md` R-001.
-  1. `scripts/zip.mjs`:
-     - Run `npm run build:prod`.
-     - Write `dist/THIRD_PARTY_NOTICES.txt` from `node_modules/mediabunny/LICENSE` and `node_modules/fflate/LICENSE`, with a header per package giving its name, version and SPDX id.
-     - Zip the **contents** of `dist/` at the archive root into `helper-for-pixiv-<package.json version>.zip` at the repository root, excluding `*.map`.
-     - Use `fflate` (already a dependency, `zipSync`): no new dependency, and no edit to `scripts/build.mjs` (task 3.5 owns it).
-  2. `package.json`: script `"zip": "node scripts/zip.mjs"`. `.gitignore` already ignores `*.zip`.
-  3. Create `docs/release-checklist.md` covering:
-     - the L5 manual checks of design-test-harness.md:
-       - H.264 hardware encode of a live ugoira;
-       - MP4 in QuickTime, Windows Photos/Media Player and VLC, and WebM in Chrome and VLC;
-       - "Ask where to save each file" on;
-       - the 4 locales render without clipping;
-     - the logged-in checks, run by the owner with `npm run qa:live` and their own session:
-       - action-row placement on the logged-in DOM;
-       - pixiv's dark theme and the `#5fb9fb` focus ring;
-       - an R-18 download after a real login;
-       - R-18 display off → `Retry` + `tip_refused`;
-       - the R-003 stale-page probe;
-     - a live all-ages ugoira walk (pm 7a);
-     - store listing items (name, short description, full description, screenshots) in en/ja/zh_CN/zh_TW;
-     - the permission justification texts from system.md §5;
-     - the privacy disclosure "no data collected or transmitted";
-     - "the repository `kyoicn/pixivhelper` is public" (R-001);
-     - "manifest version equals `package.json` version".
-- **Files**: `scripts/zip.mjs`, `package.json`, `docs/release-checklist.md`
-- **Done when**:
-  - ENG-006 Verify prints `PACKAGE OK`: `npm run zip && Z=helper-for-pixiv-$(node -p "require('./package.json').version").zip && test "$(unzip -l "$Z" | grep -cE ' (manifest.json|sw.js|content.js|offscreen.html|options.html|THIRD_PARTY_NOTICES.txt)$')" = 6 && test "$(unzip -l "$Z" | grep -c '\.map$')" = 0 && test -f docs/release-checklist.md && echo PACKAGE OK`
-  - The zipped `manifest.json` version equals `package.json`'s.
-  - `npm run check` passes.
-  - The generated zip is not committed.
+  - `npm run check` passes, and `npm run size` passes (content bundle budget).
+  - `HFP_HEADLESS=1 npm run test:e2e -- --grep "@cuj1|@cuj2|@cuj5"` passes. `@cuj1` is a read-only regression: illustrations stay 164 px, also with late metadata.
+  - `HFP_HEADLESS=1 npm run test:e2e -- --grep "floating fallback" --repeat-each=3` passes every time, with both delays ≤ 3000 ms. Report the annotated delays.
+  - The English ugoira pill is exactly 176 px in idle, busy, Cancel-hover and Saved, and across MP4 → ZIP → WebM.
+  - QA re-runs `diagFloat.ts` (5 direct + 5 SPA samples, dev build): ≤ 3000 ms in 10 of 10.
 
 ## Conflict Risks
 
-- **`src/shared/types.ts`, `src/shared/job.ts`, `src/shared/outcome.ts`, `src/shared/messages.ts`, `src/shared/retry.ts`, `src/shared/pixiv-api.ts`, `src/shared/constants.ts`:**
-  - 1.1 moves `job.ts` and edits import lines.
-  - In Group 2, only 2.1 edits any of these files. They are the reason R-003 and the outage classification are one task: both change `FailureKind`/`WorkInfo`, row 4/row 8 of `outcome.ts`, the `messages.ts` guards, and the resolver.
-  - No Group 3 task edits them. If one needs a shared type, keep it module-local and report it.
-- **`src/background/resolver.ts`, `engine.ts`:**
-  - 1.1 (imports) → 2.1 (login-wall stop, `internal` failures) → 3.5 (hook-alias import lines only).
-  - `src/background/registry.ts`: 1.1 → 3.5.
-  - `src/background/handlers.ts`, `downloads.ts`: 1.1 → 2.1.
-  - `src/background/badge.ts`: 1.1 (import) → 2.4.
-- **`src/offscreen/offscreen.ts`:** 2.1 changes the non-encode branch of `failureOf` to `internal` (Group 2) → 3.4 changes the encode branch's `attempts` (Group 3). The two never run in the same group.
-- **`e2e/server/**`, `e2e/fixtures/works.ts`:**
-  - 2.1 adds `sensitiveWall`, fixture 135882745 and the `sl`/`urls` logic (Group 2).
-  - 3.2 changes only `FakePixiv.start()` to prebuild zips (Group 3).
-  - Nobody else edits them; 3.1 and 3.3 only call `server.hold()` and the existing API.
-- **`e2e/README.md`:** only 3.2 edits it, in Group 3. 2.1 must not touch it, even though it adds the fixture.
-- **E2E specs:**
-  - `e2e/cuj5.spec.ts`: 2.1 (Group 2) → 3.1 (Group 3, the `GRAY_TEXT` constant only).
-  - `e2e/cuj1.spec.ts`: 3.1 only.
-  - `e2e/cuj2.spec.ts`: 3.2 only. 3.1 must not add width checks there.
-  - `e2e/cuj3.spec.ts`: 2.2 only.
-  - `e2e/cuj4.spec.ts`: nobody (2.4 only runs it).
-  - `e2e/harness.spec.ts`: 3.2.
-  - `e2e/live/**`: 3.3.
-- **`.github/workflows/ci.yml`:** 2.5 adds `npm run size` (Group 2) → 3.5 adds the prod-bundle grep after it (Group 3). Never in the same group.
-- **`package.json` / `package-lock.json`:** 2.5 adds `size` (Group 2) → 3.6 adds `zip` (Group 3). No dependency changes anywhere.
-- **Scripts:** `scripts/build.mjs` belongs to 3.5 only, `scripts/zip.mjs` to 3.6, and `scripts/size.mjs` to 2.5.
-- **Locale files `src/_locales/*/messages.json`:** only 2.1 edits them, and only `aria_login`. 2.2 and 3.1 change no copy.
-- **`src/shared/pattern.ts`:** 2.3 only. `src/options/**` and the preview only call `resolveFolder`.
-- **`src/content/button/width.ts`, `styles.ts`, `src/content/mount.ts`:** 3.1 only.
-  - 2.1 may have to add `withheld` to `WorkInfo` literals in `test/unit/button/width.test.ts`, `test/unit/content/mount.test.ts` and other button/content tests (Group 2). 3.1 edits those test files afterwards (Group 3), so the work is sequential, not parallel.
-- **`src/content/content.ts`, `src/content/button/model.ts`, `labels.test.ts`:** 2.1 only.
-- **`eslint.config.js`:** 1.1 only.
-- **Semantic, not textual:**
-  - 2.5 measures the content bundle before 2.1's R-003 code (< 0.3 KB) merges. The 40/15 KB budget has headroom, and CI re-measures the merged tree.
-  - 3.5's grep and 3.3's live walled case both run against the merged Group 2 code, which is why they wait for Group 3.
+- **`e2e/cuj5.spec.ts`** is shared by 1.1 and 1.4, with explicit block ownership:
+  - **1.1** owns the header comment (lines 1–52), the renamed "every original drops its connection" test, the new sustained-outage test (inserted right after `'server failure: 5xx on every original …'`, far from Part C), the "QA gate additions (iteration 2)" comment block and the `'server failure: a ${name} answer …'` loop.
+  - **1.4** owns only the two `'floating fallback:'` tests in Part C, plus any local helper directly above them.
+  - Neither touches the import block. A helper either needs is defined locally (1.4) or uses what is already imported (1.1). The blocks are hundreds of lines apart, so git merges them cleanly.
+  - 1.1's header keeps referring to the `'floating fallback'` title prefix, which 1.4 keeps.
+- **`e2e/README.md`** is shared by every task, with section ownership:
+  - 1.1: `### CUJ-5`;
+  - 1.2: "Harness API", `### CUJ-1` and `### CUJ-4`;
+  - 1.3: `### CUJ-3`;
+  - 1.4: `### CUJ-2`.
 
-**Parallelism:** 12 tasks in 3 groups (1 + 5 + 6). The critical path is 1.1 → 2.1 → the longest Group 3 task (3.2, 3.3 or 3.5): about 3 task-lengths of wall-clock instead of 12 sequential ones. 2.1 is the largest single task by design (tl's shared-file constraint). The other Group 2 tasks are small and will finish well before it.
+  Prettier realigns a whole table when a cell widens a column, so each task's tables stay inside its own section. Each task checks `git diff e2e/README.md` after `npx prettier --write` and fixes any change outside its section. If the orchestrator still sees a conflict, it is whitespace-only: re-run `npx prettier --write e2e/README.md` after the merge.
+- **`src/shared/`** is touched by three tasks, in disjoint files:
+  - 1.1: `types.ts`, `job.ts`, `retry.ts`, `messages.ts`, `outcome.ts`;
+  - 1.2: `test-hooks.ts`;
+  - 1.3: `pattern.ts`;
+  - 1.4: `constants.ts`.
+
+  No task needs another's file; a task that does keeps the addition module-local and reports it.
+- **`src/background/`:** 1.1 edits `resolver.ts` only, and does not touch `engine.ts`: `applyResolution` lives in `resolver.ts`, and `engine.start()` needs no change for the optional `answered`. 1.2 owns `engine.ts`, `sw.ts`, `options-tab.ts` and the new `download-ui.ts`.
+- **Tests:**
+  - **1.1 only:** `test/unit/background/engine-resolver.test.ts`, `retry.test.ts`, `outcome.test.ts`, `messages.test.ts`.
+  - **1.2 only:** the other `engine-*.test.ts`, `sw.test.ts`, `options-tab.test.ts`, `chrome-fake.test.ts`, `manifest.test.ts`, `test/fakes/**` and `test/integration/**`. 1.1 must not edit integration tests; none asserts `offline` for an answered job today.
+  - **1.3 only:** `test/unit/options/**` and `pattern.test.ts`.
+  - **1.4 only:** `test/unit/button/width.test.ts`, `test/unit/content/mount.test.ts` and `content.test.ts`.
+  - `test/unit/content/api-proxy.test.ts` and `test/unit/offscreen/**` may need a one-line exact-shape fix from 1.1 only.
+- **E2E specs:**
+  - `cuj1.spec.ts` and `cuj4.spec.ts`: 1.2;
+  - `cuj2.spec.ts`: 1.4;
+  - `cuj3.spec.ts`: 1.3;
+  - `e2e/harness/**`: 1.2;
+  - `e2e/server/**` and `e2e/fixtures/**`: nobody (all four use the existing `hold` / `fault` / `__fake` API).
+- **Semantic, not textual:**
+  - 1.2's full e2e run happens before 1.3 merges, so `cuj3` "edge: newlines …" is still red there (pre-existing, expected). After all four merge, the orchestrator runs `npm run check` and the full `HFP_HEADLESS=1 npm run test:e2e` once on `main`.
+  - 1.2's fake makes `setUiOptions` reject without `downloads.ui` in `src/manifest.json`. 1.2 adds the permission in the same task, so the other tasks' worktrees never see the rejecting fake.
+  - 1.1 and 1.4 both change the content bundle slightly (`retry.ts`, `mount.ts`/`width.ts`). Each runs `npm run size`, and CI re-measures the merged tree against the 40/15 KB budget (35.2/13.0 KB today).
+
+**Parallelism:** 4 tasks in 1 group, so the wall-clock is the longest single task (1.2: new module, fake, integration matrix and two e2e specs) instead of four tasks run one after another. That is roughly 2.5–3× faster than sequential. No follow-up group is needed: the merge check above is the orchestrator's normal post-merge gate.

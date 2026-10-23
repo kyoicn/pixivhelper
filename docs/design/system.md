@@ -1,7 +1,7 @@
 # Helper for Pixiv — System Design
 
-> Last updated: 2026-10-23 03:39:12 (UTC-7)
-> Serves: prd-000 (CUJ-1 … CUJ-5); rulings R-001, R-002, R-003
+> Last updated: 2026-10-23 16:31:01 (UTC-7)
+> Serves: prd-000 (CUJ-1 … CUJ-5); rulings R-001, R-002, R-003, R-004 (spec-sync S1–S15), R-005 (Chrome's download UI hidden while a job runs)
 > Chapters: [design-download-engine.md](design-download-engine.md) · [design-offscreen-worker.md](design-offscreen-worker.md) · [design-artwork-button.md](design-artwork-button.md) · [design-settings-model.md](design-settings-model.md) · [design-options-page.md](design-options-page.md) · [design-test-harness.md](design-test-harness.md)
 
 This chapter holds the cross-cutting architecture: runtime contexts, tech stack, the shared data model, message conventions, the network/Referer strategy, the retry policy, the error model, security/privacy/i18n/a11y conventions, build/release, and the constraints table. Component chapters own everything specific to one context.
@@ -17,7 +17,7 @@ The system has four runtime contexts. Each one owns a single concern.
 | Context | Owns | Lifetime | Chapter |
 |---|---|---|---|
 | **Content script** (`content.js`, every `https://www.pixiv.net/*` top frame) | The button: discovery, rendering, state, a11y. Per-tab memory. First-party pixiv API calls (render-time metadata, and API proxy for jobs). | One pixiv document | [design-artwork-button.md](design-artwork-button.md) |
-| **Service worker** (`sw.js`) | **Job truth**: job registry, scheduling, `chrome.downloads`, badge/title, DNR rule, toolbar click. | Ephemeral: Chrome stops it after 30 s idle. All state is write-through to `chrome.storage.session`. | [design-download-engine.md](design-download-engine.md) |
+| **Service worker** (`sw.js`) | **Job truth**: job registry, scheduling, `chrome.downloads` (including hiding Chrome's download UI while a job runs, R-005), badge/title, DNR rule, toolbar click. | Ephemeral: Chrome stops it after 30 s idle. All state is write-through to `chrome.storage.session`. | [design-download-engine.md](design-download-engine.md) |
 | **Offscreen document** (`offscreen.html`) | **Bytes**: fetching originals and frame zips, building Blob URLs, codec probing, ugoira decode/encode. | Created on demand, closed 5 s after the last job ends. Not subject to the SW idle timer. | [design-offscreen-worker.md](design-offscreen-worker.md) |
 | **Options page** (`options.html`, full tab) | The three settings. | One tab | [design-options-page.md](design-options-page.md) |
 
@@ -30,7 +30,7 @@ The domain logic all four contexts share (settings schema, folder pattern gramma
 3. **Assume the SW dies at every `await`.** Every job mutation is persisted to `chrome.storage.session` before its side effect is issued. Hydration reconciles against `chrome.downloads.search` and the offscreen task table (PRD §4.8, CUJ-4 "Service-worker restart").
 4. **Pure core, thin shells.** Folder resolution, sanitization, `metadata.json` construction, retry policy, progress math, label/width candidates and outcome classification are pure TypeScript modules in `src/shared/`. They make no `chrome.*` calls at import time, and they are unit-tested, with the parity rules checked against golden vectors generated from `ref/pixiv-dl`.
 5. **Parity is proven, not asserted** (PRD Goal 2). Behaviors carried over from `ref/pixiv-dl` (sanitization, `metadata.json`, `plain_text`, retry) are pinned by golden tests produced by the script itself (ENG-003).
-6. **Minimal surface** (PRD index "Privacy & security"): 4 permissions, 2 hosts, no UI framework, no telemetry, no remote code.
+6. **Minimal surface** (PRD index "Privacy & security"): 5 permissions (the fifth, `downloads.ui`, added by R-005), 2 hosts, no UI framework, no telemetry, no remote code.
 7. **Every failure maps to exactly one button outcome.** A deterministic classifier (§10) turns low-level failures into the PRD's states. No failure is swallowed.
 
 ---
@@ -74,7 +74,7 @@ flowchart LR
   SW --> SYNC
 ```
 
-**One-sentence data flow.** The user clicks, and the content script sends `job/start`. The SW creates and persists a job, then resolves the plan through pixiv's API, using the originating tab as a first-party proxy (§8.3). It queues files, and asks the offscreen document to fetch each one (Referer added by DNR) and hand back a `blob:` URL. The SW then calls `chrome.downloads.download(blobUrl, folder/name, uniquify)`, counts completions from `downloads.onChanged`, updates the badge, and pushes `JobView` snapshots to the tab.
+**One-sentence data flow.** The user clicks, and the content script sends `job/start`. The SW creates and persists a job, then resolves the plan through pixiv's API, using the originating tab as a first-party proxy (§8.3). It queues files, and asks the offscreen document to fetch each one (Referer added by DNR) and hand back a `blob:` URL. The SW then calls `chrome.downloads.download(blobUrl, folder/name, uniquify)`, counts completions from `downloads.onChanged`, updates the badge, and pushes `JobView` snapshots to the tab. Before the first `downloads.download` call of a busy period it hides Chrome's download UI (`chrome.downloads.setUiOptions({ enabled: false })`), and it shows the UI again when the last running job ends (PRD §4.1 #3, R-005, D12).
 
 ---
 
@@ -170,7 +170,7 @@ Runtime dependencies are exactly `mediabunny` and `fflate`. Both are bundled int
     "run_at": "document_end",
     "all_frames": false
   }],
-  "permissions": ["downloads", "storage", "offscreen", "declarativeNetRequestWithHostAccess"],
+  "permissions": ["downloads", "storage", "offscreen", "declarativeNetRequestWithHostAccess", "downloads.ui"],
   "host_permissions": ["https://www.pixiv.net/*", "https://i.pximg.net/*"]
 }
 ```
@@ -187,14 +187,17 @@ The content script matches all of `www.pixiv.net/*`, not only `/artworks/*`. pix
 | `storage` | `storage.sync/local` (3 settings), `storage.session` (in-flight jobs) | Remembers the three settings. Keeps running downloads alive across service-worker restarts. Nothing persists after Chrome quits. |
 | `offscreen` | One offscreen document | WebCodecs and `URL.createObjectURL` are not available in service workers. The offscreen document encodes ugoira videos and hands downloaded bytes to Chrome's downloader. |
 | `declarativeNetRequestWithHostAccess` | One session rule that sets `Referer: https://www.pixiv.net/` | pixiv's image host returns 403 without this Referer. The rule matches only the extension's own requests to `i.pximg.net`, never browsing traffic. |
+| `downloads.ui` (R-005) | `chrome.downloads.setUiOptions` | Hides Chrome's per-file download animation while a multi-page artwork saves, then restores it. (PRD index text, verbatim.) |
 | host `https://www.pixiv.net/*` | Content script; artwork API | Shows the button on artwork pages and reads the artwork's page list. |
 | host `https://i.pximg.net/*` | Fetch originals and frame zips; DNR header modification | Downloads the original-size images. |
 
-Explicitly **not** requested (PRD index): `tabs`, `cookies`, `<all_urls>`, `webRequest`, `history`, `scripting`, `downloads.ui`. The design never needs them:
+`downloads.ui` adds no install warning: Chromium's permission-message rules (`chrome/common/extensions/permissions/chrome_permission_message_rules.cc`) map `kDownloads` to "Manage your downloads" and have no rule for `kDownloadsUi`. The install prompt is unchanged, and an update that adds the permission does not disable the extension for re-approval (PRD index: same warning class, no new install warning).
+
+Explicitly **not** requested (PRD index): `tabs`, `cookies`, `<all_urls>`, `webRequest`, `history`, `scripting`. The design never needs them:
 - `sender.tab.id` and `tabs.sendMessage/create/update` work without `tabs`.
 - Finding an open options tab uses `runtime.getContexts`, not `tabs.query({url})`.
 
-A unit test (`test/unit/manifest.test.ts`) asserts the permission and host lists equal exactly this set. That guards against permission creep.
+A unit test (`test/unit/manifest.test.ts`) asserts the permission list equals exactly `["downloads", "storage", "offscreen", "declarativeNetRequestWithHostAccess", "downloads.ui"]` (this order, the PRD index's) and the host list exactly the two hosts, and that the whole manifest equals the block above. That guards against permission creep. Its iteration-2 case "requests exactly the four approved permissions" and its whole-manifest literal are stale since R-005; they change in the same commit as `src/manifest.json`.
 
 ### `minimum_chrome_version: "116"`
 
@@ -207,6 +210,7 @@ A unit test (`test/unit/manifest.test.ts`) asserts the permission and host lists
 | DNR `initiatorDomains` / `requestDomains` | 101 |
 | Navigation API (`navigation.oncurrententrychange`) | 102 |
 | WebCodecs `VideoEncoder` | 94 |
+| `chrome.downloads.setUiOptions` (`downloads.ui`) | 105 |
 | **`chrome.runtime.getContexts`** | **116** (binding constraint) |
 
 The esbuild `target` is `chrome116`. Code must not call web APIs newer than 116 without a feature check. (mediabunny's quantizer rate control falls back to bitrate on older encoders, so it is not a hard requirement.)
@@ -245,6 +249,7 @@ classDiagram
     mode, kind, phase
     folder: string|null
     files: FileTask[]
+    answered: true|absent
   }
   class FileTask {
     role: metadata|page|zip|framesJson|video
@@ -293,7 +298,7 @@ export type FailureKind =
 export interface Failure {
   kind: FailureKind;
   status?: number;      // kind 'http' (and pixivError when known): the status of the final attempt
-  lastStatus?: number;  // kind 'network' | 'timeout' only: the last 429/5xx an EARLIER attempt of the same request got (§9)
+  answered?: true;      // kind 'network' | 'timeout' only: some attempt of this request got an HTTP response before it finally failed (§9)
   detail?: string;
   attempts: number;     // fetches: attempts made (1..4); encode: encoder passes (1, or 2 after the prefer-software retry)
 }
@@ -316,6 +321,7 @@ export type JobProgress =
 
 // Job model and protocol (src/shared/job.ts; fields in design-download-engine.md "Data Model"):
 // FileRole, FileState, FileTask, UgoiraState, JobRecord, StartRequest, ErrorCode.
+// JobRecord.answered?: true — pixiv answered at least one request of this job (§10 row 8, D13).
 
 export interface JobView {               // pushed SW → tab; full snapshot, idempotent
   jobId: string; artworkId: string;
@@ -417,11 +423,11 @@ Verified live by ENG-002 (`scripts/spike/FINDINGS.md` §3): a content-script `fe
 | Retries pollute `chrome://downloads` | Yes. Each failed attempt is a "Failed" entry, and retries may get `(1)` names. | **No.** Only final bytes are handed over. | No | No |
 | Tab independence | Yes | **Yes** | **No** (dies with the tab) | Yes |
 | Memory | None in extension | ≤ 5 files per job buffered as Blobs | Same as B, in the page | base64 strings, +33%, URL limit 2 MB |
-| Chrome bubble shows per-file progress | Yes | No. Files appear when complete. | No | No |
+| Chrome's bubble (hidden while a job runs under every option, R-005) | Would show per-file progress if visible | Lists each file once it is complete | Same as B | Same as B |
 | Extra permissions | None | None | None | None |
 | **Verdict** | Rejected: cannot meet §4.5.2 | **Selected** | Rejected: violates tab independence | Rejected: SW lifetime, size limits |
 
-**Trade-off accepted:** Chrome's download bubble lists each file when its bytes are complete, rather than showing per-file progress. A cancelled job leaves no "Canceled" entries, because in-flight files are fetches and not Chrome downloads. This differs from wording in PRD CUJ-1 steps 2 and 5. The PRD explicitly leaves the mechanism to engineering (§4.2), but the descriptive wording needs a spec-sync (§15).
+**What Chrome's own UI shows under D1 (PRD text since R-004 S6 and R-005).** Chrome's download UI is hidden from a job's first hand-off until the last running job ends (PRD §4.1 #3, D12). A file reaches Chrome's downloader only once its bytes are complete, so when the UI returns, the bubble and `chrome://downloads` list each completed file once, and `chrome://downloads` lists them throughout. A cancelled job leaves no "Canceled" entries for files still being fetched, because those are offscreen fetches, not Chrome downloads (PRD CUJ-1 step 5).
 
 ### 8.5 pixiv's login walls: the needs-login signal (R-003)
 
@@ -503,7 +509,7 @@ Without the second row, a logged-out user who clicks within the metadata latency
 
 **What the signal misses (accepted, each named in design-artwork-button.md "Open Questions").**
 1. **Login state unknown** (`readIsLoggedIn` → `null`, i.e. pixiv dropped both login markers): no needs-login; a walled all-ages work downloads on click. This only happens after a pixiv redesign that the `warn`-level logs and the live smoke would surface.
-2. **Stale logged-in page** (the user logged out in another tab after this page loaded): the page still says logged in, so neither check applies. R-18 works are refused by pixiv at `/pages` (PRD CUJ-5 edge, unchanged); a walled all-ages work downloads, because pixiv itself serves `/pages` to that session. Closing this would mean treating `urls.original === null` as a refusal for a page that claims to be logged in. That is deferred until a logged-in session confirms that pixiv never nulls the URLs of a work a logged-in viewer can see; otherwise P1 (always logged in) could be refused works she can view. Flagged for pm (§15 item 9) and for the L5 logged-in checks.
+2. **Stale logged-in page** (the user logged out in another tab after this page loaded): the page still says logged in, so neither check applies. R-18 works are refused by pixiv at `/pages`; a walled all-ages work downloads, because pixiv itself serves `/pages` to that session. Both are PRD text now (CUJ-5 edge "Logged out in another tab after this page loaded", R-004 S12a). Closing it would mean treating `urls.original === null` as a refusal for a page that claims to be logged in; the PRD defers that until the release checklist's logged-in stale-page probe confirms that pixiv never nulls the URLs of a work a logged-in viewer can see, because otherwise P1 (always logged in) could be refused works she can view (L5 logged-in checks).
 3. **Logged-in viewers who hide sensitive works in pixiv's settings**: out of scope; a logged-in page never shows needs-login, and pixiv's answers decide the outcome.
 4. **Signal drift** (pixiv starts sending URLs for walled works and blurs client-side): the extension would show idle on a walled work. Detected by the L4 live smoke, which asserts `Log in to download` on a ranking work with `xRestrict` 0 and `urls.original === null` ([design-test-harness.md](design-test-harness.md) L4), run before every release.
 
@@ -534,7 +540,7 @@ export function fetchWithRetry<T>(url: string, opts: RetryOptions): Promise<Retr
 | Never retried | 403 and every other non-2xx; `pixivError` bodies; `aborted` |
 | Delay before retry *n* (n = 0,1,2) | `Retry-After` if the failed response has one that parses as a positive number of seconds → `min(value, 30)` s. Otherwise `1.5 × 2ⁿ + U(0, 0.5)` s. **Parity detail:** the script's `_retry_after(e) or _backoff(...)` treats `Retry-After: 0` as falsy, so `0`, negative, or HTTP-date values fall through to the backoff. |
 | No sleep after the last attempt | as in the script |
-| Final failure after server answers (`lastStatus`) | When the final attempt fails with `network` or `timeout` and an earlier attempt of the **same request** got an HTTP 429/5xx, the returned `Failure` keeps the final `kind` and adds `lastStatus` = the most recent such status. Reason: Chromium throttles an extension's repeated requests to a URL that keeps answering 5xx and refuses them locally ("Request throttled", dev.chromium.org/throttling), which `fetch` reports as a plain `TypeError`. QA measured it in iteration 1: during a sustained 503, server hits per user click fell 4, 3, 2, 1, 1, 1, 1, and the later clicks ended in "No connection" although pixiv was the one failing. `lastStatus` lets the classifier (§10 row 8) tell "pixiv answered with errors, then the browser stopped asking" from "nothing answered". Only 429/5xx can precede a further attempt (every other status is final), so any status seen on an earlier attempt qualifies. |
+| Final failure after an answer (`answered`) | When the request finally fails with `network` or `timeout` and **any attempt of it received an HTTP response** (status line and headers: an earlier 429/5xx, or this attempt failed while reading the body: a short or long body, a reset or a stall mid-body), the returned `Failure` keeps its `kind` and adds `answered: true`. A `fetch()` that rejects before any response (DNS, a refused or reset connection, offline, Chromium's local "Request throttled" refusal) answers nothing. `http` and `pixivError` failures are answered by definition and do not carry the flag. The job-level rule of §10 row 8 reads it. It replaces iteration 2's `lastStatus` (the status of an earlier 429/5xx on the same request), which could not see a click whose every byte request Chromium refused locally: QA iteration 2 saw 1 of 7 Retries during a sustained 503 read "No connection" (R-004 S3, D13). |
 | Timeout | **30 s inactivity**, matching `urlopen(timeout=30)` socket semantics. Response headers must arrive within 30 s, and then every body chunk within 30 s of the previous one. A slow but progressing download of a large original is never cut off. Implemented with an `AbortController` re-armed per chunk. |
 | Body | Streamed via `response.body.getReader()`; chunks collected into an array, then `new Blob(chunks, { type })`. The stream yields byte progress (ugoira zip, PRD §4.7.5) and the stall timer. |
 | Session refresh | **Not ported.** The script re-reads the cookie once on 403. The extension never reads cookies (PRD index "Privacy"), so 403 fails immediately (PRD §4.5.2). |
@@ -556,13 +562,33 @@ Low-level failures are `Failure` values (§6). They are classified into exactly 
 | 5 | Ugoira: zip + `frames.json` saved, encode failed | `encodeFailed` | `Retry · MP4/WebM`, tip_encode_failed (CUJ-5 step 8) |
 | 6 | Pages job: ≥ 1 page saved and ≥ 1 page failed | `partial` | `Retry · N failed` (CUJ-5 step 4) |
 | 7 | Pages job: every page saved, `metadata.json` failed | `metadataOnly` | `Retry`, tip_metadata_only |
-| 8 | Nothing saved (0 pages or ugoira zip not saved). Cause from the job's failures (API failure + failed files), first match wins: (a) at least one failure and all are `disk`/`dismissed` → `disk`; (b) `navigator.onLine === false`, or at least one failure and every failure is an **unanswered network failure** (`kind === 'network'` with no `lastStatus`) → `offline`; (c) otherwise → `server`. So a network failure after 429/5xx on the same request (`lastStatus` set, Chromium throttling), an `internal` failure, a `timeout`, a 5xx/429 and any other 4xx all read as `server`. | `error: <cause>` | `Retry`, cause tooltip (CUJ-5 step 6) |
+| 8 | Nothing saved (0 pages or ugoira zip not saved). Cause from the job's failures (API failure + failed files), first match wins (PRD CUJ-5 step 6, R-004 S3): (a) at least one failure and all are `disk`/`dismissed` → `disk`; (b) `navigator.onLine === false`, **or pixiv answered nothing in this click**: the job is not answered (below) and there is at least one failure and every failure is `network` → `offline`; (c) otherwise → `server`: pixiv answered at least one request of the job (any status, including the artwork API's 200), or a request timed out, or a failure is `internal`, an HTTP status or a `pixivError`. | `error: <cause>` | `Retry`, cause tooltip (CUJ-5 step 6) |
 | 9 | Ugoira: zip saved, video encoded but its save failed (`disk`) | `error: disk` | `Retry`, tip_disk |
 | 10 | Everything required landed | `saved` | Saved (CUJ-1 step 6, CUJ-2 step 5) |
 
-Rows 4, 8 and 9 contain mappings the PRD does not state verbatim (zip 403 treated like originals, `dismissed` grouped with `disk`, ugoira video-save failure, throttled-after-5xx and `internal` as `server`, the resolver's login-wall stop). They are derived, and listed in §15 for pm.
+Rows 4, 8 and 9 were derived in iterations 1–2 and are PRD text since R-004: a zip 403 → needs login (CUJ-5 step 9); `dismissed` with `disk`, and a failed ugoira video or `metadata.json` save → `tip_disk` with a full retry (step 6 table, edge cases; S10); `internal` failures and timeouts → `server` (S3, S10); the resolver's login-wall stop (Part A step 1, edge "Clicked before the metadata arrived"; S12).
 
-**Why `internal` reads as `server`, not `offline`.** `internal` means the extension's own messaging failed (an offscreen command refused or undeliverable, an `off/ready` without a blob URL, an exception at an offscreen task boundary, or neither the tab nor the offscreen document answered an API call). Before iteration 2 these were recorded as `network`, so a job whose every file failed this way told the user "No connection" while the network was fine (code review W2). Of the four PRD causes, `tip_server` ("pixiv isn't responding. Retry in a few minutes.") is the closest honest message: the user can do nothing but retry. No new copy is introduced, because the PRD's cause table has no "internal" row and these failures are rare enough that a dedicated string would not pay for its 4-locale cost. A `video` dispatch failure stays `encode` (row 5: the zip landed, so `Retry · MP4` is the right next action).
+**How "answered" is tracked (D13, R-004 S3).** The PRD judges "No connection" per click: only if no request of this click's job (to `www.pixiv.net` or `i.pximg.net`) got any HTTP response. Two persisted facts carry that, so the rule needs no time window and no memory outside the job:
+
+```ts
+// src/shared/outcome.ts
+const gotAnswer = (f: Failure): boolean => f.kind === 'http' || f.kind === 'pixivError' || f.answered === true;
+
+function errorCause(job: JobRecord, list: Failure[], navigatorOnLine: boolean): ErrorCause {
+  if (list.length > 0 && list.every((f) => f.kind === 'disk' || f.kind === 'dismissed')) return 'disk';
+  const answered = job.answered === true || list.some(gotAnswer);
+  if (!navigatorOnLine || (!answered && list.length > 0 && list.every((f) => f.kind === 'network'))) return 'offline';
+  return 'server';
+}
+```
+
+- **`Failure.answered`** (request level, §9) is set by `fetchWithRetry` in whichever context made the request (content-script API proxy, offscreen bytes or fallback API), and travels in `api/fetchJson` results and `off/failed` events. It answers "did this failed request ever get a response".
+- **`JobRecord.answered?: true`** (job level) records answers that leave no failure behind: a successful API call. `applyResolution` sets it in the same mutation that applies the resolution, when the resolution succeeded (every mode's plan needs at least one API 2xx), or failed after an earlier API call of this resolve answered, or failed on a call that itself answered (`Resolution.answered`, design-download-engine.md "Resolving"); the login-wall stop also sets it (its `/ajax/illust` answered). It is never cleared. Byte requests need no setter: a job that reaches `transferring` is already answered, and a failed byte request's own answer is on its `Failure`.
+- **Survives a service-worker restart by construction**: the flag is part of the `JobRecord` that is written to `storage.session` before any effect runs (design-download-engine.md "Mutations"). A resolve that a restart interrupted runs again from its first API call (the resolver is idempotent) and recomputes `Resolution.answered`; an answer from the interrupted run is not carried over. That only matters if the re-run then gets no answer at all, and then the user's connection has just failed, so `offline` is the honest reading.
+- **"This click" is this job.** The render-time `/ajax/illust` fetch is not part of any job and never counts. A Retry is a new job and starts unanswered.
+- **Consequences, all PRD text.** During a sustained pixiv outage the job's API calls answer through the tab, so every click reads `server` whatever Chromium's throttling does to the image requests (CUJ-5 AC "including the 7th consecutive Retry"). With the network disconnected, the API calls fail unanswered and the click reads `offline` (AC "network disconnected"). Accepted cost (step 6 Details): if the API answers and then every image connection fails while `navigator.onLine` stays true, the click reads `server`. The e2e case that faulted only the originals with `reset` and expected `tip_offline` therefore now expects `tip_server` (design-test-harness.md).
+
+**`internal` reads as `server`** (PRD CUJ-5 step 6: "The extension's own internal failures also land here", R-004 S3, S10). `internal` means the extension's own messaging failed (an offscreen command refused or undeliverable, an `off/ready` without a blob URL, an exception at an offscreen task boundary, or neither the tab nor the offscreen document answered an API call). Before iteration 2 these were recorded as `network`, so a job whose every file failed this way told the user "No connection" while the network was fine (code review W2). A `video` dispatch failure stays `encode` (row 5: the zip landed, so `Retry · MP4` is the right next action).
 
 ---
 
@@ -586,7 +612,7 @@ There is no analytics, telemetry, crash reporting or remote config. The only net
 
 ### 11.4 Internationalization
 - `src/_locales/{en,ja,zh_CN,zh_TW}/messages.json`. `en` is `default_locale`, so missing keys in other locales fall back to English at runtime.
-- **Keys are the PRD Appendix A IDs verbatim**, plus: `ext_name`, `ext_description`, `locale_tag` (`en` / `ja` / `zh-CN` / `zh-TW`), singular variants with an `_one` suffix where English needs them (`action_title_one_single`, `aria_busy_pages_one`, `aria_saved_pages_one`, `live_start_one`, `live_saved_one`, `live_failed_one`), and `tip_partial_one` (already in the PRD).
+- **Keys are the PRD Appendix A IDs verbatim**, plus `ext_name`, `ext_description` and `locale_tag` (`en` / `ja` / `zh-CN` / `zh-TW`). Since R-004 S9 Appendix A itself lists the singular `_one` variants (`action_title_one_single`, `aria_busy_pages_one`, `aria_saved_pages_one`, `live_start_one`, `live_saved_one`, `live_failed_one`, `tip_partial_one`) and the live-region keys the design had derived (`live_start_ugoira`, `live_progress_pages`, `live_progress_percent`, `live_saved_ugoira`), and confirms every "(derived)" English string as written; translations still need native review. The shipped `en/messages.json` matches Appendix A string for string (checked in iteration 3).
 - **Resolved locale** = `chrome.i18n.getMessage('locale_tag')`. This returns the locale Chrome actually resolved after fallback (`zh_HK` → `en`), unlike `getUILanguage()`. It is used for the `lang` attribute (PRD index "CJK rendering") and for the per-locale width floor.
 - **Placeholders** use `$1`…`$9` substitutions. Where part of a message needs different styling (monospace token in `err_unknown_token`, pattern in `opt_still_using`), `splitOnPlaceholder(key, n)` calls `getMessage` with the sentinel **U+FDD0** as every substitution, splits on it, and builds DOM nodes. No HTML ever enters `messages.json`. The sentinel was `\u0000` in the first design; Chrome's `getMessage` cuts a substitution at NUL, so the split never happened (fixed in `9481e00`). U+FDD0 is a Unicode noncharacter: it never occurs in translated text, survives `getMessage` unchanged, and is stripped from folder names anyway (design-settings-model.md step 3+). The test stub (`test/helpers/i18n-stub.ts`) cuts substitutions at NUL exactly as Chrome does, so a regression to a NUL sentinel fails unit tests.
 - **Translations of `aria_login` (R-003).** PRD Appendix A changed `aria_login` to the neutral `Log in to pixiv to download this work.` and gives no ja/zh text. All four `messages.json` files must carry the neutral meaning, because the string is also announced for a mid-job 403 on an all-ages work (CUJ-5 step 9), where "R-18" was false. Draft translations, to be reviewed with the rest (Appendix A "Proposed translations"): ja `この作品をダウンロードするには、pixivにログインしてください。`, zh_CN `登录 pixiv 以下载此作品。`, zh_TW `登入 pixiv 以下載此作品。` They follow the existing translations of the old string with "R-18" removed and the English sentence's final period added.
@@ -596,17 +622,16 @@ There is no analytics, telemetry, crash reporting or remote config. The only net
 ### 11.5 Accessibility and theming
 These are owned by the component chapters, which implement the PRD index "Accessibility" and "Theming" sections: [design-artwork-button.md](design-artwork-button.md) §A11y and [design-options-page.md](design-options-page.md) §A11y. Shared rules:
 - Every interactive element is a native `<button>`/`<input>` (or `role="switch"` on a `<button>`), and `prefers-reduced-motion` disables all transitions and animations.
-- **Contrast.** Every text/background pair the extension introduces meets WCAG 2.1 AA 4.5:1 (PRD index "Contrast"), except pixiv blue `#0096FA` with white, which the index accepts for parity with pixiv. The iteration-2 audit found PRD-specified values below that line; the design follows the index rule and replaces them with the values below, which are PRD colour changes pm must sync (§15 item 7). Ratios are WCAG relative-luminance ratios computed from the hex values.
+- **Contrast** (PRD index "Contrast", §4.7.3, §4.7.7, CUJ-3 steps 3 and 5; R-004 S2). Every text/background pair the extension introduces meets WCAG 2.1 AA 4.5:1 **at rest**, except pixiv blue `#0096FA` with white (about 3.1:1), which the index accepts for parity with pixiv's own primary buttons, and one PRD value still open with pm, the options footer links (`#0096FA` on `#f6f7f9`, 2.91:1; §15 gap 2). The PRD now specifies the AA values the iteration-2 audit introduced, so design, PRD and mocks agree. Ratios are WCAG relative-luminance ratios computed from the hex values:
 
-| Where | Pair in the PRD / mocks | Ratio | Design value | Ratio |
-|---|---|---|---|---|
-| Options `Saved` (light; CUJ-3 step 3, `cuj-3-*` mocks) | `#1a9f5a` on `#f6f7f9` | 3.19 | `#188038` (dark mode keeps `#1a9f5a` on `#121212`, 5.49) | 4.68 |
-| Button `Unavailable` text (§4.7.3, CUJ-5 step 7; "assumption — confirm; not mocked") | `#80868b` on `#f1f3f4` | 3.31 | `#5f6368` | 5.44 |
-| Options validation message, light (CUJ-3 step 5, `cuj-3-error`) | `#d93025` on `#f6f7f9` | 4.45 | `#c5221f` (the 2 px field border stays `#d93025`: a non-text UI component needs 3:1) | 5.41 |
-| Options validation message, dark | `#d93025` on `#121212` | 3.93 | `#f28b82` | 7.84 |
-| Options "Still using" trailing text, light (`cuj-3-error`: `#8a8f94`) | `#8a8f94` on `#f6f7f9` | 3.04 | `#5c6166` (the page's help-text colour; dark keeps `#8a8f94` on `#121212`, 5.74) | 5.84 |
+| Where | Value (PRD) | Ratio |
+|---|---|---|
+| Options `Saved` (CUJ-3 step 3) | light `#188038` on `#f6f7f9`; dark `#1a9f5a` on `#121212` | 4.68; 5.49 |
+| Button `Unavailable` text (§4.7.3, CUJ-5 step 7) | `#5f6368` on `#f1f3f4` | 5.44 |
+| Options validation message (CUJ-3 step 5) | light `#c5221f` on `#f6f7f9`; dark `#f28b82` on `#121212`. The invalid field's 2 px border stays `#d93025` (a non-text UI component needs 3:1). | 5.41; 7.84 |
+| Options "Still using" trailing sentence (CUJ-3 step 5) | light `#5c6166`; dark `#8a8f94` on `#121212` | 5.84; 5.74 |
 
-  One more pair is below 4.5:1 and is **not** changed by the design, only flagged for pm: the error pill's hover tint, `#d93025` text on `#fdeceb` (4.18:1), which is mocked (`cuj-5-retry`) and shown only under the pointer.
+- **Hover-tint exemption** (PRD index, R-004 S2). A background tint shown only under the pointer, which never changes the label and whose meaning the accessible name already carries, may fall below 4.5:1. Two exist: the error hover (`#d93025` on `#fdeceb`, 4.18:1) and the Saved hover (`#0096FA` on `#e6f4fe`, 2.78:1). Nothing else may use the exemption: a new pair below 4.5:1 at rest, or a hover that changes the label, is a defect.
 
 ### 11.6 Performance budgets
 
@@ -614,7 +639,7 @@ These are owned by the component chapters, which implement the PRD index "Access
 |---|---|---|
 | Button within 500 ms of the action row rendering | `MutationObserver` + rAF-coalesced placement check (≤ 1 frame after the row appears); render-time metadata fetched in parallel, not awaited | e2e timing assertion (fake pixiv renders the row after a delay) |
 | Content script stays cheap on every pixiv page (engineering budget, not a PRD number) | `content.js` ≤ **40 KB minified** and ≤ **15 KB gzip**. Measured at iteration 1: 35.2 KB / 12.9 KB (code review, debug on), 34.4 KB / 12.6 KB with the prod defines; 35.2 KB / 13.0 KB at the end of iteration 2 (`npm run size`, after R-003's `requiresLogin` and the outage changes). The budget replaces the first design's "< 30 KB", which was a guess made before any code existed; no single module dominates (labels 4.6 KB, retry 3.8, model 3.8, styles 3.2), so meeting 30 KB would mean cutting function, not waste. 40/15 leaves ~15 % headroom for v1 work. | `npm run size` in CI (ENG-010): esbuild-minifies `src/content/content.ts` with the prod defines and fails above either limit |
-| Floating fallback within 3 s | 3 s timer from artwork-route entry | e2e |
+| Floating fallback within 3 s of the page loading or of the in-app navigation, measured to the pill on screen (PRD §4.7.1, CUJ-5 step 11; R-004 S4) | Timer from artwork-route entry (content-script start on a full load, the URL change on SPA navigation) fires at `FLOAT_FALLBACK_MS − FLOAT_PLACEMENT_BUDGET_MS` = 3000 − 250 = 2750 ms; the callback places the pill synchronously, so it paints at the next frame (D14, design-artwork-button.md "Mounting") | e2e from the PRD anchors (`domInteractive` on a direct load, the in-page click on SPA navigation) to the first animation frame after the host connects: ≤ 3000 ms; QA `diagFloat.ts`, 10 samples |
 | Busy feedback ≤ 100 ms after click | Optimistic local `busy 0/N` before the SW round-trip | e2e (`performance.now` delta) |
 | State change ≤ 300 ms | SW pushes `job/update` synchronously after the final mutation persists | e2e |
 | Badge ≤ 1 s | Badge recomputed after every mutation (coalesced 50 ms); recomputed on SW start before anything else | SW integration test + e2e after CDP SW stop |
@@ -657,7 +682,8 @@ Every implementation-shape constraint in PRD-000 and the index, classified by wh
 |---|---|---|---|
 | Manifest V3, Chrome Web Store, desktop Chrome only | PRD §1, index | External fact: the Chrome Web Store accepts only MV3. Plus product scope. | SW + offscreen architecture (§2). |
 | No remotely hosted code | index "Store readiness" | External fact: MV3 / Web Store policy | Everything bundled; no CDN libraries. |
-| Permissions exactly `downloads`, `storage`, `offscreen`, `declarativeNetRequestWithHostAccess`; hosts `www.pixiv.net`, `i.pximg.net`; never broaden host access | index "Privacy & security" | PRD reason: minimal permissions for store review + privacy | Design needs nothing more (§5). Manifest test locks the set. |
+| Permissions exactly `downloads`, `storage`, `offscreen`, `declarativeNetRequestWithHostAccess`, `downloads.ui`; hosts `www.pixiv.net`, `i.pximg.net`; never broaden host access | index "Privacy & security" | PRD reason: minimal permissions for store review + privacy. `downloads.ui` is added by owner ruling R-005 (reason recorded: one fly-to-toolbar animation per file, 20 for a 20-page manga). External fact: `downloads.ui` has no Chromium permission-message rule, so it adds no install warning (§5) | Design needs nothing more (§5). Manifest test locks the five. |
+| Chrome's download UI is turned off with `chrome.downloads.setUiOptions({ enabled: false })` only from a job's first hand-off to Chrome until the last running job ends (any reason), turned on again then, and on every worker start with no job running | PRD §4.1 #3, CUJ-1/2/4/5 (R-005) | Owner decision with a recorded reason (R-005; the browser-wide side effect is accepted in the ruling, not a challenge). External facts (Chromium `downloads_api.cc`, Chrome docs): API since Chrome 105, below the 116 minimum; Chrome keeps the disable per extension in the browser process, so it outlives SW termination, and clears it when the extension unloads (disabled, reloaded, updated, uninstalled) or the browser quits; an enable is refused while another extension keeps the UI off, after our own entry is removed; no getter | D12: one SW module with three call sites (before every hand-off, in finalize when no job is left, at boot when none runs). No persisted state. |
 | Encoding via built-in WebCodecs; no WASM codec bundles (ffmpeg.wasm rejected) | PRD §4.1 #4, NFR "Payload" | PRD reason: ~24 MB payload, slower | mediabunny (pure TS) over WebCodecs. |
 | Output only through `chrome.downloads`, relative to the Downloads folder | PRD §4.1 #2 | Product decision (settled in discovery) | Blob URL hand-off (§8). |
 | Orchestration in the SW, encoding in an offscreen document | PRD §4.1 #6, NFR | PRD reason (tab independence) + external fact (no WebCodecs/Blob URLs in SW, PRD §4.2) | §2 split. |
@@ -676,6 +702,8 @@ Every implementation-shape constraint in PRD-000 and the index, classified by wh
 
 **Result of the review:** every implementation-shape constraint rests on an external fact, a recorded PRD reason, or a settled product decision. None stands in for an unstated goal in a way that costs the architecture. **No requirement challenge filed.**
 
+**Re-review, iteration 3, against R-004 (S1–S15) and R-005.** R-004 adds no implementation-shape constraint. Its items write down user-visible behavior: widths, colours, copy, the outage diagnosis (S3) and the floating-fallback anchor (S4), which the design implements in §10 and §11.6. S8 adopts the design's Chrome path-safety pass (D8) into PRD §4.4, and S14 drops the `Retry-After` assumption marker; both were already designed. R-005 adds the two rows above: the fifth permission and the `setUiOptions` mandate. Both rest on the owner's ruling with its reason recorded, and the permission's "no new install warning" claim is verified against Chromium's permission-message rules (§5). The remaining "(assumption — confirm)" markers that touch implementation (the 200-character field, VP9 for WebM) are unchanged and were reviewed above. **No requirement challenge filed.**
+
 **Re-review, iteration 2 (2026-10-23), against the R-003 amendment** (PRD-000 CUJ-1 preconditions, CUJ-5 Part A step 1, its edge case and ACs, Appendix A `aria_login`; index persona P2). The amendment adds user-facing behavior only: when the needs-login state appears, and its accessible name. It adds no implementation-shape constraint; the one implementation statement in it, "The signal that detects the sensitive-content wall is specified in the design docs", delegates the mechanism to engineering (§8.5). The signal works within the existing rows above: it needs no permission, no cookie access (the "Permissions exactly …" and privacy rows) and no extra request (it reuses the render-time `/ajax/illust` body). No row changed; **no requirement challenge filed.** The content-bundle budget (§11.6) is an engineering budget, not a PRD constraint, and is not listed here.
 
 ---
@@ -691,32 +719,26 @@ Every implementation-shape constraint in PRD-000 and the index, classified by wh
 | D5 | fflate `unzipSync` per frame from retained bytes | Memory rule, tiny dependency ([design-offscreen-worker.md](design-offscreen-worker.md)) |
 | D6 | Codec capability probed in the offscreen document, cached per size in `storage.session` | Same context as the encoder; "cached for the browser session" (PRD §4.6) |
 | D7 | Shadow-DOM button, vanilla TS, Navigation API + MutationObserver | Style isolation from pixiv; no framework in a page-wide content script ([design-artwork-button.md](design-artwork-button.md)) |
-| D8 | Chrome path-safety pass after script-parity sanitization | Chrome's `IsSafePortablePathComponent` rejects more than PRD §4.4 strips ([design-settings-model.md](design-settings-model.md)) |
+| D8 | Chrome path-safety pass after script-parity sanitization | Chrome's `IsSafePortablePathComponent` rejects more than the script's sanitization strips; PRD §4.4 step 3 adopts the pass (R-004 S8) ([design-settings-model.md](design-settings-model.md)) |
 | D9 | esbuild + Vitest + Playwright (CfT) + fake-pixiv HTTPS harness | Simple build, deterministic CUJ-5 fault coverage ([design-test-harness.md](design-test-harness.md)) |
 | D10 | Login walls (R-003) detected from the first-party `/ajax/illust` body: withheld ⇔ `urls.original === null` (`sl ≥ 4` only if the `urls` shape is missing); needs-login ⇔ page logged out and (`xRestrict ≥ 1` or withheld); enforced at render time and again by the `full`-mode resolver | pixiv's own per-viewer decision, available before any click at zero cost; `/pages` does not refuse walled all-ages works, so the resolver check closes the pre-metadata click (§8.5) |
 | D11 | Job model and protocol types live in `src/shared/job.ts`; `src/shared` never imports a context directory, contexts never import each other; ESLint-enforced | The pure core operates on these types; the inverted dependency on `src/background/` was code-review W6 (§4) |
+| D12 | Chrome's download UI is toggled by one SW module (`src/background/download-ui.ts`): `hideForHandOff()` is awaited before every `chrome.downloads.download`, `restore()` runs in finalize when no job is left and at boot when none runs; calls are serialized, idempotent per SW instance, and a failure never blocks a hand-off | R-005 / PRD §4.1 #3. `handOff()` is the only hand-off point and `finalize()` the only end point, so three call sites cover every PRD moment, and the hide can never start before a file reaches Chrome (design-download-engine.md "Chrome's download UI") |
+| D13 | "No connection" is judged per job: `Failure.answered` (request level) plus `JobRecord.answered` (job level, persisted), replacing `lastStatus` | R-004 S3. Deterministic whatever Chromium's throttling does, no time-windowed memory, survives SW restarts with the record (§10) |
+| D14 | The floating fallback timer fires 250 ms before the 3 s deadline (`FLOAT_PLACEMENT_BUDGET_MS`), anchored at route entry | R-004 S4: the 3 s is measured to the pill on screen; measured overshoot of a 3000 ms timer was 11–79 ms (design-artwork-button.md "Mounting") |
 
 ---
 
 ## 15. Open questions, risks, and PRD spec-sync items
 
-### Spec-sync items for pm (`/design-feature` or `/spec-sync`; the PRD is not edited here)
-1. **CUJ-1 steps 2 and 5, CUJ-4 "Chrome's own downloads button" (bubble wording).** Under D1, files appear in Chrome's bubble when complete, not "as they start", and cancel leaves no "Canceled" entries. The user-visible acceptance criteria (≤ 5 in flight, nothing new starts after cancel, completed files remain) all hold.
-2. **§4.5.2 `Retry-After` "(assumption — confirm)"** is resolved in the PRD's favor: the chosen mechanism sees headers, so `Retry-After` is honored. (Resolved; QA verified the 30 s cap in iteration 1. Only the "(assumption — confirm)" marker remains for pm to drop.)
-3. **§4.4 sanitization is incomplete for Chrome.** Chrome also rejects format characters (e.g. ZWJ U+200D in emoji artist names), Unicode noncharacters, `~` / `.` / whitespace at segment ends, Windows reserved names (`CON`, `nul.txt`, `desktop.ini`, …), shell-integrated extensions (`.lnk`, `.url`, `.local`, `.scf`, `.{…}`), and on Windows short-name-shaped segments containing `~`. Golden probe: `safe_component("~sora~") == "~sora~"`, which Chrome refuses. The design adds a deterministic Chrome-safety pass (D8). It is applied to whole segments, so it also normalizes literal text such as a trailing space, a narrow exception to "literal text is used as typed". The preview shows the result.
-4. **Singular copy:** derived `_one` variants (§11.4) for `aria_busy_pages`, `aria_saved_pages`, `live_start`, `live_saved`, `live_failed`, `action_title_one`.
-5. **Derived outcome mappings** (§10 rows 4, 8, 9), WebM-selected-but-VP9-unsupported → MP4 (if H.264 is encodable), and copy for an ugoira whose only failure is `metadata.json` (design: treated as `error: disk` with a full retry, because `tip_metadata_only` speaks of pages).
-6. **CUJ-5 step 6 detection table vs Chromium request throttling** (QA iteration 1, PM item 5f). The design's rule (§9 `lastStatus`, §10 row 8): a request whose final attempt failed at the network level **after** pixiv answered 429/5xx counts as `server`, and the extension's own `internal` failures count as `server`; "No connection" needs every failure to be a network failure that never got an answer, or `navigator.onLine === false`. PM proposed a broader, job-level rule ("No connection only if no request in this job got any HTTP response"); it would also turn "API answered, every image connection reset" into `server`, which contradicts today's step 6 wording ("Network errors … after retries, with 0 pages saved" → No connection). The design implements the per-request rule and leaves the job-level variant to pm. Residual: if Chromium refuses all 4 attempts of a request locally (none reaches pixiv), it still reads as "No connection"; QA never observed that (at least 1 of 4 attempts per click reached pixiv).
-7. **Contrast values** (§11.5 table). The design replaces five PRD/mock colour values that fall below the index's 4.5:1 rule: options `Saved` light `#1a9f5a` → `#188038`; button `Unavailable` text `#80868b` → `#5f6368`; options validation text light `#d93025` → `#c5221f` and dark → `#f28b82`; options "Still using" trailing text light `#8a8f94` → `#5c6166`. pm syncs index "Contrast", §4.7.3, §4.7.7 ("Every other state passes 4.5:1" was false), CUJ-3 steps 3 and 5, CUJ-5 step 7 and the `cuj-3-*` mocks. Open for pm only: the error pill's hover (`#d93025` on `#fdeceb`, 4.18:1).
-8. **§4.8 action title with 0 counted files** (code review W1, PM item 5i). The design shows the idle title whenever the counted total is 0, and "across N downloads" counts only jobs with at least one remaining file (design-download-engine.md "Badge and action title"). This happens for a lone `retryMetadata` job and a job clicked before its metadata arrived (`expectedFiles` 0) while it resolves.
-9. **R-003 residuals.**
-   - (a) CUJ-5 edge "Logged out in another tab after this page loaded: … The click is refused": true for R-18, but pixiv does not refuse a walled all-ages work (it serves `/pages` to logged-out sessions), so the design downloads it (§8.5 miss 2). Extending the check to stale logged-in pages waits on a logged-in verification. pm: either narrow the edge to R-18 works, or accept the deferred behavior.
-   - (b) CUJ-5 Part A step 1 "System response" still says "the work's metadata (`xRestrict` 1)"; under R-003 the trigger is "`xRestrict` ≥ 1, or the work withheld behind pixiv's wall".
-   - (c) §4.2 "Verified technical facts" could add the probe result: logged out, `/ajax/illust` returns `urls.original: null` for every walled work, and `/pages` / `ugoira_meta` still answer for walled all-ages works.
-   - (d) Derived: a click made before the render-time metadata arrived (`pending`) on a walled or R-18 work ends in `Log in to download` (resolver check, §10 row 4); before R-003 an R-18 pending click ended in `Retry` + `tip_refused`.
-10. **§4.7.2 provisional width.** The design now sizes a button whose metadata has not arrived from the 2-digit page labels only (design-artwork-button.md "Fixed width"), as §4.7.2 says. An ugoira whose metadata arrives later widens once before any interaction; if the user clicked first, the width stays and a `WebM` hint may be cut with an ellipsis (English: `Download · WebM` / `Saved · WebM` need 176 px). Separately, CUJ-2 step 1's "164 px" contradicts §4.7.2 for ugoira (QA iteration 1); the code follows §4.7.2 until pm resolves it.
-11. **Keyboard order** (CUJ-1 edge "Keyboard and screen reader"). pixiv's action row is `flex-direction: row-reverse`, so the host sits after the like wrapper in the DOM to appear left of Like; Tab reaches it after Like. PM proposed "Tab reaches the button in pixiv's row order, next to Like".
-12. **CUJ-3 step 5, unclosed `{`** (PM item 5e). The validator treats an unclosed `{` as literal text (design-settings-model.md rule 5), so a pause mid-token autosaves a fragment such as `pixiv/{user`. PM proposes making it invalid. Not changed until pm amends step 5; the change would be one regex in `validatePattern` and one test row.
+### PRD spec-sync status
+
+The twelve spec-sync items listed here in iteration 2 were resolved by R-004 (owner: "GO WITH A"; pm applied S1–S15 to prd-000 and the mocks): Chrome-bubble wording (S6), the `Retry-After` marker (S14), the D8 path-safety pass (S8), the `_one` copy keys and every "(derived)" string (S9), the derived outcome mappings including WebM → MP4 when VP9 cannot be encoded and the ugoira metadata-only failure (S10), the job-level "No connection" rule (S3, now D13), the AA contrast values and the hover-tint exemption (S2), the 0-count idle title (S11), the R-003 residuals a–d (S12), the provisional and ugoira widths (S1), keyboard order (S7), and the unclosed `{` (S5). Their design consequences are folded into the sections above and into the chapters. Nothing from that list remains open.
+
+### Open spec gaps for pm (not blocking; `/design-feature` or `/spec-sync`, the PRD is not edited here)
+
+1. **A download that needs a decision in Chrome's bubble while the UI is hidden** (R-005, PRD §4.1 #3). If Chrome holds one of a job's files for a user decision (a dangerous-file warning, or an Enhanced Safe Browsing deep-scan prompt, which the risk table below already lists for blob-sourced `.zip`), that prompt lives in the bubble the extension has hidden. The file stays `in_progress`, so the job does not end and the UI stays hidden until the user acts on the file in `chrome://downloads`, which keeps listing every file (PRD §4.1 #3). The design follows the PRD as written: it does not re-enable early. If this is ever observed, pm could allow restoring the UI as soon as `downloads.onChanged` reports a `danger` value that needs a decision for one of the job's files; that is a one-branch change in `download-ui.ts` and `engine.ts`. Likelihood is low: pixiv originals are images, and no such prompt appeared in iterations 1–2. The L5 checklist covers it on Windows (design-test-harness.md).
+2. **Options footer links below 4.5:1 at rest** (PRD index "Contrast" vs CUJ-3 step 10). The footer's `Reset to defaults` and `Report an issue` are `#0096FA` 13 px text on the page's `#f6f7f9`: 2.91:1. The index accepts pixiv blue with white only for the button's idle and busy fill and its Saved text, requires 4.5:1 at rest for every other pair, and states that CUJ-3's colours pass, which this pair does not (the R-004 S2 audit covered the Saved, validation and "Still using" texts, not the links). The build ships the PRD value. pm either extends the pixiv-blue acceptance to the options links, or specifies an AA link colour (for example `#0b6fc2`, 4.82:1 on `#f6f7f9`; dark mode keeps `#0096FA` on `#121212`, 6.02:1).
 
 ### Risks
 | Risk | Likelihood | Mitigation |
@@ -724,9 +746,11 @@ Every implementation-shape constraint in PRD-000 and the index, classified by wh
 | DNR `initiatorDomains: [extension id]` does not match extension-initiated requests | **Retired** (verified live by ENG-002, §8.2) | — |
 | pixiv changes how it hides walled works from logged-out visitors (e.g. sends URLs and blurs client-side) | Low–medium over product life | `sl` fallback for a missing `urls` shape; L4 live smoke asserts `Log in to download` on a live walled work before every release (§8.5) |
 | Logged-in DOM and dark theme never observed live (no pixiv account) | Medium (P1 is always logged in) | Selectors validate structurally and fall back to floating; owner-run `npm run qa:live` with a session, or the L5 checklist, before release (design-test-harness.md) |
-| Chromium throttles all 4 attempts of a request during a long pixiv outage | Low | Would read "No connection" (§15 item 6); not observed |
+| Chromium throttles every image request of a click during a long pixiv outage | **Retired** by the job-level rule (D13, R-004 S3): the job's API calls answered, so the click reads `server` | — |
+| The SW dies after deleting the last job's record and before re-enabling Chrome's download UI | Low | The next SW start finds no job and re-enables (D12 boot rule); Chrome also clears the disable when the extension unloads or the browser quits |
+| Another extension also hides Chrome's download UI | Low | Chrome keeps the UI hidden while any extension disables it; our enable is refused after our own entry is removed, logged at `debug`; nothing to do |
 | pixiv DOM redesign breaks action-row discovery | Medium over product life | Floating fallback; selectors only in `pixiv-dom.ts`; live-DOM fixture refresh (ENG-002) |
 | Undocumented pixiv AJAX shape changes | Low | Parsing in `pixiv-api.ts` with tolerant defaults; failures surface as button states |
 | Hardware H.264 encoder session limits with concurrent ugoira encodes | Low | On encoder `configure`/`error`, retry once with `hardwareAcceleration: 'prefer-software'` before failing ([design-offscreen-worker.md](design-offscreen-worker.md)) |
 | Very long literal pattern text exceeds 255 bytes per component or Windows path limits | Low | Surfaces as `disk` (`FILE_NAME_TOO_LONG`); bounded by the 200-character field |
-| Enhanced Safe Browsing deep-scan prompts on blob-sourced `.zip` | Low | None needed by design; noted for QA on Windows |
+| Enhanced Safe Browsing deep-scan prompts on blob-sourced `.zip` | Low | Not seen so far; while a job runs the prompt would sit in the hidden bubble (§15 gap 1); L5 check on Windows |

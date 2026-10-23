@@ -1,7 +1,7 @@
 # Download Engine (service worker)
 
-> Last updated: 2026-10-23 02:21:28 (UTC-7)
-> Serves: prd-000 — CUJ-1 (pipeline, cancel, re-download), CUJ-2 (ugoira job orchestration), CUJ-3 (toolbar click → settings tab), CUJ-4 (badge/title), CUJ-5 (retry modes, outcome classification, login-wall check at resolve per R-003)
+> Last updated: 2026-10-23 16:31:01 (UTC-7)
+> Serves: prd-000 — CUJ-1 (pipeline, cancel, re-download), CUJ-2 (ugoira job orchestration), CUJ-3 (toolbar click → settings tab), CUJ-4 (badge/title), CUJ-5 (retry modes, outcome classification incl. the job-level "No connection" rule per R-004 S3, login-wall check at resolve per R-003); PRD §4.1 #3 (Chrome's download UI hidden while a job runs, R-005)
 
 ## Overview
 
@@ -11,6 +11,7 @@ The service worker (`src/background/`) is the system's **source of truth for job
 - snapshots settings and resolves a job's plan through pixiv's API (proxied through the originating tab, see [system.md §8.3](system.md));
 - builds the file queue, schedules at most 5 files per artwork, and dispatches byte work to the offscreen document;
 - hands finished bytes to `chrome.downloads` and observes completion;
+- hides Chrome's download UI from a job's first hand-off until the last running job ends (R-005);
 - classifies the end state, pushes `JobView` snapshots to the originating tab, and keeps the toolbar badge and title correct;
 - installs the DNR Referer rule;
 - opens or focuses the settings tab on toolbar click.
@@ -47,10 +48,12 @@ flowchart TB
     CAPS["caps.ts"]
     OPTT["options-tab.ts"]
     DNRM["dnr.ts"]
+    DUI["download-ui.ts<br/>Chrome's download UI on/off (R-005)"]
   end
   SW <--> OFF["Offscreen document"]
   R <--> SS[("storage.session<br/>job:* · caps:*")]
   DLW <--> DL["chrome.downloads"]
+  DUI -- "setUiOptions: enabled on or off" --> DL
   BAD --> ACT["chrome.action"]
   OPTT --> TABS["tabs.create/update · windows.update · runtime.getContexts"]
   DNRM --> DNR["declarativeNetRequest (session rule)"]
@@ -122,6 +125,8 @@ export interface JobRecord {
   ugoira: UgoiraState | null;
   stopReason: null | 'cancelled' | 'forbidden';   // forbidden: first byte 403, or the resolver's login-wall check (R-003)
   apiFailure: { endpoint: 'illust' | 'pages' | 'ugoira_meta'; failure: Failure } | null;
+  answered?: true;                // pixiv answered at least one request of this job (any HTTP status); set by applyResolution,
+                                  // never cleared; read by classifyOutcome row 8 (system.md §10, R-004 S3, D13)
 }
 ```
 
@@ -185,14 +190,18 @@ chrome.runtime.onMessage.addListener(router);           // routes by target/type
 chrome.downloads.onChanged.addListener(onDownloadChanged);
 chrome.action.onClicked.addListener(openOrFocusOptions);
 export const ready = (async () => {
-  await installRefererRule();                           // system.md §8.2 (idempotent)
+  await installRefererRule();                           // system.md §8.2 (idempotent; a failure is logged, boot goes on)
   await chrome.action.setBadgeBackgroundColor({ color: '#1f1f1f' });
   await chrome.action.setBadgeTextColor({ color: '#FFFFFF' });
-  await registry.hydrate();                             // load job:* into memory
-  await badge.render();                                 // PRD: correct within 1 s of restart
-  await reconcile();                                    // below; then pump every job
+  await engine.hydrate();                               // load job:* into memory
+  await engine.badge.render();                          // PRD: correct within 1 s of restart
+  await engine.restoreDownloadUiIfIdle();               // R-005: no job running → Chrome's download UI on (never rejects)
+  await engine.reconcile();                             // below; then pump every job
+  await engine.badge.render();
 })();
 ```
+
+The download-UI step sits after `hydrate()` because it needs the registry, and before `reconcile()` so that a job reconcile finishes on the spot restores through `finalize` like any other (below, "Chrome's download UI").
 
 #### Mutations: persist intent, then act
 
@@ -234,7 +243,7 @@ stateDiagram-v2
 `resolve(job)` is idempotent. If the SW dies during `resolving`, hydration simply calls it again.
 
 1. `snapshot = readSettings()` was taken at `job/start`, not here, so a re-run after restart still uses the click-time settings (PRD §4.1 #8).
-2. API calls go through `apiFetchJson(job.originTabId, url)`: first `tabs.sendMessage(tab, api/fetchJson)`, and if that throws (no receiving end, tab closed) then `off/fetchJson`. If that also throws (the offscreen document did not answer), the call fails with `{ kind: 'internal', detail }`: no context could make the request, which says nothing about the user's connection ([system.md §10](system.md) "Why `internal` reads as `server`"). The `RetryResult` is parsed by `pixiv-api.ts`:
+2. API calls go through `apiFetchJson(job.originTabId, url)`: first `tabs.sendMessage(tab, api/fetchJson)`, and if that throws (no receiving end, tab closed) then `off/fetchJson`. If that also throws (the offscreen document did not answer), the call fails with `{ kind: 'internal', detail }`: no context could make the request, which says nothing about the user's connection ([system.md §10](system.md) "`internal` reads as `server`"). The `RetryResult` is parsed by `pixiv-api.ts`:
    - `parseIllust(body) → WorkInfo`, including `withheld` ([system.md §8.5](system.md)) (+ raw body kept for `metadata.json`);
    - `parsePages(body) → string[]` (`urls.original` per page, page order);
    - `parseUgoiraMeta(body) → { originalSrc, frames }`.
@@ -255,7 +264,7 @@ stateDiagram-v2
    ```ts
    export type Resolution =
      | { ok: true; plan: Plan }
-     | { ok: false; apiFailure: ApiFailure }
+     | { ok: false; apiFailure: ApiFailure; answered: boolean }   // answered: some API call of this resolve got an HTTP response
      | { ok: false; loginRequired: true };   // R-003: page logged out and pixiv withholds the work
    ```
 4. **Folder:** `full` mode calls `resolveFolder(snapshot.folderPattern, { artist: userName, id, title, userId })` ([design-settings-model.md](design-settings-model.md)). Retry modes use `request.folder` after re-validating it with `isSafeRelativeFolder()`, so a retry writes into the original job's folder (PRD CUJ-5 step 5 and edge case).
@@ -268,6 +277,8 @@ stateDiagram-v2
 6. Persist with `phase = 'transferring'`, then pump.
 
 Failure in resolving → `apiFailure` is set and the job finalizes (classifier rows 2, 3 and 8 in [system.md §10](system.md)); a login-wall stop finalizes through row 4.
+
+**`answered` (R-004 S3, D13).** `applyResolution` sets `job.answered = true` in the same mutation that applies the resolution when the resolution is `ok` (every mode's plan needs at least one API 2xx), is the login-wall stop (its `/ajax/illust` answered), or is a failure with `answered: true`. The resolver computes that flag per call: an API step whose `RetryResult` is `ok`, or whose failure `gotAnswer()` (system.md §10: `http`, `pixivError`, or `answered: true`), marks the resolve answered; the failure returned for a later step carries it. Examples: `full` with `/ajax/illust` 200 and `/pages` unanswered `network` → `answered: true` (server); `full` with `/ajax/illust` unanswered `network` → `false` (offline); `retryPages` whose `/pages` got 503, 503, then refused attempts → the failure has `answered: true` → `true` (server); a transport failure of both proxies (`internal`) → `false`, and row 8 reads `server` anyway because `internal` is not `network`. A re-run of `resolve` after a restart recomputes the flag from scratch.
 
 #### `metadata.json` construction (src/shared/metadata.ts)
 
@@ -325,7 +336,7 @@ pump(job):
 
 | Event | Transition | Effects |
 |---|---|---|
-| `off/ready { blobUrl }` (save) | `fetching → saving` (blobUrl stored, persisted **before** the call) | `downloads.download({ url: blobUrl, filename: folder + '/' + name, conflictAction: 'uniquify', saveAs: false })` → store `downloadId` (persist). If the call throws ("Invalid filename" etc.) → `failed{disk}`. |
+| `off/ready { blobUrl }` (save) | `fetching → saving` (blobUrl stored, persisted **before** the call) | effect `download` → `handOff()`: `await downloadUi.hideForHandOff()` (R-005, below), stop if the job ended meanwhile, then `downloads.download({ url: blobUrl, filename: folder + '/' + name, conflictAction: 'uniquify', saveAs: false })` → store `downloadId` (persist). If the call throws ("Invalid filename" etc.) → `failed{disk}`. |
 | `off/ready` (zip with `save: false`) | `fetching → done` | pump |
 | `off/ready` without `blobUrl` for a file that must be saved | `fetching → failed{ internal, detail: 'no blob' }` | release, pump |
 | Dispatch refused (`{ ok: false }` ack) or undeliverable (`sendMessage` rejects after the one `ensureOffscreen` resend) | `fetching → failed{ internal }` for every role except `video`, which fails `{ encode }` (the zip landed, so `Retry · MP4` is the right next action, §10 row 5) | release, pump |
@@ -345,7 +356,7 @@ Events for unknown task or download IDs (job already ended or cancelled) → `of
 - `saving` files with a `downloadId` → effect `cancelDownload` (`chrome.downloads.cancel(id)`; Chrome removes the partial file). A download whose id arrives after the cancel (Chrome started it while the cancel mutation ran) is cancelled by the hand-off path itself, because `onDownloadStarted` finds the job ended;
 - finalize immediately with outcome `cancelled`.
 
-Already completed files stay on disk (PRD CUJ-1 step 5). An in-progress encode is aborted, and because the video is only handed to Chrome after `finalize()`, no partial video can exist (PRD §4.6). The button returns to idle within 300 ms because the push happens right after the persist, with no waiting for abort confirmations.
+Already completed files stay on disk (PRD CUJ-1 step 5). An in-progress encode is aborted, and because the video is only handed to Chrome after `finalize()`, no partial video can exist (PRD §4.6). The button returns to idle within 300 ms because the push happens right after the persist, with no waiting for abort confirmations. Finalize then turns Chrome's download UI back on if no other job is running (PRD CUJ-1 step 5, R-005).
 
 #### Finalize
 
@@ -353,7 +364,88 @@ Already completed files stay on disk (PRD CUJ-1 step 5). An in-progress encode i
 2. Push `job/update { view: toView(job, outcome) }` to `originTabId`.
 3. Delete `job:<jobId>`; drop in-memory indexes; `off/release` all remaining task IDs of the job.
 4. `badge.render()`.
-5. If the registry is empty → `offscreenClient.scheduleClose()` (5 s grace; cancelled by any new command).
+5. If the registry is empty (no running job is left; a job still finalizing is still listed): `await downloadUi.restore()` (R-005, below), then `offscreenClient.scheduleClose()` unless a codec probe is pending (5 s grace; cancelled by any new command).
+
+#### Chrome's download UI (download-ui.ts, R-005)
+
+PRD §4.1 #3 (R-005): from the moment the first file of a job is handed to Chrome until the last running job ends, for any reason (Saved, cancelled, failed, needs login, Unavailable), Chrome's download UI is off, so there is no per-file fly-to-toolbar animation and no downloads button. It is turned on again when the last running job ends, and whenever the worker starts with no job running. The hidden window never starts before a job's first file is handed to Chrome. CUJ-1 step 2 and its AC require this "not even for the first file".
+
+**Platform facts the design relies on** (Chromium `chrome/browser/extensions/api/downloads/downloads_api.cc`; Chrome extension docs, `chrome.downloads.setUiOptions`):
+- `setUiOptions({ enabled })` (Chrome 105+, permission `downloads.ui`) adds this extension to, or removes it from, a per-profile set of "UI-disabling extensions" held in the browser process. The UI is hidden while the set is non-empty. Disabling also closes a bubble that is open.
+- The entry belongs to the extension, not to the SW instance. It outlives SW termination; Chrome removes it when the extension unloads (disabled, reloaded, updated, uninstalled), and it is gone after a browser restart.
+- `enabled: true` first removes our entry, then rejects (`runtime.lastError`) if another extension still keeps the UI off. `enabled: false` rejects only without the permission.
+- There is no getter.
+
+```ts
+// src/background/download-ui.ts
+export interface DownloadUi {
+  /** Before a file is handed to Chrome. Resolves once Chrome has applied the hide (or refused it); never rejects. */
+  hideForHandOff(): Promise<void>;
+  /** The last running job ended, or the SW started with none running. Resolves once Chrome has answered; never rejects. */
+  restore(): Promise<void>;
+}
+export function createDownloadUi(
+  setUiOptions: (options: chrome.downloads.UiOptions) => Promise<void> = (o) => chrome.downloads.setUiOptions(o),
+): DownloadUi;
+```
+
+State, in memory only and per SW instance. Nothing is persisted, so the storage inventory (system.md §6) is unchanged: Chrome itself holds the real state, and a stored copy could go stale when Chrome clears the entry on unload.
+- `requested: boolean | null`: the `enabled` value this instance last asked Chrome for; `null` until its first call, because a previous instance may have left the UI either way.
+- `chain: Promise<void>`: every `setUiOptions` call is queued behind the previous one, so Chrome applies them in request order and its state is always the last request.
+- `hideRefused: boolean`: a latch. Once a hide is refused, this instance stops trying, because the only documented refusal (missing permission) cannot be fixed by a retry.
+
+| Call | State | Does |
+|---|---|---|
+| `hideForHandOff()` | `hideRefused` | resolves at once |
+| `hideForHandOff()` | `requested === false` | returns `chain`: waits for the pending hide to settle, so no hand-off overtakes it |
+| `hideForHandOff()` | `requested` is `true` or `null` | sets `requested = false` **synchronously**, enqueues `setUiOptions({ enabled: false })`, returns it |
+| `restore()` | `requested === true` | returns `chain` |
+| `restore()` | `requested` is `false` or `null` | sets `requested = true` synchronously, enqueues `setUiOptions({ enabled: true })`, returns it |
+
+Updating `requested` before enqueueing is what keeps concurrent callers ordered. Up to five hand-offs per job, from any number of jobs, race into `hideForHandOff()`: one enqueues and the others await the same promise. A `restore()` from one job's finalize and the first hand-off of a job that starts right after it land in the queue in the order they were called.
+
+**Call sites** (the only three):
+1. **`handOff(job, idx)`** in `engine.ts`, after its `saving` guard and before `chrome.downloads.download`: `await downloadUi.hideForHandOff()`, then the restart-test await point `await:handoff.hideUi`, then `if (!registry.get(job.jobId)) return`. A job cancelled while the call was in flight never hands that file to Chrome, so it leaves no "Canceled" entry (PRD CUJ-1 step 5); finalize already released the blob. Every hand-off goes through `handOff`: a fresh `off/ready`, reconcile's `ready → saving`, and reconcile's re-issue of a hand-off a restart interrupted. So the first file of every job is preceded by the hide, and nothing earlier is: a job that only resolves, fetches or encodes never hides the UI.
+2. **`finalize(job)`**: step 5 above, after the mutation that deletes the record, when `registry.list()` is empty. This covers every end reason, because every job ends through `finalize`: Saved, partial and error, needs login (including a mid-job 403 and the resolver's login-wall stop), Unavailable, and cancel (whose mutation returns `finalize` at once). A job that is still finalizing is still listed, so when two jobs end together only the last one restores. A job that is still resolving keeps the UI hidden until it ends too: the PRD's "until the last running job ends".
+3. **Boot** (`sw.ts`, above): `engine.restoreDownloadUiIfIdle()` = `registry.list().length === 0 ? downloadUi.restore() : Promise.resolve()`. With hydrated jobs, the UI stays as the previous instance left it: hidden if a job had handed off a file, otherwise visible until the next hand-off (with `requested === null`, that hand-off calls Chrome once; repeating a disable is harmless).
+
+`Engine` gains `restoreDownloadUiIfIdle(): Promise<void>`, used by boot; finalize uses the same check internally.
+
+**Error handling.**
+- **Hide refused:** `warn` once per SW instance ("could not hide Chrome's download UI"), set the latch, and the hand-off proceeds. Saving the file is the job; hiding the animation is cosmetic.
+- **Restore refused:** `debug`. This is expected when another extension keeps the UI off, and Chrome has already removed our entry before refusing. `requested` stays `true`.
+- Neither method ever rejects into the effect runner, `finalize` or boot.
+- **SW killed between deleting the last record and the restore:** the next SW start finds no job and restores (call site 3). Chrome also clears the entry when the extension unloads.
+- **Chrome holds a job file for a user decision** (dangerous-file or deep-scan prompt) while the UI is hidden: the job does not end, so the UI stays hidden until the user acts in `chrome://downloads`. This follows the PRD; the gap is with pm (system.md §15 gap 1).
+
+**Performance.** Two IPC calls per busy period (the first hand-off and the last end), about 1 ms each. Only the first hand-off of a busy period waits for one round trip.
+
+**Test API.** In `--e2e` builds (`__TEST_HOOKS__`), `self.__hfpTest.downloadUi()` returns `{ requested, calls }`, where `calls` is `Array<{ enabled: boolean; ok: boolean; at: number }>`: the calls this SW instance made, with Chrome's result and `Date.now()` when each settled. It is merged into `self.__hfpTest` (shared with `clickAction`) through a new `exposeTestApi(api)` in `src/shared/test-hooks.ts`, and `options-tab.ts` switches to the same helper, so neither installer overwrites the other. The installer is a function referenced only from `if (__TEST_HOOKS__)`, as in `options-tab.ts`, so prod bundles carry no trace (ENG-007 check).
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant OD as Offscreen
+  participant SW as Service worker (engine)
+  participant UI as download-ui.ts
+  participant DL as chrome.downloads
+  Note over SW: job A resolved, files fetching; Chrome's UI visible
+  OD-->>SW: off/ready A:metadata.json
+  SW->>UI: hideForHandOff()
+  UI->>DL: setUiOptions({enabled:false})
+  DL-->>UI: ok
+  SW->>DL: download(A:metadata.json)
+  OD-->>SW: off/ready A:p0 … p4
+  SW->>UI: hideForHandOff() (requested=false → resolved chain)
+  SW->>DL: download(A:p0 …)
+  Note over SW: job B starts, hands off (no new call), ends Saved
+  SW->>SW: finalize(B): registry still holds A → no restore
+  DL-->>SW: onChanged complete (A's last page)
+  SW->>SW: finalize(A): registry empty
+  SW->>UI: restore()
+  UI->>DL: setUiOptions({enabled:true})
+  Note over DL: downloads button returns; bubble lists both jobs' files
+```
 
 #### Hydration and reconciliation (after a SW restart)
 
@@ -396,7 +488,7 @@ title      = total === 0 ? t('action_title_idle')               // nothing count
            :              t('action_title_many', total, jobs)
 ```
 
-- **Zero counted files** (code review W1, PM item 5i). A lone `retryMetadata` job, or a `full` job clicked before its metadata arrived (`expectedFiles` 0) while it resolves, is running but counts 0. The first design then titled the icon "Helper for Pixiv — 0 files remaining" while the badge was hidden. The badge already treats 0 as "nothing in flight" (PRD §4.8: "With nothing in flight, the badge is hidden"), so the title follows the badge: `total === 0` → `action_title_idle`, and the job count in `action_title_many` counts only jobs that contribute files. The title and the badge therefore always tell the same story. PRD §4.8 does not define this case; it is listed for pm ([system.md §15](system.md) item 8).
+- **Zero counted files** (PRD §4.8, R-004 S11). A lone `retryMetadata` job, or a `full` job clicked before its metadata arrived (`expectedFiles` 0) while it resolves, is running but counts 0: the badge is hidden and the title is `action_title_idle`, and the job count in `action_title_many` counts only jobs that contribute files. The title and the badge therefore always tell the same story. (The first design titled the icon "Helper for Pixiv — 0 files remaining" here; code review W1.)
 
 - `metadata.json`, `frames.json` and the zip never count separately (PRD §4.8). A `retryMetadata` job contributes 0, so the badge stays hidden unless another job runs.
 - Failed and skipped files leave the count immediately (CUJ-4 "A job ends with failures").
@@ -455,13 +547,14 @@ sequenceDiagram
   CS->>PX: fetch
   CS-->>SW: 12 original URLs
   SW->>SW: resolveFolder → pixiv/みずき-135882741
-  SW->>SS: set job (transferring, files queued)
+  SW->>SS: set job (transferring, files queued, answered)
   loop up to 5 in flight, ascending idx
     SW->>OD: off/makeText(metadata) / off/fetchBytes(p_k)
     OD->>IMG: fetch p_k (DNR adds Referer)
     IMG-->>OD: 200 bytes
     OD-->>SW: off/ready {blobUrl}
     SW->>SS: file saving (persist intent)
+    SW->>DL: setUiOptions({enabled:false}) (first hand-off only, R-005)
     SW->>DL: download(blobUrl, folder/name, uniquify)
     DL-->>SW: onChanged complete
     SW->>OD: off/release
@@ -472,6 +565,7 @@ sequenceDiagram
   SW->>CS: job/update ended {saved, folder}
   SW->>SS: remove job:{jobId}
   SW->>SW: badge '' · title idle
+  SW->>DL: setUiOptions({enabled:true}) (no job left, R-005)
 ```
 
 ### Ugoira job (CUJ-2)
@@ -546,6 +640,26 @@ sequenceDiagram
 
 **API call origin for jobs**: see [system.md §8.3](system.md) (tab proxy + offscreen fallback, selected over SW-only fetch).
 
+**Where Chrome's download UI is toggled (R-005)**
+
+| Criteria | **SW module: hide before each hand-off, restore at finalize/boot** | Hide at `job/start`, restore at finalize | A registry `Effect` per job (`hideUi`/`restoreUi`) | Persist the UI state in `storage.session` |
+|---|---|---|---|---|
+| PRD "never starts before the job's first file is handed to Chrome" | Yes | **No**: hides during resolving and fetching (a long zip fetch), and for jobs that end needs-login or Unavailable without any file | Yes | Yes |
+| First file covered ("not even for the first file") | Yes (awaited before `download`) | Yes | Needs ordering between two effects of different mutations | Yes |
+| Browser-wide fact vs per-job state | Matches: one module for the browser-wide setting | Matches | Mismatch: effects belong to one job; the UI belongs to all of them | Duplicates a fact Chrome already holds; stale after Chrome clears it on unload |
+| Survives SW restart | Chrome keeps the state; the boot rule covers a lost restore | Same | Same | Same, with more code |
+| **Verdict** | **Selected** | Rejected | Rejected | Rejected |
+
+**How "No connection" is judged (R-004 S3)**
+
+| Criteria | **Job-level flag (`JobRecord.answered`) + request-level `Failure.answered`** | Per-request `lastStatus` (iteration 2) | Per-URL/host memory of recent 429/5xx in the SW |
+|---|---|---|---|
+| Matches PRD CUJ-5 step 6 (per click: no request of the job answered) | Exactly | No (misses a click whose every byte request Chromium refused) | No (a different rule: time-windowed) |
+| Deterministic under Chromium throttling | Yes | No (1 of 7 Retries wrong in QA iteration 2) | Mostly, but depends on the window length |
+| Survives SW restart | Yes: persisted in the record | Yes | Needs its own persisted store |
+| Extra state | One optional field per record | None | A new storage key and expiry |
+| **Verdict** | **Selected** | Replaced | Rejected (it was the fallback if R-004 had answered B) |
+
 ## Cross-Cutting Concerns
 
 - **Error handling:** every failure becomes a `Failure` on a file or as `apiFailure`. The classifier ([system.md §10](system.md)) is the only place outcomes are decided. `chrome.*` call rejections inside effects are caught and logged at `warn`; a failed `tabs.sendMessage` push is expected (tab gone) and logged at `debug`.
@@ -553,16 +667,22 @@ sequenceDiagram
 - **Performance:** per-file overhead is 2 messages + 1 `storage.session` write + 1 download call (~2–5 ms). A 200-page job therefore spends < 1 s of SW CPU in total. Badge rendering is O(jobs × files), recomputed ≤ 20×/s.
 - **Observability:** `info` at job start/end with `jobId`, `artworkId`, `mode`, `kind`, outcome, counts, duration; `debug` per file transition. `chrome://extensions` → Errors shows `warn`/`error`.
 - **Testing:**
-  - Unit: scheduler pump (cap, order, deps, stop on 403, cancel), `classifyOutcome` (one case per row plus precedence conflicts; row 8 cases: all `network` without `lastStatus` → offline, a `network` failure with `lastStatus` 503 → server, any `internal` → server, `navigator.onLine === false` → offline, all `disk`/`dismissed` → disk; row 4 via `stopReason 'forbidden'` with no failed file), badge/title math including `999+`, singular, a lone 0-count job (idle title, empty badge) and "across N" counting only jobs with files left, `buildMetadata`/`serializeJson` against golden vectors, `effectiveFormat` truth table.
-  - Resolver: `full` with `loggedIn: false` on a withheld body → `loginRequired`, and the fake API saw no `/pages` or `ugoira_meta` call; `loggedIn: true` or `null` on the same body → proceeds; `retryEncode` calls `/ajax/illust` before `ugoira_meta`; a transport error from both the tab and the offscreen fallback → `apiFailure` with `kind: 'internal'`.
-  - Integration (Vitest + `test/fakes/chrome.ts`): full job runs with a fake offscreen; SW restart is simulated by discarding the module instance and re-importing with the same fake `storage.session`/`downloads` at every await point of a scripted job; concurrent jobs; cancel races (`off/ready` after cancel).
+  - Unit: scheduler pump (cap, order, deps, stop on 403, cancel), `classifyOutcome` (one case per row plus precedence conflicts; row 8 cases: a job without `answered` whose only failure is an unanswered `network` API failure → offline; a resolved job (`answered: true`) whose every original failed with unanswered `network` → server (the PRD's accepted cost); an API `network` failure with `answered: true` → server; any `internal` or `timeout` → server; `navigator.onLine === false` → offline even when answered; all `disk`/`dismissed` → disk; row 4 via `stopReason 'forbidden'` with no failed file), badge/title math including `999+`, singular, a lone 0-count job (idle title, empty badge) and "across N" counting only jobs with files left, `buildMetadata`/`serializeJson` against golden vectors, `effectiveFormat` truth table.
+  - Resolver: `full` with `loggedIn: false` on a withheld body → `loginRequired`, and the fake API saw no `/pages` or `ugoira_meta` call; `loggedIn: true` or `null` on the same body → proceeds; `retryEncode` calls `/ajax/illust` before `ugoira_meta`; a transport error from both the tab and the offscreen fallback → `apiFailure` with `kind: 'internal'` and `answered: false`; `Resolution.answered` per the examples in "Resolving"; `applyResolution` sets `job.answered` for `ok`, the login-wall stop and an answered failure, and leaves it absent for an unanswered failure.
+  - `download-ui.ts` (fake `setUiOptions`): concurrent `hideForHandOff()` calls make one Chrome call and all resolve after it; `restore()` then `hideForHandOff()` in the same tick apply in that order; a refused hide warns once, latches, and still resolves; a refused restore resolves and logs at `debug`; `requested === null` at start makes both methods call Chrome.
+  - Integration (Vitest + `test/fakes/chrome.ts`): full job runs with a fake offscreen; SW restart is simulated by discarding the module instance and re-importing with the same fake `storage.session`/`downloads` at every await point of a scripted job, including the new `await:handoff.hideUi`; concurrent jobs; cancel races (`off/ready` after cancel, and a cancel while the hide is in flight → no `download` call). R-005 order, from the fake's combined call log (design-test-harness.md L2): no `setUiOptions` while a job only resolves; `{ enabled: false }` resolves before the first `download`; exactly one `{ enabled: true }` after the last job's record is deleted, for each end reason (saved, partial, needs login, unavailable, cancel); none when job B ends while job A runs; boot with no records → `{ enabled: true }`; boot with a hydrated running job → no call until its next hand-off; a refused `setUiOptions` never fails a job.
   - E2E: [design-test-harness.md](design-test-harness.md).
 
-## Migration / Rollout (iteration 2 changes)
+## Migration / Rollout
 
-- **Persisted shape.** `StartRequest.full` gains `loggedIn`, and `Failure` gains `kind: 'internal'` and `lastStatus`. Both are persisted inside `JobRecord`s in `storage.session`, which Chrome clears when the extension is updated or reloaded, so no record written by the iteration-1 code is ever read by the new code: no migration and no version bump of `JobRecord.v`. The resolver reads `request.loggedIn ?? null`, so even a hydrated record without the field would skip the check (never needs-login), the safe reading; incoming `job/start` messages are validated strictly (above).
+**Iteration 3.**
+- **Persisted shape.** `Failure.lastStatus` is removed; `Failure.answered?: true` and `JobRecord.answered?: true` are added. `storage.session` is cleared when the extension is updated or reloaded, so no record of an earlier build is ever hydrated: no migration and no bump of `JobRecord.v`. A record without `answered` reads as "nothing answered yet", which is exactly what an absent field means. The `isFailure` guard in `messages.ts` accepts `answered: true` (and nothing else under that key) and drops `lastStatus`.
+- **Permission.** `downloads.ui` joins the manifest. It carries no install warning (system.md §5), so an update to this build installs silently and is not disabled for re-approval. Chrome removes our UI-disable entry when the extension unloads for the update, so no build ever leaves Chrome's UI hidden across an update.
+- **Rollback** is a plain revert. The previous build never calls `setUiOptions`; a rollback is itself an update, which unloads the extension and clears any disable this build left. Removing a permission never prompts.
+
+**Iteration 2.**
+- **Persisted shape.** `StartRequest.full` gains `loggedIn`, and `Failure` gains `kind: 'internal'`. The resolver reads `request.loggedIn ?? null`, so even a hydrated record without the field skips the check (never needs-login), the safe reading; incoming `job/start` messages are validated strictly (above).
 - **Type move (ENG-008)** is compile-time only.
-- **Rollback** is a plain revert of the commits: none of the changes writes new storage keys or permissions.
 
 ## Dependencies & Integration Points
 
@@ -570,12 +690,12 @@ sequenceDiagram
   - `src/shared/*` (types, messages, settings, pattern, metadata, retry, pixiv-api, outcome, progress, i18n);
   - the offscreen worker contract;
   - the content-script contract (`api/fetchJson`, `job/update`);
-  - `chrome.downloads`, `chrome.storage.session`/`sync`/`local`, `chrome.action`, `chrome.declarativeNetRequest`, `chrome.offscreen`, `chrome.runtime.getContexts`, `chrome.tabs.create/update/sendMessage`, `chrome.windows.update`.
-- **Depended on by:** the content script (all job states), the options page (none directly), the e2e harness (evaluates `chrome.downloads.search` and `chrome.action.getBadgeText` in the SW).
+  - `chrome.downloads` (including `setUiOptions`, permission `downloads.ui`), `chrome.storage.session`/`sync`/`local`, `chrome.action`, `chrome.declarativeNetRequest`, `chrome.offscreen`, `chrome.runtime.getContexts`, `chrome.tabs.create/update/sendMessage`, `chrome.windows.update`.
+- **Depended on by:** the content script (all job states), the options page (none directly), the e2e harness (evaluates `chrome.downloads.search`, `chrome.action.getBadgeText` and `__hfpTest.downloadUi()` in the SW).
 
 ## Open Questions & Risks
 
 - **Byte path verified** (ENG-002): the DNR rule as written matches offscreen fetches and nothing else, and `chrome.downloads.download(blobUrl)` from the SW saves a blob created in the offscreen document ([system.md §8.2](system.md)). No fallback rule is implemented.
-- **"Ask where to save each file" on:** `saveAs: false` may still prompt per file. A dismissed dialog → `dismissed` → counted as failed and not retried (PRD CUJ-1 edge). Verify on real Chrome during QA.
-- **Derived mappings** awaiting pm confirmation are listed in [system.md §15](system.md): §10 rows 4, 8, 9; the 0-count title (item 8); the pending-click login-wall stop (item 9d).
-- **Stale logged-in page** (user logged out in another tab): the resolver does not treat a withheld body as a refusal while the page claims to be logged in, so a walled all-ages work downloads in that case ([system.md §8.5](system.md) miss 2). Revisit after a logged-in live check.
+- **"Ask where to save each file" on:** `saveAs: false` may still prompt per file. A dismissed dialog → `dismissed` → counted as failed and not retried (PRD CUJ-1 edge). The Save As dialog is a separate window, not part of the download UI that R-005 hides, so it is expected to appear while the UI is hidden. Verify on branded Chrome (L5).
+- **A Chrome prompt for a job file while the UI is hidden** (dangerous-file or deep-scan): the job waits for the user in `chrome://downloads`, and the UI stays hidden until it ends ([system.md §15](system.md) gap 1, with pm).
+- **Stale logged-in page** (user logged out in another tab): the resolver does not treat a withheld body as a refusal while the page claims to be logged in, so a walled all-ages work downloads in that case. This is PRD text now (CUJ-5 edge, R-004 S12a), to be revisited after the release checklist's logged-in stale-page probe ([system.md §8.5](system.md) miss 2).
