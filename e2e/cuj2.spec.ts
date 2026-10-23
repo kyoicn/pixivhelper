@@ -388,6 +388,11 @@ function readPill(page: Page): Promise<PillState> {
   });
 }
 
+/** The host's rendered width in px (PRD §4.7.2: fixed per artwork, whatever the format). */
+function pillWidth(page: Page): Promise<number> {
+  return page.locator(HOST).evaluate((host) => host.getBoundingClientRect().width);
+}
+
 function pillSamples(page: Page): Promise<PillSample[]> {
   return page.evaluate(() => [...((window as unknown as PillWindow).__cuj2Samples ?? [])]);
 }
@@ -675,6 +680,10 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
     let pill = await readPill(page);
     expect(pill.text).toBe('Download · WebM');
     expect(pill.aria).toBe('Download this ugoira as WebM, with its frame zip and metadata');
+    // Every format's faces are width candidates, so a format change never resizes the pill. The
+    // English value is measured (176 px with the e2e fonts; PRD conflict, system.md §15 item 10).
+    const width = await pillWidth(page);
+    expect(width).toBeGreaterThanOrEqual(164);
 
     await setUgoiraOutput(harness, 'zip');
     await expect
@@ -682,11 +691,13 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
       .toBe('Download · ZIP');
     pill = await readPill(page);
     expect(pill.aria).toBe("Download this ugoira's frame zip");
+    expect(await pillWidth(page)).toBe(width);
 
     await setUgoiraOutput(harness, 'webm');
     await expect
       .poll(async () => (await readPill(page)).text, { timeout: FOLLOW_MS })
       .toBe('Download · WebM');
+    expect(await pillWidth(page)).toBe(width);
   });
 
   test('example (136004512) as MP4: percent, badge 1, Saved · MP4, exact folder, identical zip and frames.json, plays in Chrome', async ({
