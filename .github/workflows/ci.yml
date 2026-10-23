@@ -26,6 +26,8 @@ jobs:
 
       - run: npm run check
 
+      - run: npm run size
+
       - run: python3 -I scripts/gen-golden.py --check
 
       - run: npx playwright install --with-deps chromium
