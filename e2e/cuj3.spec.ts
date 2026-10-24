@@ -1045,7 +1045,7 @@ test.describe('CUJ-3: configure the extension from the toolbar icon', { tag: '@c
     expect(await textOf(ui.version)).toBe(`v${builtManifest().version}`);
     expect(await textOf(ui.privacy)).toBe(PRIVACY);
     for (const link of [ui.reset, ui.report]) {
-      expect(await computed(link, ['color'])).toEqual([rgb('#0096fa')]);
+      expect(await computed(link, ['color'])).toEqual([rgb('#0b6fc2')]);
     }
     expect(await computed(page.locator('footer'), ['border-top-width', 'font-size'])).toEqual([
       '1px',
@@ -1122,12 +1122,16 @@ test.describe('CUJ-3: configure the extension from the toolbar icon', { tag: '@c
             await computed(surface, ['background-color', 'border-top-color', 'border-top-width']),
           ).toEqual([rgb(colors.surface), rgb(colors.border), '1px']);
         }
+        // R-007 item 4: the selected segment is #0b6fc2 in both themes; links are #0b6fc2 on the
+        // light page and #0096fa on the dark one; the switch stays pixiv blue.
         expect(await computed(ui.segment('mp4'), ['background-color', 'color'])).toEqual([
-          rgb('#0096fa'),
+          rgb('#0b6fc2'),
           rgb('#ffffff'),
         ]);
         expect(await computed(ui.metaSwitch, ['background-color'])).toEqual([rgb('#0096fa')]);
-        expect(await computed(ui.report, ['color'])).toEqual([rgb('#0096fa')]);
+        expect(await computed(ui.report, ['color'])).toEqual([
+          rgb(scheme === 'light' ? '#0b6fc2' : '#0096fa'),
+        ]);
         expect(await computed(page.locator('footer'), ['border-top-color'])).toEqual([
           rgb(colors.rule),
         ]);
