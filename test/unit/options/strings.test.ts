@@ -11,7 +11,7 @@ import {
   stillUsingLine,
   withMono,
 } from '../../../src/options/strings';
-import { loadMessages, stubChromeI18n } from '../../helpers/i18n-stub';
+import { LOCALES, type Locale, loadMessages, stubChromeI18n } from '../../helpers/i18n-stub';
 
 const OPTIONS_HTML = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -24,6 +24,12 @@ const text = (copy: Copy): string =>
 const monoParts = (copy: Copy): string[] =>
   copy.flatMap((part) =>
     typeof part !== 'string' && part.classList.contains('mono') ? [part.textContent] : [],
+  );
+
+/** Each part as [class, text]; a text node is ['text', …]. */
+const shape = (copy: Copy): Array<[string, string]> =>
+  copy.map((part) =>
+    typeof part === 'string' ? ['text', part] : [part.className, part.textContent],
   );
 
 /** options.html without its <head>, whose stylesheet and script happy-dom would try to load. */
@@ -126,6 +132,15 @@ describe('previewLine', () => {
     stubChromeI18n('en');
     expect(monoParts(previewLine('pixiv'))).toEqual(['Downloads/pixiv/135882741_p0.jpg']);
   });
+
+  it('previewLine: puts Preview: in a label span, then a space and the path', () => {
+    stubChromeI18n('en');
+    expect(shape(previewLine('pixiv'))).toEqual([
+      ['label', 'Preview:'],
+      ['text', ' '],
+      ['mono path', 'Downloads/pixiv/135882741_p0.jpg'],
+    ]);
+  });
 });
 
 describe('stillUsingLine', () => {
@@ -139,6 +154,58 @@ describe('stillUsingLine', () => {
   it('stillUsingLine: sets the pattern in mono', () => {
     stubChromeI18n('en');
     expect(monoParts(stillUsingLine('pixiv/{artist}-{id}'))).toEqual(['pixiv/{artist}-{id}']);
+  });
+
+  // R-004 S15: the label holds no trailing whitespace, so the line can wrap after it but never
+  // inside it; zh_CN/zh_TW end the label with a full-width colon and no space.
+  it.each<[Locale, Array<[string, string]>]>([
+    [
+      'en',
+      [
+        ['label', 'Still using:'],
+        ['text', ' '],
+        ['mono pattern', 'pixiv/{artist}-{id}'],
+        ['muted', ' — your last valid pattern stays in effect until this one is fixed.'],
+      ],
+    ],
+    [
+      'ja',
+      [
+        ['label', '使用中:'],
+        ['text', ' '],
+        ['mono pattern', 'pixiv/{artist}-{id}'],
+        ['muted', ' — このパターンを修正するまで、最後に有効だったパターンが使われます。'],
+      ],
+    ],
+    [
+      'zh_CN',
+      [
+        ['label', '仍在使用：'],
+        ['mono pattern', 'pixiv/{artist}-{id}'],
+        ['muted', ' — 在修正此格式之前，上一个有效的格式继续生效。'],
+      ],
+    ],
+    [
+      'zh_TW',
+      [
+        ['label', '仍在使用：'],
+        ['mono pattern', 'pixiv/{artist}-{id}'],
+        ['muted', ' — 在修正此格式之前，上一個有效的格式繼續生效。'],
+      ],
+    ],
+  ])(
+    'stillUsingLine: in %s returns the label, its trailing space as text, the pattern and the muted sentence',
+    (locale, expected) => {
+      stubChromeI18n(locale);
+      expect(shape(stillUsingLine('pixiv/{artist}-{id}'))).toEqual(expected);
+    },
+  );
+
+  it.each(LOCALES)('stillUsingLine: in %s reads the whole message unchanged', (locale) => {
+    const getMessage = stubChromeI18n(locale);
+    expect(text(stillUsingLine('pixiv/{artist}-{id}'))).toBe(
+      getMessage('opt_still_using', ['pixiv/{artist}-{id}']),
+    );
   });
 });
 

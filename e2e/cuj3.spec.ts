@@ -10,6 +10,11 @@
 // - `pixiv/{artst}-{id}`: within ~400 ms a 2 px red border, the exact message and the exact
 //   "Still using" line; a download started now uses the last valid pattern: "validation: …".
 // - Each step-5 validation case shows its exact message: "validation: each step-5 case …".
+// - Typing `pixiv/{user` and pausing shows `Unknown token {user. …` and saves nothing (no `Saved`;
+//   a reload shows the last valid pattern); `pixiv/a}b` is valid and saved (R-004 S5):
+//   "validation: typing pixiv/{user …", "validation: a } that closes no { …".
+// - In the error state the `Still using:` label renders on one line in all four locales, and the
+//   default pattern after it is not broken (R-004 S15): "locale: in … keeps "Still using:" …" (4).
 // - A valid change saves without a Save button; `Saved` with a green check appears (~400 ms for
 //   the pattern, at once otherwise) and fades after 2 s: "saved: …" (2 tests).
 // - Reloading shows the most recently saved values: "persistence: …" (2 tests, incl. the edge
@@ -27,6 +32,9 @@
 // - Every control reachable and operable by keyboard alone, in the PRD tab order: "keyboard: …".
 // - (edge case) Two settings tabs: a saved change shows in the other within 1 s unless it holds
 //   an unsaved invalid edit: "two tabs: …" (2 tests).
+// - (edge case) Paste containing newlines: the field drops them and validation runs as usual:
+//   "edge: newlines …" (QA gate block below) and "line breaks: …" (3 tests: QA's three-line paste
+//   with its preview, a trailing newline, keyboard.insertText).
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -46,6 +54,7 @@ const ISSUES_URL = 'https://github.com/kyoicn/pixivhelper/issues';
 const PRIVACY =
   'Only talks to pixiv.net and its image host. Nothing you download leaves your browser.';
 const UNKNOWN_ARTST = 'Unknown token {artst}. Available tokens: {artist}, {id}, {title}, {userId}.';
+const UNKNOWN_USER = 'Unknown token {user. Available tokens: {artist}, {id}, {title}, {userId}.';
 const TOOLTIPS: ReadonlyArray<[token: string, tooltip: string]> = [
   ['{artist}', 'Artist display name, as shown on pixiv'],
   ['{id}', 'Artwork ID, the number in the page URL'],
@@ -158,6 +167,18 @@ function controls(page: Page) {
 /** Exact textContent (Playwright's toHaveText normalizes whitespace). */
 function textOf(locator: Locator): Promise<string> {
   return locator.evaluate((el) => el.textContent ?? '');
+}
+
+/**
+ * The client rects of the element's box and of its text: one each means it renders on one line.
+ * An inline-block has one box rect however its text wraps, hence the text's own rects.
+ */
+function lineCount(locator: Locator): Promise<{ box: number; text: number }> {
+  return locator.evaluate((el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return { box: el.getClientRects().length, text: range.getClientRects().length };
+  });
 }
 
 async function computed(locator: Locator, names: readonly string[]): Promise<string[]> {
@@ -692,6 +713,104 @@ test.describe('CUJ-3: configure the extension from the toolbar icon', { tag: '@c
       }
       expect(await stored(harness)).toEqual({ sync: saved, local: saved });
     });
+
+    test('validation: typing pixiv/{user and pausing names the unclosed {user; no Saved, nothing stored, and a reload shows the last valid pattern', async ({
+      harness,
+    }) => {
+      const saved = await seed(harness, {
+        folderPattern: 'pixiv/{userId}',
+        ugoiraOutput: 'mp4',
+        saveMetadata: true,
+      });
+      const page = await openOptions(harness);
+      const ui = controls(page);
+      await record(page);
+      await ui.field.focus();
+      await page.keyboard.press('ControlOrMeta+A');
+      await page.keyboard.press('Delete');
+      await ui.field.pressSequentially('pixiv/{user');
+
+      await expect(ui.errorBox).toBeVisible();
+      expect(await textOf(ui.errorText)).toBe(UNKNOWN_USER);
+      expect(await textOf(ui.errorText.locator('.strong'))).toBe('{user');
+      expect(await textOf(ui.preview)).toBe(stillUsing('pixiv/{userId}'));
+      // A pause well past the debounce still saves nothing.
+      await page.waitForTimeout(DEBOUNCE_MS + LATE_MS);
+      expect((await recorded(page)).saved.folder.filter((event) => event.text !== '')).toEqual([]);
+      expect(await stored(harness)).toEqual({ sync: saved, local: saved });
+
+      await page.reload();
+      await expect(page.locator('body')).toBeVisible();
+      await expect(ui.field).toHaveValue('pixiv/{userId}');
+      await expect(ui.errorBox).toBeHidden();
+      expect(await textOf(ui.preview)).toBe('Preview: Downloads/pixiv/40285173/135882741_p0.jpg');
+    });
+
+    test('validation: a } that closes no { is literal: pixiv/a}b is valid and saved', async ({
+      harness,
+    }) => {
+      const page = await openOptions(harness);
+      const ui = controls(page);
+      await ui.field.fill('pixiv/a}b');
+      await expect(ui.saved('folder')).toHaveText('Saved');
+      await expect(ui.errorBox).toBeHidden();
+      expect(await textOf(ui.preview)).toBe('Preview: Downloads/pixiv/a}b/135882741_p0.jpg');
+      expect((await stored(harness)).sync?.folderPattern).toBe('pixiv/a}b');
+    });
+  });
+
+  test.describe('line breaks', () => {
+    const paste = async (page: Page, text: string): Promise<void> => {
+      await page.evaluate((clip) => navigator.clipboard.writeText(clip), text);
+      await page.keyboard.press('ControlOrMeta+V');
+    };
+
+    test('line breaks: QA repro: pasting pixiv/⏎{artist}⏎-{id} saves pixiv/{artist}-{id} with the PRD preview', async ({
+      harness,
+    }) => {
+      await seed(harness, {
+        folderPattern: 'pixiv/{userId}',
+        ugoiraOutput: 'mp4',
+        saveMetadata: true,
+      });
+      const page = await openOptions(harness);
+      const ui = controls(page);
+      await ui.field.fill('');
+      await ui.field.focus();
+      await paste(page, 'pixiv/\n{artist}\n-{id}');
+      await expect(ui.field).toHaveValue(DEFAULT_PATTERN);
+      await expect(ui.saved('folder')).toHaveText('Saved');
+      expect(await textOf(ui.preview)).toBe(DEFAULT_PREVIEW);
+      expect((await stored(harness)).sync?.folderPattern).toBe(DEFAULT_PATTERN);
+    });
+
+    test('line breaks: a one-line pattern copied with a trailing newline pastes with no trailing space; the caret follows it', async ({
+      harness,
+    }) => {
+      const page = await openOptions(harness);
+      const ui = controls(page);
+      await ui.field.fill('');
+      await ui.field.focus();
+      await paste(page, 'pixiv/{artist}\r\n');
+      await expect(ui.field).toHaveValue('pixiv/{artist}');
+      await page.keyboard.type('/{id}');
+      await expect(ui.field).toHaveValue('pixiv/{artist}/{id}');
+      await expect
+        .poll(async () => (await stored(harness)).sync?.folderPattern)
+        .toBe('pixiv/{artist}/{id}');
+    });
+
+    test('line breaks: text inserted with a newline (keyboard.insertText) lands on one line without it', async ({
+      harness,
+    }) => {
+      const page = await openOptions(harness);
+      const ui = controls(page);
+      await ui.field.fill('pixiv/');
+      await ui.field.press('End');
+      await page.keyboard.insertText('{artist}\n-{id}');
+      await expect(ui.field).toHaveValue(DEFAULT_PATTERN);
+      await expect(ui.errorBox).toBeHidden();
+    });
   });
 
   test.describe('saved', () => {
@@ -1061,15 +1180,19 @@ test.describe('CUJ-3: configure the extension from the toolbar icon', { tag: '@c
       test.describe(`in ${locale}`, () => {
         test.use({ uiLocale: locale });
 
-        test(`locale: with Chrome in ${locale} every string on the page is in ${locale}`, async ({
-          harness,
-        }) => {
+        const skipUnlessLocale = async (harness: Harness): Promise<void> => {
           const language = await harness.swEval(() => chrome.i18n.getUILanguage());
           if (!uiLanguage.test(language)) {
             const reason = `the platform ignored the ${locale} UI language (Chrome reports ${language}); locale checks run on Linux`;
             console.log(`skipped: ${reason}`);
             test.skip(true, reason);
           }
+        };
+
+        test(`locale: with Chrome in ${locale} every string on the page is in ${locale}`, async ({
+          harness,
+        }) => {
+          await skipUnlessLocale(harness);
           const deck = loadDeck(locale);
           const page = await openOptions(harness);
           const ui = controls(page);
@@ -1112,6 +1235,24 @@ test.describe('CUJ-3: configure the extension from the toolbar icon', { tag: '@c
           expect(await textOf(ui.preview)).toBe(message(deck, 'opt_still_using', DEFAULT_PATTERN));
           await ui.field.fill('pixiv/a\\b');
           await expect.poll(() => textOf(ui.errorText)).toBe(message(deck, 'err_backslash'));
+        });
+
+        test(`locale: in ${locale} the error state keeps "Still using:" and the default pattern after it each on one line`, async ({
+          harness,
+        }) => {
+          await skipUnlessLocale(harness);
+          const line = message(loadDeck(locale), 'opt_still_using', DEFAULT_PATTERN);
+          const page = await openOptions(harness);
+          const ui = controls(page);
+          await ui.field.fill('pixiv/{artst}-{id}');
+          await expect(ui.errorBox).toBeVisible();
+          expect(await textOf(ui.preview)).toBe(line);
+          const label = ui.preview.locator('.label');
+          const pattern = ui.preview.locator('.pattern');
+          expect(await textOf(label)).toBe(line.slice(0, line.indexOf(DEFAULT_PATTERN)).trimEnd());
+          expect(await textOf(pattern)).toBe(DEFAULT_PATTERN);
+          expect(await lineCount(label)).toEqual({ box: 1, text: 1 });
+          expect(await lineCount(pattern)).toEqual({ box: 1, text: 1 });
         });
       });
     }

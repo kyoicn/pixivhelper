@@ -29,9 +29,7 @@ describe('validatePattern', () => {
     'pixiv',
     'pixiv/{artist}/{title}',
     '{userId}/{id}',
-    'a{b',
     'a}b',
-    '{a{id}b}',
     '...',
     '~user/x',
     'pixiv~',
@@ -70,6 +68,37 @@ describe('validatePattern', () => {
     ['{a b}', '{a b}'],
   ])('validatePattern: rule 5 names the first unknown token in %j', (p, token) => {
     expect(validatePattern(p)).toEqual({ code: 'unknownToken', token });
+  });
+
+  // R-004 S5: a '{' is unclosed when another '{' or the end comes before any '}'.
+  it.each<[string, string]>([
+    ['pixiv/{user', '{user'],
+    ['pixiv/{artist', '{artist'],
+    ['{id}{', '{'],
+    ['a{b', '{b'],
+    ['a{b{id}', '{b'],
+    ['{a{id}', '{a'],
+    ['{a{id}b}', '{a'],
+    ['pixiv/{artist/{id}', '{artist/'],
+    ['pixiv/{artst}-{', '{artst}'],
+  ])('validatePattern: rule 5 names the first unknown or unclosed fragment in %j', (p, token) => {
+    expect(validatePattern(p)).toEqual({ code: 'unknownToken', token });
+  });
+
+  it.each(['pixiv/a}b', '}{id}', '{id}}', 'pixiv/}'])(
+    'validatePattern: a "}" that closes no "{" is literal, so %j is valid',
+    (p) => {
+      expect(validatePattern(p)).toBeNull();
+    },
+  );
+
+  it.each<[string, PatternError]>([
+    ['/a/{user', { code: 'absolute' }],
+    ['a\\{user', { code: 'backslash' }],
+    ['../{user', { code: 'dotdot' }],
+    ['pixiv:{user', { code: 'unknownToken', token: '{user' }],
+  ])('validatePattern: an unclosed "{" keeps the rule order for %j', (p, error) => {
+    expect(validatePattern(p)).toEqual(error);
   });
 
   it.each([':', '*', '?', '"', '<', '>', '|'])(
