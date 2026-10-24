@@ -1,7 +1,7 @@
 # Test Strategy & QA Harness
 
-> Last updated: 2026-10-23 17:32:24 (UTC-7)
-> Serves: prd-000 — every CUJ's acceptance criteria (CUJ-1 … CUJ-5), including the R-004 and R-005 amendments; PRD Goal 2 (parity with `ref/pixiv-dl`)
+> Last updated: 2026-10-23 18:44:59 (UTC-7)
+> Serves: prd-000 — every CUJ's acceptance criteria (CUJ-1 … CUJ-5), including the R-004, R-005 and R-006 amendments; PRD Goal 2 (parity with `ref/pixiv-dl`)
 
 ## Overview
 
@@ -83,9 +83,29 @@ A **fake offscreen** context answers `off/*` commands from a scripted table.
 - no lost file;
 - `getBadgeText` is correct right after `ready` resolves.
 
-Every await point in `registry.mutate`, the resolver and the hand-off is enumerated, including `await:handoff.hideUi` between the download-UI hide and `downloads.download`.
+Every await point in `registry.mutate`, the resolver and the hand-off is enumerated, including `await:handoff.hideUi` between the download-UI hide and `downloads.download`, and `await:handoff.restoreUi` between the restore before the busy period's last hand-off and `downloads.download` (R-006).
 
-**R-005 assertions (L2)**, from the fake's call log: no `ui` entry while a job only resolves or fetches; `{ op: 'ui', enabled: false }` precedes the first `download` of every busy period; exactly one `{ enabled: true }` after the last job's record is deleted, for each end reason (saved, partial, needs login after a 403, unavailable, cancel); none when job B ends while job A runs; boot with no `job:*` records → `{ enabled: true }` first; boot with a hydrated running job → no `ui` entry until its next hand-off; a restart at `await:handoff.hideUi` → the file is still handed over exactly once; an injected `setUiOptions` failure never fails a job or a hand-off.
+**R-005/R-006 assertions (L2)**, from the fake's call log:
+- no `ui` entry while a job only resolves or fetches;
+- `{ op: 'ui', enabled: false }` precedes the first `download` of every multi-file busy period;
+- `{ op: 'ui', enabled: true }` sits immediately before the busy period's last `download` and after every other `download` of it, and no `ui` entry follows the last record's deletion;
+- exactly one `download` per busy period is called while `uiEnabled` is `true`: the last;
+- a busy period without a final hand-off gets exactly one `{ enabled: true }`, after the last record is deleted. The cases: cancel; a partial job whose failing file settles last; needs login after a 403 with nothing left in flight; Unavailable as the last job to end, while another job's last file hid because this one was still resolving;
+- none when job B ends while job A runs;
+- a single-file job after an idle boot → no `ui` entry, so the file plays Chrome's usual animation as before R-005;
+- a zero-file job → none;
+- a job started after the restore was requested → a fresh `{ enabled: false }` precedes its first `download`;
+- boot with no `job:*` records → `{ enabled: true }` first;
+- boot with a hydrated running job → no `ui` entry until its next hand-off;
+- a restart at `await:handoff.hideUi` or `await:handoff.restoreUi` → the file is still handed over exactly once, and the UI ends on;
+- an injected `setUiOptions` failure never fails a job or a hand-off.
+
+`test/fakes/chrome.ts` gains one feature for R-006: **deferred naming**, which models Chrome determining a download's target path after it creates the item.
+- `deferNaming(on: boolean)`, off by default. While it is on, `download()` creates the item with `filename: ''` and reserves its target for the `uniquify` check.
+- `name(id)` sets the item's `filename` and fires `onChanged({ id, filename: { previous: '', current } })`.
+- `complete(id)` and `interrupt(id)` name an unnamed item first.
+
+With naming off, items are named at creation, as now, so every existing test is unchanged. The combined call log already records each applied `setUiOptions` and each `download()` call in order.
 
 ### L3: E2E harness
 
@@ -171,7 +191,7 @@ Helpers:
 | CUJ-1: one button, left of like, ≤ 500 ms after the row renders | Fixture renders the row 300 ms after load, as `flex-direction: row-reverse` like live pixiv. Assert one `hfp-download`, its `previousElementSibling` is the like wrapper (row-reverse: DOM after = screen left), the host's right edge is left of Like's left edge, and the time from the row's `performance.mark` to the host connecting is ≤ 500 ms. |
 | CUJ-1: 164 px when metadata is late | `server.hold('/ajax/illust/135882741')`; the row renders first; width 164 px before and after release (`candidates(null)` = 99-page faces) |
 | CUJ-1: 164 px in idle/busy/cancel-hover/saved (en, ≤ 99 pages) | `getBoundingClientRect().width` of the host in each state, including after `hover` |
-| CUJ-1 (R-005): Chrome's download UI is off from before the job's first file is handed to Chrome until the job ends, then on again | `e2e/cuj1.spec.ts`. With originals held (`server.hold`), `downloadUi()` shows `requested: false` and one `{ enabled: false, ok: true }` whose `at` ≤ the earliest `startTime` of the job's `chrome.downloads.search` items (`metadata.json` first); after `Saved · 12P` the last call is `{ enabled: true, ok: true }`, one of each for the job. A cancel, and a job whose every original answers 504, also end with `{ enabled: true, ok: true }`. |
+| CUJ-1 (R-005, R-006): Chrome's download UI is off from before the job's first file is handed to Chrome, and back on just before its last file is | `e2e/cuj1.spec.ts`. Hold the last original, p11 (`server.hold`). Once the 12 other files are complete, `downloadUi()` shows `requested: false` and one `{ enabled: false, ok: true }`, whose `at` is ≤ the earliest `startTime` among the job's `chrome.downloads.search` items (`metadata.json` first). Release p11 and wait for `Saved · 12P`. The calls are then `{ enabled: false }` and `{ enabled: true }`, both `ok`. The `{ enabled: true }` call's `at` is ≥ the `startTime` of every item but p11, and ≤ p11's `startTime`. A cancel, and a job whose every original answers 504, end with `{ enabled: true, ok: true }` after the job's end (no final hand-off). Headed only (`HFP_HEADLESS=0`): "toolbar: hidden" finds no downloads button mid-job, and "toolbar: back after Saved" finds it in Chrome's native-UI tree after `Saved · 12P`. |
 | CUJ-2 (R-004 S1): 176 px in idle, busy, Cancel-hover and Saved (en), unchanged by the Ugoira output | `e2e/cuj2.spec.ts`: `toBe(176)` (was `≥ 164`), with the English ugoira floor (design-artwork-button.md "Fixed width") |
 | CUJ-1: folder contents and sizes | `downloads.files()` equals `metadata.json` + `135882741_p0…p11.*`, each size = fixture `Content-Length` |
 | CUJ-1: `metadata.json` 12 keys in order, literal non-ASCII, `\n` kept | parse key order; raw bytes contain `みずき`, not `\u` escapes |
@@ -185,7 +205,7 @@ Helpers:
 | CUJ-3 edge "Paste containing newlines" | `e2e/cuj3.spec.ts` (QA's iteration-2 test): clipboard paste of `pixiv/\n{artist}\r\n-{id}\n` → `pixiv/{artist}-{id}`; a pasted single line with a trailing newline leaves no trailing space; `keyboard.insertText` with a newline; the 200-character test still passes |
 | CUJ-3 step 5 (R-004 S5, S15): unclosed `{`; `Still using:` on one line | `pixiv/{user` and a pause → `Unknown token {user. …`, no `Saved`, reload shows the last valid pattern; `pixiv/a}b` saves; in each of the 4 locales the label element has one client rect and the default pattern one client rect |
 | CUJ-4: badge 23 / tooltip across 2 downloads; SW stop restores the badge ≤ 1 s | two pages; `swEval(getBadgeText/getTitle)`; `stopServiceWorker()`, then poll ≤ 1 s after the next event |
-| CUJ-4 (R-005): Chrome's downloads button stays hidden until both jobs end; SW restart; boot with no job | `e2e/cuj4.spec.ts`. Job B ends while job A runs → no new `downloadUi()` call; A ends → `{ enabled: true, ok: true }`. `stopServiceWorker()` mid-job → the new instance makes no call at boot, and `{ enabled: true }` follows the job's end. Boot with no job: `swEval(() => chrome.downloads.setUiOptions({ enabled: false }))` (a dead instance's leftover), `stopServiceWorker()`, wake it by loading a pixiv page (`job/listForTab`) → the new instance's first call is `{ enabled: true, ok: true }`. |
+| CUJ-4 (R-005): Chrome's downloads button stays hidden until both jobs end; SW restart; boot with no job | `e2e/cuj4.spec.ts`. Job B ends while job A runs → no new `downloadUi()` call. A ends → `{ enabled: true, ok: true }`, whose `at` is ≥ every other item's `startTime` from both jobs and ≤ the `startTime` of A's last item. `stopServiceWorker()` mid-job → the new instance makes no call at boot, and `{ enabled: true }` follows the job's end. Boot with no job: `swEval(() => chrome.downloads.setUiOptions({ enabled: false }))` (a dead instance's leftover), `stopServiceWorker()`, wake it by loading a pixiv page (`job/listForTab`) → the new instance's first call is `{ enabled: true, ok: true }`. |
 | CUJ-5: 403 never retried; 429/5xx up to 4 attempts; `Retry-After` honored (capped) | `server.log` attempt counts; inter-attempt gaps match `1.5·2ⁿ·scale` ± jitter, or `min(RA, 30)·scale` |
 | CUJ-5: offline (R-004 S3) | API and byte requests `{ reset: true }` after the page loaded → `Retry` + `tip_offline`. Byte requests only (the API answers) → `tip_server`: the PRD's accepted cost, so the iteration-2 test "offline: every original drops its connection" now expects `tip_server` and keeps its "Retry re-runs the whole job" half |
 | CUJ-5: needs-login round-trip, refused, Unavailable, encode failure, 403 mid-job | fixtures 145892669 (logged out / login), `r18Hidden`, 199999999, 136004516, fault 403 on p5 |
@@ -218,7 +238,15 @@ Branded Chrome stable on macOS and Windows:
 - H.264 hardware encode of 136004512-equivalent live ugoira;
 - MP4 plays in QuickTime, Windows Photos/Media Player and VLC; WebM plays in Chrome and VLC;
 - "Ask where to save each file" on: behavior matches the PRD's known limitation, and the Save As dialog still appears while Chrome's download UI is hidden (R-005);
-- **Chrome's download UI (R-005):** during a 12-page download Chrome shows no fly-to-toolbar animation and no downloads button, not even for `metadata.json`; after `Saved · 12P` the button is back and its bubble lists the 13 files; with two jobs it returns only after both end; a file downloaded from another site while a job runs shows no animation either (the accepted browser-wide side effect) and is listed once the UI returns. On Windows with Enhanced Safe Browsing, an ugoira's zip raises no deep-scan prompt that the hidden bubble would swallow (system.md §15 gap 1). QA can watch the same in the headed harness browser with an OS-level screenshot, since Playwright captures only page content;
+- **Chrome's download UI (R-005, R-006):**
+  - during a 12-page download Chrome shows no fly-to-toolbar animation and no downloads button, not even for `metadata.json`;
+  - the last file plays one animation and brings the button back, and after `Saved · 12P` the bubble lists the 13 files;
+  - with two jobs, the button returns only with the last file of the job that ends last;
+  - a re-download of the same work, with its originals served from the HTTP cache so the last files land together, also shows exactly one animation, at the end (it checks design-download-engine.md step 3, "The last hand-off");
+  - after a cancel, the button returns only with the next download (accepted by R-006);
+  - a file downloaded from another site while a job runs shows no animation either (the accepted browser-wide side effect), and is listed once the button returns.
+  - on Windows with Enhanced Safe Browsing, an ugoira's zip raises no deep-scan prompt that the hidden bubble would swallow (system.md §15 gap 1).
+  - QA can watch the same in the headed harness browser with an OS-level screenshot, since Playwright captures only page content;
 - **logged in** (owner's session, `npm run qa:live`): the action-row placement and like detection on the logged-in DOM; pixiv's dark theme (`html[data-theme="dark"]`) and the `#5fb9fb` focus ring; an R-18 download after a real login (CUJ-5 AC 2); R-18 display off → `Retry` + `tip_refused` (CUJ-5 AC 7); and, for the deferred R-003 stale-page case ([system.md §8.5](system.md) miss 2), whether `/ajax/illust` returns a non-null `urls.original` for every work the logged-in viewer can see (an `sl` 4 all-ages work, an R-18 work with display on) and `null` with R-18 display off;
 - each of the 4 locales renders without clipping;
 - store listing assets present.

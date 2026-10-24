@@ -38,3 +38,10 @@ Each file handed to Chrome triggers Chrome's fly-to-toolbar download animation; 
 
 **Scope**: prd-000
 **Ruling**: Option 1 — the extension disables Chrome's download UI from the moment the first file of a job is handed to Chrome until the last running job ends, then re-enables it; the worker re-enables it on boot whenever no job is running. The `downloads.ui` permission is added with the justification "hides Chrome's per-file download animation while a multi-page artwork saves, then restores it". Browser-wide side effect while active is accepted. The ZIP-per-artwork option and the folder-picker option remain future candidates. Owner's words: "ok go with option 1". (2026-10-24)
+
+### R-006 · After a job ends, how does Chrome's downloads button come back?
+
+Chrome re-enables its download UI on `setUiOptions({ enabled: true })` but shows the toolbar button again only with the next download; no extension API can open the bubble. The PRD (R-005 wording) promised the bubble returns listing the finished files.
+
+**Scope**: prd-000
+**Ruling**: Option B — the extension re-enables Chrome's download UI just before the LAST file of the last running job is handed to Chrome, so each job ends with exactly one fly-to-toolbar animation (the "done" signal) and the bubble lists every file of the job. CUJ-1 AC 14 changes from "no animation" to "at most one animation, at the end"; jobs that end without a final hand-off (cancel, failure, needs-login, unavailable) still restore the UI at finalize. (2026-10-24)
