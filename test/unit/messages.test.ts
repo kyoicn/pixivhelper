@@ -200,6 +200,7 @@ describe('isJobStartMessage', () => {
     ['retryPages', {}],
     ['retryPages with the last of 200 pages', { pages: [199], total: 200 }],
     ['retryPages with pages out of order', { pages: [5, 0, 3] }],
+    ['retryPages with metadata.json again', { withMetadata: true }],
   ]);
   expectAccepts(isJobStartMessage, VALID.startRetryEncode, [
     ['retryEncode mp4', {}],
@@ -240,6 +241,8 @@ describe('isJobStartMessage', () => {
     ['a folder with a leading slash', { folder: '/pixiv' }],
     ['a folder over 1024 chars', { folder: 'a'.repeat(1025) }],
     ['a non-string folder', { folder: ['pixiv'] }],
+    ['withMetadata false', { withMetadata: false }],
+    ["withMetadata 'yes'", { withMetadata: 'yes' }],
   ]);
   expectRejects(isJobStartMessage, VALID.startRetryEncode, [
     ['the zip format', { format: 'zip' }],
@@ -302,6 +305,14 @@ describe('isJobUpdateMessage', () => {
     { type: 'saved', folder: FOLDER, pages: 12 },
     { type: 'saved', folder: FOLDER, format: 'webm' },
     { type: 'partial', folder: FOLDER, total: 12, saved: 10, failedPages: [3, 7] },
+    {
+      type: 'partial',
+      folder: FOLDER,
+      total: 12,
+      saved: 10,
+      failedPages: [3, 7],
+      metadataFailed: true,
+    },
     { type: 'metadataOnly', folder: FOLDER, total: 12 },
     { type: 'encodeFailed', folder: FOLDER, format: 'mp4' },
     { type: 'error', cause: 'offline' },
@@ -364,6 +375,17 @@ describe('isJobUpdateMessage', () => {
     [
       'a partial outcome with string failed pages',
       ended({ type: 'partial', folder: FOLDER, total: 2, saved: 1, failedPages: ['1'] }),
+    ],
+    [
+      'a partial outcome with metadataFailed false',
+      ended({
+        type: 'partial',
+        folder: FOLDER,
+        total: 2,
+        saved: 1,
+        failedPages: [1],
+        metadataFailed: false,
+      }),
     ],
     [
       'an encodeFailed outcome with the zip format',

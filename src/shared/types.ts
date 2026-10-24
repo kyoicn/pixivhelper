@@ -49,7 +49,14 @@ export type JobMode = 'full' | 'retryPages' | 'retryEncode' | 'retryMetadata';
 export type ErrorCause = 'offline' | 'refused' | 'server' | 'disk';
 export type JobOutcome =
   | { type: 'saved'; folder: string; pages?: number; format?: UgoiraOutput }
-  | { type: 'partial'; folder: string; total: number; saved: number; failedPages: number[] }
+  | {
+      type: 'partial';
+      folder: string;
+      total: number;
+      saved: number;
+      failedPages: number[];
+      metadataFailed?: true; // metadata.json was queued and did not land; the Retry writes it again (R-007)
+    }
   | { type: 'metadataOnly'; folder: string; total: number }
   | { type: 'encodeFailed'; folder: string; format: 'mp4' | 'webm' }
   | { type: 'error'; cause: ErrorCause }

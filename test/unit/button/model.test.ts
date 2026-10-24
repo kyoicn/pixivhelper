@@ -212,6 +212,25 @@ describe('reduce: click', () => {
     });
   });
 
+  it('reduce: retrying pages and metadata.json continues from the saved count', () => {
+    const state: ButtonState = {
+      s: 'error',
+      err: {
+        t: 'partial',
+        folder: FOLDER,
+        total: 12,
+        saved: 9,
+        failedPages: [3, 8, 10],
+        metadataFailed: true,
+      },
+    };
+    const next = reduce(entry(state), { type: 'click', now: 2000 });
+    expect(next.state).toMatchObject({
+      s: 'busy',
+      progress: { kind: 'pages', done: 9, total: 12 },
+    });
+  });
+
   it('reduce: retrying metadata.json shows every page as already saved', () => {
     const state: ButtonState = {
       s: 'error',
@@ -388,6 +407,29 @@ describe('reduce: job/update when the job ends', () => {
     });
   });
 
+  it('reduce: partial keeps the flag that metadata.json did not land (R-007)', () => {
+    const outcome: JobOutcome = {
+      type: 'partial',
+      folder: FOLDER,
+      total: 12,
+      saved: 9,
+      failedPages: [3, 8, 10],
+      metadataFailed: true,
+    };
+    const next = reduce(entry(busy()), { type: 'update', view: ended(outcome) });
+    expect(next.state).toEqual({
+      s: 'error',
+      err: {
+        t: 'partial',
+        folder: FOLDER,
+        total: 12,
+        saved: 9,
+        failedPages: [3, 8, 10],
+        metadataFailed: true,
+      },
+    });
+  });
+
   it('reduce: metadataOnly shows Retry for metadata.json', () => {
     const next = reduce(entry(busy()), {
       type: 'update',
@@ -502,6 +544,31 @@ describe('clickAction', () => {
         folder: FOLDER,
         pages: [3, 8, 10],
         total: 12,
+      },
+    });
+  });
+
+  it('clickAction: a partial failure that lost metadata.json retries the pages with it', () => {
+    const state: ButtonState = {
+      s: 'error',
+      err: {
+        t: 'partial',
+        folder: FOLDER,
+        total: 12,
+        saved: 9,
+        failedPages: [3, 8, 10],
+        metadataFailed: true,
+      },
+    };
+    expect(clickAction(entry(state), 0, HREF, LOGGED_OUT)).toEqual({
+      type: 'start',
+      request: {
+        mode: 'retryPages',
+        artworkId: ARTWORK,
+        folder: FOLDER,
+        pages: [3, 8, 10],
+        total: 12,
+        withMetadata: true,
       },
     });
   });

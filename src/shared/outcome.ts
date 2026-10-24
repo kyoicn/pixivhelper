@@ -97,14 +97,22 @@ export function classifyOutcome(job: JobRecord, navigatorOnLine: boolean): JobOu
   } else if (!api && job.kind === 'pages') {
     const failed = failedPages(job);
     const saved = job.pagesTotal - failed.length;
+    const metadata = job.files.find((file) => file.role === 'metadata');
+    const metadataFailed = metadata !== undefined && !landed(metadata);
     if (saved > 0) {
-      // 6
+      // 6: the flag makes the Retry write metadata.json again with the pages (R-007)
       if (failed.length > 0) {
-        return { type: 'partial', folder, total: job.pagesTotal, saved, failedPages: failed };
+        return {
+          type: 'partial',
+          folder,
+          total: job.pagesTotal,
+          saved,
+          failedPages: failed,
+          ...(metadataFailed ? { metadataFailed: true } : {}),
+        };
       }
       // 7
-      const metadata = job.files.find((file) => file.role === 'metadata');
-      if (metadata && !landed(metadata)) {
+      if (metadataFailed) {
         return { type: 'metadataOnly', folder, total: job.pagesTotal };
       }
       // 10

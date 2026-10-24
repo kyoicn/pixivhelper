@@ -297,6 +297,11 @@ describe('handlers: startRequest', () => {
       { mode: 'retryPages', artworkId: ID, folder: 'a', pages: [1], total: 3 },
     ],
     [
+      'retryPages with metadata.json',
+      { mode: 'retryPages', artworkId: ID, folder: 'a', pages: [1], total: 3, withMetadata: true },
+      { mode: 'retryPages', artworkId: ID, folder: 'a', pages: [1], total: 3, withMetadata: true },
+    ],
+    [
       'retryEncode',
       { mode: 'retryEncode', artworkId: ID, folder: 'a', format: 'webm' },
       { mode: 'retryEncode', artworkId: ID, folder: 'a', format: 'webm' },

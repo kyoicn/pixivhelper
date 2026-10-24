@@ -301,6 +301,62 @@ describe('resolver: retryPages', () => {
       apiFailure: { endpoint: 'pages', failure: { kind: 'pixivError' } },
     });
   });
+
+  it('resolve: keeps no illust body', async () => {
+    expect((await plan(job(request))).metaBody).toBeNull();
+  });
+});
+
+describe('resolver: retryPages withMetadata (R-007)', () => {
+  const request: StartRequest = {
+    mode: 'retryPages',
+    artworkId: MANGA,
+    folder: 'pixiv/old',
+    pages: [2, 0],
+    total: 3,
+    withMetadata: true,
+  };
+
+  it('resolve: queues metadata.json first, then the requested pages in page order', async () => {
+    expect(summary(await plan(job(request)))).toEqual([
+      [0, 'metadata', 'metadata.json', [], true],
+      [1, 'page', `${MANGA}_p0.jpg`, [], true],
+      [2, 'page', `${MANGA}_p2.jpg`, [], true],
+    ]);
+  });
+
+  it('resolve: keeps the illust body for metadata.json and counts on from the earlier run', async () => {
+    const p = await plan(job(request));
+    expect([p.kind, p.folder, p.pagesTotal, p.pagesOffset, p.metaBody]).toEqual([
+      'pages',
+      'pixiv/old',
+      3,
+      1,
+      illustManga.body,
+    ]);
+  });
+
+  it('resolve: calls /ajax/illust then /pages through the origin tab', async () => {
+    const d = deps();
+    await plan(job(request), d);
+    expect(d.apiFetchJson.mock.calls).toEqual([
+      [TAB, `${API}/${MANGA}`],
+      [TAB, `${API}/${MANGA}/pages`],
+    ]);
+  });
+
+  it('resolve: a deleted work fails on the illust endpoint before /pages', async () => {
+    const d = deps({ ...STANDARD_API, [`${API}/${MANGA}`]: httpError(404) });
+    const resolution = await resolve(job(request), d);
+    expect([resolution, d.apiFetchJson.mock.calls.length]).toEqual([
+      {
+        ok: false,
+        apiFailure: { endpoint: 'illust', failure: { kind: 'http', status: 404, attempts: 1 } },
+        answered: true,
+      },
+      1,
+    ]);
+  });
 });
 
 describe('resolver: retryEncode', () => {

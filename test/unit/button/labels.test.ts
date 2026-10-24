@@ -250,6 +250,25 @@ describe.each(LOCALES)('present (%s)', (locale) => {
     });
   });
 
+  it('present: a partial failure that lost metadata.json looks the same (R-007)', () => {
+    const plain: ButtonState = {
+      s: 'error',
+      err: { t: 'partial', folder: FOLDER, total: 12, saved: 9, failedPages: [3, 8, 10] },
+    };
+    const flagged: ButtonState = {
+      s: 'error',
+      err: {
+        t: 'partial',
+        folder: FOLDER,
+        total: 12,
+        saved: 9,
+        failedPages: [3, 8, 10],
+        metadataFailed: true,
+      },
+    };
+    expect(present(entry(flagged), META_ON)).toEqual(present(entry(plain), META_ON));
+  });
+
   it('present: a single failed page uses tip_partial_one', () => {
     const state: ButtonState = {
       s: 'error',

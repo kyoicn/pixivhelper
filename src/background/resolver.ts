@@ -178,15 +178,26 @@ async function resolveFull(
   });
 }
 
-/** Only the requested pages, into the original job's folder; metadata.json is not written again. */
+/**
+ * Only the requested pages, into the original job's folder. metadata.json is written again only
+ * when asked (`withMetadata`: it did not land in the earlier run, R-007), from the illust body as
+ * in resolveRetryMetadata.
+ */
 async function resolveRetryPages(
   job: JobRecord,
   request: Request<'retryPages'>,
   deps: ResolverDeps,
 ): Promise<Draft> {
+  let metaBody: Record<string, unknown> | null = null;
+  if (request.withMetadata) {
+    const illust = await fetchIllust(job, deps);
+    if (!illust.ok) return illust;
+    metaBody = illust.value.body;
+  }
   const pages = await fetchPages(job, deps);
   if (!pages.ok) return pages;
   const files = new FileQueue();
+  if (request.withMetadata) files.add('metadata', METADATA_NAME);
   for (const page of [...request.pages].sort((a, b) => a - b)) {
     const url = pages.value[page];
     if (url === undefined) {
@@ -200,6 +211,7 @@ async function resolveRetryPages(
     pagesTotal: request.total,
     pagesOffset: request.total - request.pages.length,
     files: files.list,
+    metaBody,
   });
 }
 

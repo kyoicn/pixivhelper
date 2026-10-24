@@ -14,7 +14,14 @@ export type StartRequest =
       // The page's login marker, for the resolver's login-wall check (R-003); null when unknown.
       loggedIn: boolean | null;
     }
-  | { mode: 'retryPages'; artworkId: string; folder: string; pages: number[]; total: number } // pages: 0-based, unique, < total ≤ 200
+  | {
+      mode: 'retryPages';
+      artworkId: string;
+      folder: string;
+      pages: number[]; // 0-based, unique, < total ≤ 200
+      total: number;
+      withMetadata?: true; // also write metadata.json: the earlier run's did not land (R-007)
+    }
   | { mode: 'retryEncode'; artworkId: string; folder: string; format: 'mp4' | 'webm' }
   | { mode: 'retryMetadata'; artworkId: string; folder: string };
 
