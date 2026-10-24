@@ -20,19 +20,23 @@ function failures(job: JobRecord): Failure[] {
   return job.apiFailure ? [job.apiFailure.failure, ...list] : list;
 }
 
-/**
- * A network failure that never got an answer. One after a 429/5xx on the same request
- * (`lastStatus`, Chromium throttling) means pixiv was failing, not the connection.
- */
-const isUnanswered = (f: Failure): boolean => f.kind === 'network' && f.lastStatus === undefined;
+/** The failed request got an HTTP response on some attempt (system.md §10 row 8, D13). */
+export const gotAnswer = (f: Failure): boolean =>
+  f.kind === 'http' || f.kind === 'pixivError' || f.answered === true;
 
-// Row 8: the cause of a job that saved nothing. `internal`, `timeout`, throttled network
-// failures and every HTTP status read as `server` (system.md §10 "Why `internal` reads as `server`").
-function errorCause(list: Failure[], navigatorOnLine: boolean): ErrorCause {
+// Row 8: the cause of a job that saved nothing. "No connection" is judged per click: only when no
+// request of this job got an HTTP response (`job.answered` records the successful API calls, a
+// failed request carries its own answer) and every failure is a network error (R-004 S3).
+// `internal`, `timeout` and every HTTP status read as `server` (system.md §10).
+function errorCause(job: JobRecord, list: Failure[], navigatorOnLine: boolean): ErrorCause {
   if (list.length > 0 && list.every((f) => f.kind === 'disk' || f.kind === 'dismissed')) {
     return 'disk';
   }
-  if (!navigatorOnLine || (list.length > 0 && list.every(isUnanswered))) {
+  const answered = job.answered === true || list.some(gotAnswer);
+  if (
+    !navigatorOnLine ||
+    (!answered && list.length > 0 && list.every((f) => f.kind === 'network'))
+  ) {
     return 'offline';
   }
   return 'server';
@@ -109,5 +113,5 @@ export function classifyOutcome(job: JobRecord, navigatorOnLine: boolean): JobOu
   }
 
   // 8: no page, or no ugoira zip, was saved
-  return { type: 'error', cause: errorCause(failures(job), navigatorOnLine) };
+  return { type: 'error', cause: errorCause(job, failures(job), navigatorOnLine) };
 }

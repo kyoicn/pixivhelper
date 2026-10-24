@@ -516,21 +516,21 @@ describe('isOffFailedEvent', () => {
     ['an aborted failure with 0 attempts', { failure: { kind: 'aborted', attempts: 0 } }],
     ['an internal failure', { failure: { kind: 'internal', detail: 'exception', attempts: 1 } }],
     [
-      'a network failure with lastStatus',
-      { failure: { kind: 'network', lastStatus: 503, attempts: 4 } },
+      'a network failure with answered',
+      { failure: { kind: 'network', answered: true, attempts: 4 } },
     ],
     [
-      'a timeout failure with lastStatus',
-      { failure: { kind: 'timeout', lastStatus: 429, attempts: 4 } },
+      'a timeout failure with answered',
+      { failure: { kind: 'timeout', answered: true, attempts: 4 } },
     ],
   ]);
   expectRejects(isOffFailedEvent, VALID.failed, [
     ['an unknown failure kind', { failure: { kind: 'oops', attempts: 1 } }],
     ['missing attempts', { failure: { kind: 'network' } }],
     ['a string status', { failure: { kind: 'http', status: '503', attempts: 1 } }],
-    ['a fractional lastStatus', { failure: { kind: 'network', lastStatus: 503.5, attempts: 4 } }],
-    ['a string lastStatus', { failure: { kind: 'network', lastStatus: '503', attempts: 4 } }],
-    ['a negative lastStatus', { failure: { kind: 'network', lastStatus: -1, attempts: 4 } }],
+    ['answered false', { failure: { kind: 'network', answered: false, attempts: 4 } }],
+    ['answered 1', { failure: { kind: 'network', answered: 1, attempts: 4 } }],
+    ["answered 'yes'", { failure: { kind: 'network', answered: 'yes', attempts: 4 } }],
     ['a numeric detail', { failure: { kind: 'encode', detail: 3, attempts: 1 } }],
     ['a null failure', { failure: null }],
   ]);

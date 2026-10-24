@@ -530,7 +530,7 @@ function isFailure(v: unknown): v is Failure {
     isKeyOf(v.kind, FAILURE_KINDS) &&
     isCount(v.attempts) &&
     isOptional(v, 'status', isCount) &&
-    isOptional(v, 'lastStatus', isCount) &&
+    isOptional(v, 'answered', (a) => a === true) &&
     isOptional(v, 'detail', (d) => typeof d === 'string')
   );
 }

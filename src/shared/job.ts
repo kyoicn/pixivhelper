@@ -80,4 +80,7 @@ export interface JobRecord {
   ugoira: UgoiraState | null;
   stopReason: null | 'cancelled' | 'forbidden'; // forbidden: first byte 403, or the resolver's login-wall check (R-003)
   apiFailure: { endpoint: 'illust' | 'pages' | 'ugoira_meta'; failure: Failure } | null;
+  // pixiv answered at least one request of this job (any HTTP status); set by applyResolution,
+  // never cleared; read by classifyOutcome row 8 (system.md §10, R-004 S3, D13)
+  answered?: true;
 }

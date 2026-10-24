@@ -40,7 +40,7 @@ export type FailureKind =
 export interface Failure {
   kind: FailureKind;
   status?: number; // kind 'http' (and pixivError when known): the status of the final attempt
-  lastStatus?: number; // kind 'network' | 'timeout' only: the last 429/5xx an EARLIER attempt of the same request got (system.md §9)
+  answered?: true; // kind 'network' | 'timeout' only: some attempt of this request got an HTTP response before it finally failed (system.md §9)
   detail?: string;
   attempts: number; // fetches: attempts made (1..4); encode: encoder passes
 }

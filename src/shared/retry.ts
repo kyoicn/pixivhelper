@@ -37,15 +37,17 @@ export interface RetryOptions<R extends ResponseType = ResponseType> {
 type AttemptFailure = Omit<Failure, 'attempts'>;
 type AttemptResult<T> =
   | { ok: true; value: T; status: number }
-  | { ok: false; failure: AttemptFailure; retryAfterMs: number | null };
+  // answered: fetch() resolved with a response (status line and headers) before this attempt failed
+  | { ok: false; failure: AttemptFailure; retryAfterMs: number | null; answered: boolean };
 type Bytes = Uint8Array<ArrayBuffer>;
 type BodyResult = { ok: true; parts: Bytes[]; loaded: number } | { ok: false; detail: string };
 
 /**
  * Fetches `url` with up to MAX_ATTEMPTS attempts. 429/500/502/503/504, network errors and 30 s
  * inactivity are retried after `Retry-After` (positive seconds, capped at 30 s) or a jittered
- * exponential backoff; every other outcome is final. A final network or timeout failure that
- * follows a 429/5xx answer carries that status as `lastStatus` (system.md §9). Never throws.
+ * exponential backoff; every other outcome is final. A final network or timeout failure of a
+ * request that got any HTTP response on some attempt carries `answered: true` (system.md §9).
+ * Never throws.
  */
 export async function fetchWithRetry<R extends ResponseType>(
   url: string,
@@ -54,8 +56,7 @@ export async function fetchWithRetry<R extends ResponseType>(
   const random = opts.random ?? Math.random;
   const sleep = opts.sleep ?? abortableSleep;
   const label = logLabel(url);
-  // Only a 429/5xx can precede a further attempt, so any status an attempt got qualifies.
-  let lastStatus: number | undefined;
+  let answered = false;
   for (let n = 0; ; n++) {
     if (opts.signal?.aborted) return { ok: false, failure: { kind: 'aborted', attempts: n } };
     const attempts = n + 1;
@@ -65,12 +66,12 @@ export async function fetchWithRetry<R extends ResponseType>(
       return { ok: true, value: result.value, status: result.status, attempts };
     }
     const failure: Failure = { ...result.failure, attempts };
+    if (result.answered) answered = true;
     const outcome = failure.kind === 'http' ? String(failure.status) : failure.kind;
     if (!isRetryable(failure) || attempts === MAX_ATTEMPTS) {
       log.debug(`${label} attempt ${attempts}/${MAX_ATTEMPTS}: ${outcome}, giving up`);
-      return { ok: false, failure: withLastStatus(failure, lastStatus) };
+      return { ok: false, failure: withAnswered(failure, answered) };
     }
-    if (failure.kind === 'http') lastStatus = failure.status;
     const delayMs = (result.retryAfterMs ?? backoffMs(n, random)) * __RETRY_TIME_SCALE__;
     log.debug(
       `${label} attempt ${attempts}/${MAX_ATTEMPTS}: ${outcome}, retry in ${Math.round(delayMs)} ms`,
@@ -99,18 +100,25 @@ async function attempt<R extends ResponseType>(
       controller.abort();
     }, STALL_TIMEOUT_MS * __RETRY_TIME_SCALE__);
   };
+  let answered = false;
   try {
     armStallTimer();
     const res = await abortable(
       fetch(url, { ...opts.init, signal: controller.signal }),
       controller,
     );
+    answered = true;
     if (!res.ok) {
       void res.body?.cancel().catch(() => undefined);
       const retryAfter = RETRY_STATUSES.has(res.status)
         ? retryAfterMs(res.headers.get('retry-after'))
         : null;
-      return { ok: false, failure: { kind: 'http', status: res.status }, retryAfterMs: retryAfter };
+      return {
+        ok: false,
+        failure: { kind: 'http', status: res.status },
+        retryAfterMs: retryAfter,
+        answered,
+      };
     }
     const total = contentLength(res.headers);
     const preallocate = opts.responseType === 'rawBytes';
@@ -123,12 +131,17 @@ async function attempt<R extends ResponseType>(
       opts.onProgress,
     );
     if (!body.ok) {
-      return { ok: false, failure: { kind: 'network', detail: body.detail }, retryAfterMs: null };
+      return {
+        ok: false,
+        failure: { kind: 'network', detail: body.detail },
+        retryAfterMs: null,
+        answered,
+      };
     }
     return decode(res, body.parts, body.loaded, opts.responseType);
   } catch {
     const kind = opts.signal?.aborted ? 'aborted' : timedOut ? 'timeout' : 'network';
-    return { ok: false, failure: { kind }, retryAfterMs: null };
+    return { ok: false, failure: { kind }, retryAfterMs: null, answered };
   } finally {
     clearTimeout(stallTimer);
     opts.signal?.removeEventListener('abort', forwardAbort);
@@ -200,22 +213,30 @@ function decode<R extends ResponseType>(
       ok: false,
       failure: { kind: 'pixivError', status, detail: 'invalid-json' },
       retryAfterMs: null,
+      answered: true,
     };
   }
   if (isRecord(json) && json.error === true) {
-    return { ok: false, failure: { kind: 'pixivError', status }, retryAfterMs: null };
+    return {
+      ok: false,
+      failure: { kind: 'pixivError', status },
+      retryAfterMs: null,
+      answered: true,
+    };
   }
   return { ok: true, value: json as ResponseValues[R], status };
 }
 
 /**
  * Chromium refuses an extension's repeated requests to a URL that keeps answering 5xx, and fetch
- * reports that as a plain TypeError: the earlier answer tells "pixiv failed, then the browser
- * stopped asking" from "nothing answered" (system.md §9, §10 row 8).
+ * reports that as a plain TypeError; a body that breaks off fails the same way after the headers
+ * arrived. The flag tells "pixiv answered, then the request failed" from "nothing answered" for
+ * the job-level "No connection" rule (system.md §9, §10 row 8). `http` and `pixivError` are
+ * answered by definition and never carry it.
  */
-function withLastStatus(failure: Failure, lastStatus: number | undefined): Failure {
-  const unanswered = failure.kind === 'network' || failure.kind === 'timeout';
-  return unanswered && lastStatus !== undefined ? { ...failure, lastStatus } : failure;
+function withAnswered(failure: Failure, answered: boolean): Failure {
+  const transport = failure.kind === 'network' || failure.kind === 'timeout';
+  return transport && answered ? { ...failure, answered: true } : failure;
 }
 
 function isRetryable(failure: Failure): boolean {

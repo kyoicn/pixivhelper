@@ -207,6 +207,17 @@ describe('classifyOutcome', () => {
       expect(classifyOutcome(walled, ONLINE)).toEqual({ type: 'needsLogin' });
     });
 
+    it('classifyOutcome: the login-wall stop marked answered still needs login', () => {
+      const walled = job({
+        kind: 'unknown',
+        folder: null,
+        pagesTotal: 0,
+        stopReason: 'forbidden',
+        answered: true,
+      });
+      expect(classifyOutcome(walled, ONLINE)).toEqual({ type: 'needsLogin' });
+    });
+
     it('classifyOutcome: the login-wall stop needs login even while offline', () => {
       const walled = job({ kind: 'unknown', folder: null, pagesTotal: 0, stopReason: 'forbidden' });
       expect(classifyOutcome(walled, OFFLINE)).toEqual({ type: 'needsLogin' });
@@ -303,7 +314,7 @@ describe('classifyOutcome', () => {
     const allPages = (end: FileState | Failure) =>
       Object.fromEntries(Array.from({ length: 12 }, (_, page) => [page, end]));
 
-    it('classifyOutcome: every page failed with network errors is offline', () => {
+    it('classifyOutcome: every page failed with network errors and nothing answered is offline', () => {
       const dropped = pagesJob(allPages(fail('network')));
       expect(classifyOutcome(dropped, ONLINE)).toEqual({ type: 'error', cause: 'offline' });
     });
@@ -358,34 +369,53 @@ describe('classifyOutcome', () => {
       expect(classifyOutcome(down, ONLINE)).toEqual({ type: 'error', cause: 'server' });
     });
 
-    it('classifyOutcome: an API network failure is offline', () => {
-      const dropped = job({ apiFailure: { endpoint: 'pages', failure: fail('network') } });
+    // R-004 S3, D13: "No connection" only when nothing of this click's job got an HTTP response.
+    const answeredNetwork: Failure = { kind: 'network', answered: true, attempts: 4 };
+
+    it('classifyOutcome: a job without answered whose only failure is an unanswered API network failure is offline', () => {
+      const dropped = job({
+        kind: 'unknown',
+        apiFailure: { endpoint: 'illust', failure: fail('network') },
+      });
       expect(classifyOutcome(dropped, ONLINE)).toEqual({ type: 'error', cause: 'offline' });
     });
 
-    // QA iteration 1 (CUJ-5): Chromium throttled the later attempts during a sustained 503.
-    it('classifyOutcome: network failures after a 503 on every page (lastStatus) are server', () => {
-      const throttled: Failure = { kind: 'network', lastStatus: 503, attempts: 4 };
-      const down = pagesJob(allPages(throttled));
+    it('classifyOutcome: a resolved job (answered) whose every original failed with unanswered network is server', () => {
+      const throttled = pagesJob(allPages(fail('network')), 'done', { answered: true });
+      expect(classifyOutcome(throttled, ONLINE)).toEqual({ type: 'error', cause: 'server' });
+    });
+
+    it('classifyOutcome: an API network failure with answered is server', () => {
+      const down = job({
+        kind: 'unknown',
+        apiFailure: { endpoint: 'pages', failure: answeredNetwork },
+      });
       expect(classifyOutcome(down, ONLINE)).toEqual({ type: 'error', cause: 'server' });
     });
 
-    it('classifyOutcome: one throttled network failure among plain ones is server', () => {
-      const throttled: Failure = { kind: 'network', lastStatus: 503, attempts: 4 };
-      const mixed = pagesJob({ ...allPages(fail('network')), 0: throttled });
+    it('classifyOutcome: answered network failures on every page are server', () => {
+      const down = pagesJob(allPages(answeredNetwork));
+      expect(classifyOutcome(down, ONLINE)).toEqual({ type: 'error', cause: 'server' });
+    });
+
+    it('classifyOutcome: one answered network failure among unanswered ones is server', () => {
+      const mixed = pagesJob({ ...allPages(fail('network')), 0: answeredNetwork });
       expect(classifyOutcome(mixed, ONLINE)).toEqual({ type: 'error', cause: 'server' });
     });
 
-    it('classifyOutcome: a timeout after a 429 (lastStatus) is server', () => {
-      const throttled: Failure = { kind: 'timeout', lastStatus: 429, attempts: 4 };
-      const down = pagesJob(allPages(throttled));
-      expect(classifyOutcome(down, ONLINE)).toEqual({ type: 'error', cause: 'server' });
+    it('classifyOutcome: a timeout among unanswered network failures is server', () => {
+      const mixed = pagesJob({ ...allPages(fail('network')), 5: fail('timeout') });
+      expect(classifyOutcome(mixed, ONLINE)).toEqual({ type: 'error', cause: 'server' });
     });
 
-    it('classifyOutcome: navigator offline beats throttled network failures', () => {
-      const throttled: Failure = { kind: 'network', lastStatus: 503, attempts: 4 };
-      const down = pagesJob(allPages(throttled));
+    it('classifyOutcome: navigator offline is offline even when the job was answered', () => {
+      const down = pagesJob(allPages(fail('http', 503)), 'done', { answered: true });
       expect(classifyOutcome(down, OFFLINE)).toEqual({ type: 'error', cause: 'offline' });
+    });
+
+    it('classifyOutcome: all disk failures in an answered job are disk', () => {
+      const unwritable = pagesJob(allPages(fail('disk')), 'done', { answered: true });
+      expect(classifyOutcome(unwritable, ONLINE)).toEqual({ type: 'error', cause: 'disk' });
     });
 
     it('classifyOutcome: internal failures on every page are server', () => {

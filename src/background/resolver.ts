@@ -18,6 +18,7 @@ import {
   type UgoiraMeta,
 } from '../shared/pixiv-api';
 import { createLogger } from '../shared/log';
+import { gotAnswer } from '../shared/outcome';
 import { __testHook } from '../shared/test-hooks';
 import type { RetryResult, UgoiraOutput, WorkInfo } from '../shared/types';
 import type { Effect } from './registry';
@@ -54,15 +55,33 @@ export interface Plan {
 
 export type Resolution =
   | { ok: true; plan: Plan }
-  | { ok: false; apiFailure: ApiFailure }
+  | { ok: false; apiFailure: ApiFailure; answered: boolean } // answered: some API call of this resolve got an HTTP response
   | { ok: false; loginRequired: true }; // R-003: page logged out and pixiv withholds the work
 
-type Step<T> = { ok: true; value: T } | { ok: false; apiFailure: ApiFailure };
+type Failed = { ok: false; apiFailure: ApiFailure };
+type Step<T> = { ok: true; value: T } | Failed;
+/** A mode's resolution before `resolve` adds whether the failure was answered. */
+type Draft = { ok: true; plan: Plan } | Failed | { ok: false; loginRequired: true };
 type Endpoint = ApiFailure['endpoint'];
 type Request<M extends StartRequest['mode']> = Extract<StartRequest, { mode: M }>;
 
 /** Fetches and parses the job's plan. API failures are returned, never thrown. */
-export function resolve(job: JobRecord, deps: ResolverDeps): Promise<Resolution> {
+export async function resolve(job: JobRecord, deps: ResolverDeps): Promise<Resolution> {
+  // A failed resolve tells row 8 whether any of its API calls got an HTTP response, also one that
+  // succeeded before a later call failed (system.md §10 "How answered is tracked", D13).
+  let answered = false;
+  const draft = await resolveMode(job, {
+    ...deps,
+    apiFetchJson: async (tabId, url) => {
+      const result = await deps.apiFetchJson(tabId, url);
+      if (result.ok || gotAnswer(result.failure)) answered = true;
+      return result;
+    },
+  });
+  return draft.ok || 'loginRequired' in draft ? draft : { ...draft, answered };
+}
+
+function resolveMode(job: JobRecord, deps: ResolverDeps): Promise<Draft> {
   const { request } = job;
   switch (request.mode) {
     case 'full':
@@ -78,10 +97,12 @@ export function resolve(job: JobRecord, deps: ResolverDeps): Promise<Resolution>
 
 /**
  * Mutator: applies a resolution. A failure ends the job through finalize (system.md §10); so does
- * the login-wall stop, as `forbidden` like a byte 403 (row 4: needsLogin).
+ * the login-wall stop, as `forbidden` like a byte 403 (row 4: needsLogin). A plan, the login-wall
+ * stop (its /ajax/illust answered) and an answered failure mark the job answered (row 8, D13).
  */
 export function applyResolution(job: JobRecord, resolution: Resolution): Effect[] {
   if (job.phase !== 'resolving' || job.stopReason !== null || job.apiFailure !== null) return [];
+  if (resolution.ok || 'loginRequired' in resolution || resolution.answered) job.answered = true;
   if (!resolution.ok) {
     if ('loginRequired' in resolution) job.stopReason = 'forbidden';
     else job.apiFailure = resolution.apiFailure;
@@ -104,7 +125,7 @@ async function resolveFull(
   job: JobRecord,
   request: Request<'full'>,
   deps: ResolverDeps,
-): Promise<Resolution> {
+): Promise<Draft> {
   const illust = await fetchIllust(job, deps);
   if (!illust.ok) return illust;
   const { work, body } = illust.value;
@@ -162,7 +183,7 @@ async function resolveRetryPages(
   job: JobRecord,
   request: Request<'retryPages'>,
   deps: ResolverDeps,
-): Promise<Resolution> {
+): Promise<Draft> {
   const pages = await fetchPages(job, deps);
   if (!pages.ok) return pages;
   const files = new FileQueue();
@@ -190,7 +211,7 @@ async function resolveRetryEncode(
   job: JobRecord,
   request: Request<'retryEncode'>,
   deps: ResolverDeps,
-): Promise<Resolution> {
+): Promise<Draft> {
   const illust = await fetchIllust(job, deps);
   if (!illust.ok) return illust;
   const meta = await fetchUgoiraMeta(job, deps);
@@ -217,7 +238,7 @@ async function resolveRetryMetadata(
   job: JobRecord,
   request: Request<'retryMetadata'>,
   deps: ResolverDeps,
-): Promise<Resolution> {
+): Promise<Draft> {
   const illust = await fetchIllust(job, deps);
   if (!illust.ok) return illust;
   const { work, body } = illust.value;
@@ -292,10 +313,7 @@ async function fetchJson(
   }
 }
 
-function failed(
-  endpoint: Endpoint,
-  failure: ApiFailure['failure'],
-): { ok: false; apiFailure: ApiFailure } {
+function failed(endpoint: Endpoint, failure: ApiFailure['failure']): Failed {
   return { ok: false, apiFailure: { endpoint, failure } };
 }
 

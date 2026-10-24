@@ -165,19 +165,19 @@ describe('fetchWithRetry: network errors', () => {
   });
 });
 
-describe('fetchWithRetry: lastStatus (Chromium throttling after 429/5xx)', () => {
-  it('fetchWithRetry: 503 then three network errors keeps network and adds lastStatus 503', async () => {
+describe('fetchWithRetry: answered (some attempt got an HTTP response)', () => {
+  it('fetchWithRetry: 503 then three network errors keeps network and adds answered', async () => {
     fetchMock
       .mockResolvedValueOnce(statusResponse(503))
       .mockRejectedValue(new TypeError('Failed to fetch'));
     const result = await fetchWithRetry(URL_, { responseType: 'bytes', sleep });
     expect(result).toEqual({
       ok: false,
-      failure: { kind: 'network', lastStatus: 503, attempts: 4 },
+      failure: { kind: 'network', answered: true, attempts: 4 },
     });
   });
 
-  it('fetchWithRetry: a timeout after a 429 keeps timeout and adds lastStatus 429', async () => {
+  it('fetchWithRetry: a timeout after a 429 keeps timeout and adds answered', async () => {
     vi.useFakeTimers();
     fetchMock
       .mockResolvedValueOnce(statusResponse(429))
@@ -186,29 +186,63 @@ describe('fetchWithRetry: lastStatus (Chromium throttling after 429/5xx)', () =>
     await vi.advanceTimersByTimeAsync(3 * 30_000);
     await expect(pending).resolves.toEqual({
       ok: false,
-      failure: { kind: 'timeout', lastStatus: 429, attempts: 4 },
+      failure: { kind: 'timeout', answered: true, attempts: 4 },
     });
   });
 
-  it('fetchWithRetry: lastStatus is the most recent 429/5xx', async () => {
+  it('fetchWithRetry: a short body, then network errors, is answered', async () => {
     fetchMock
-      .mockResolvedValueOnce(statusResponse(429))
-      .mockResolvedValueOnce(statusResponse(502))
+      .mockResolvedValueOnce(bodyResponse([bytes(6)], { 'content-length': '10' }))
       .mockRejectedValue(new TypeError('Failed to fetch'));
+    const result = await fetchWithRetry(URL_, { responseType: 'rawBytes', sleep });
+    expect(result).toEqual({
+      ok: false,
+      failure: { kind: 'network', answered: true, attempts: 4 },
+    });
+  });
+
+  it('fetchWithRetry: a body that stalls on every attempt is an answered timeout', async () => {
+    vi.useFakeTimers();
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(bodyResponse([bytes(2), bytes(2)], {}, { hangAfter: 1 })),
+    );
+    const pending = fetchWithRetry(URL_, { responseType: 'rawBytes', sleep });
+    await vi.advanceTimersByTimeAsync(4 * 30_000);
+    await expect(pending).resolves.toEqual({
+      ok: false,
+      failure: { kind: 'timeout', answered: true, attempts: 4 },
+    });
+  });
+
+  it('fetchWithRetry: a connection reset mid-body on the last attempt is answered', async () => {
+    fetchMock
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              controller.error(new TypeError('connection reset'));
+            },
+          }),
+          { status: 200 },
+        ),
+      );
     const result = await fetchWithRetry(URL_, { responseType: 'bytes', sleep });
     expect(result).toEqual({
       ok: false,
-      failure: { kind: 'network', lastStatus: 502, attempts: 4 },
+      failure: { kind: 'network', answered: true, attempts: 4 },
     });
   });
 
-  it('fetchWithRetry: network errors on every attempt carry no lastStatus', async () => {
+  it('fetchWithRetry: network errors on every attempt carry no answered', async () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
     const result = await fetchWithRetry(URL_, { responseType: 'bytes', sleep });
     expect(result).toEqual({ ok: false, failure: { kind: 'network', attempts: 4 } });
   });
 
-  it('fetchWithRetry: a final http failure carries its status, not lastStatus', async () => {
+  it('fetchWithRetry: a final http failure carries its status, not answered', async () => {
     fetchMock
       .mockRejectedValueOnce(new TypeError('Failed to fetch'))
       .mockResolvedValue(statusResponse(503));
@@ -216,13 +250,30 @@ describe('fetchWithRetry: lastStatus (Chromium throttling after 429/5xx)', () =>
     expect(result).toEqual({ ok: false, failure: { kind: 'http', status: 503, attempts: 4 } });
   });
 
-  it('fetchWithRetry: 403 still ends after 1 attempt with no lastStatus', async () => {
+  it('fetchWithRetry: 403 still ends after 1 attempt with no answered', async () => {
     respondAlways(() => statusResponse(403));
     const result = await fetchWithRetry(URL_, { responseType: 'bytes', sleep });
     expect([result, fetchMock.mock.calls.length]).toEqual([
       { ok: false, failure: { kind: 'http', status: 403, attempts: 1 } },
       1,
     ]);
+  });
+
+  it('fetchWithRetry: an abort after a 503 carries no answered', async () => {
+    const controller = new AbortController();
+    fetchMock
+      .mockResolvedValueOnce(statusResponse(503))
+      .mockResolvedValueOnce(bodyResponse([bytes(1), bytes(1)], {}, { hangAfter: 1 }));
+    const pending = fetchWithRetry(URL_, {
+      responseType: 'rawBytes',
+      signal: controller.signal,
+      onProgress: () => controller.abort(),
+      sleep,
+    });
+    await expect(pending).resolves.toEqual({
+      ok: false,
+      failure: { kind: 'aborted', attempts: 2 },
+    });
   });
 });
 
@@ -530,7 +581,7 @@ describe('fetchWithRetry: body length', () => {
     const result = await fetchWithRetry(URL_, { responseType: 'rawBytes', sleep });
     expect(result).toEqual({
       ok: false,
-      failure: { kind: 'network', detail: 'short-body', attempts: 4 },
+      failure: { kind: 'network', detail: 'short-body', answered: true, attempts: 4 },
     });
   });
 
@@ -545,7 +596,7 @@ describe('fetchWithRetry: body length', () => {
     const result = await fetchWithRetry(URL_, { responseType: 'rawBytes', sleep });
     expect(result).toEqual({
       ok: false,
-      failure: { kind: 'network', detail: 'long-body', attempts: 4 },
+      failure: { kind: 'network', detail: 'long-body', answered: true, attempts: 4 },
     });
   });
 });

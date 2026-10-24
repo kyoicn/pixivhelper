@@ -9,7 +9,7 @@ import {
 } from '../../../src/background/resolver';
 import type { JobRecord, StartRequest } from '../../../src/shared/job';
 import type { CodecCaps } from '../../../src/shared/messages';
-import type { RetryResult, UgoiraOutput } from '../../../src/shared/types';
+import type { Failure, RetryResult, UgoiraOutput } from '../../../src/shared/types';
 
 type Json = Record<string, unknown>;
 
@@ -52,6 +52,11 @@ const httpError = (status: number): RetryResult<unknown> => ({
   ok: false,
   failure: { kind: 'http', status, attempts: 1 },
 });
+/** Every attempt failed before any response (offline, refused or throttled). */
+const UNANSWERED: Failure = { kind: 'network', attempts: 4 };
+/** 503, 503, then attempts Chromium refused locally: the request did get an answer. */
+const ANSWERED: Failure = { kind: 'network', answered: true, attempts: 4 };
+const failedWith = (failure: Failure): RetryResult<unknown> => ({ ok: false, failure });
 
 const STANDARD_API: Record<string, RetryResult<unknown>> = {
   [`${API}/${MANGA}`]: ok(illustManga),
@@ -361,6 +366,7 @@ describe('resolver: API failures', () => {
     expect(resolution).toEqual({
       ok: false,
       apiFailure: { endpoint: 'illust', failure: { kind: 'http', status: 404, attempts: 1 } },
+      answered: true,
     });
   });
 
@@ -396,7 +402,94 @@ describe('resolver: API failures', () => {
         endpoint: 'illust',
         failure: { kind: 'internal', detail: 'off/fetchJson failed', attempts: 1 },
       },
+      answered: false,
     });
+  });
+});
+
+describe('resolver: answered (R-004 S3, D13)', () => {
+  const answeredOf = async (record: JobRecord, api: Record<string, RetryResult<unknown>>) => {
+    const resolution = await resolve(record, deps(api));
+    return 'answered' in resolution ? resolution.answered : null;
+  };
+  const retryPages: StartRequest = {
+    mode: 'retryPages',
+    artworkId: MANGA,
+    folder: 'pixiv/old',
+    pages: [0],
+    total: 3,
+  };
+
+  it('resolve: /ajax/illust 200, then an unanswered /pages network failure is answered', async () => {
+    const api = { ...STANDARD_API, [`${API}/${MANGA}/pages`]: failedWith(UNANSWERED) };
+    expect(await answeredOf(job(full(MANGA)), api)).toBe(true);
+  });
+
+  it('resolve: an unanswered /ajax/illust network failure is not answered', async () => {
+    const api = { ...STANDARD_API, [`${API}/${MANGA}`]: failedWith(UNANSWERED) };
+    expect(await answeredOf(job(full(MANGA)), api)).toBe(false);
+  });
+
+  it('resolve: /ajax/illust 200, then an unanswered ugoira_meta network failure is answered', async () => {
+    const api = { ...STANDARD_API, [`${API}/${UGOIRA}/ugoira_meta`]: failedWith(UNANSWERED) };
+    expect(await answeredOf(job(full(UGOIRA)), api)).toBe(true);
+  });
+
+  it('resolve: a retryPages /pages failure that got a 503 first is answered', async () => {
+    const api = { ...STANDARD_API, [`${API}/${MANGA}/pages`]: failedWith(ANSWERED) };
+    expect(await answeredOf(job(retryPages), api)).toBe(true);
+  });
+
+  it('resolve: an unanswered retryPages /pages network failure is not answered', async () => {
+    const api = { ...STANDARD_API, [`${API}/${MANGA}/pages`]: failedWith(UNANSWERED) };
+    expect(await answeredOf(job(retryPages), api)).toBe(false);
+  });
+
+  it('resolve: /ajax/illust 200, then a transport failure of both proxies is answered', async () => {
+    const d = deps();
+    d.apiFetchJson.mockImplementation((_tabId: number, url: string) =>
+      url.endsWith('/pages')
+        ? Promise.reject(new Error('off/fetchJson failed'))
+        : Promise.resolve(STANDARD_API[url] ?? httpError(404)),
+    );
+    expect(await resolve(job(full(MANGA)), d)).toMatchObject({
+      apiFailure: { endpoint: 'pages', failure: { kind: 'internal' } },
+      answered: true,
+    });
+  });
+
+  it('applyResolution: a plan marks the job answered', async () => {
+    const record = job(full(MANGA));
+    applyResolution(record, await resolve(record, deps()));
+    expect(record.answered).toBe(true);
+  });
+
+  it('applyResolution: the login-wall stop marks the job answered', () => {
+    const record = job(full(WALLED, false));
+    applyResolution(record, { ok: false, loginRequired: true });
+    expect(record.answered).toBe(true);
+  });
+
+  it('applyResolution: an answered failure marks the job answered', () => {
+    const record = job(full(MANGA));
+    const apiFailure = { endpoint: 'pages' as const, failure: ANSWERED };
+    applyResolution(record, { ok: false, apiFailure, answered: true });
+    expect(record.answered).toBe(true);
+  });
+
+  it('applyResolution: an unanswered failure leaves answered absent', () => {
+    const record = job(full(MANGA));
+    const apiFailure = { endpoint: 'illust' as const, failure: UNANSWERED };
+    applyResolution(record, { ok: false, apiFailure, answered: false });
+    expect([record.apiFailure, 'answered' in record]).toEqual([apiFailure, false]);
+  });
+
+  it('applyResolution: a resolution ignored for a cancelled job leaves answered absent', async () => {
+    const record = job(full(MANGA));
+    const resolution = await resolve(record, deps());
+    record.stopReason = 'cancelled';
+    applyResolution(record, resolution);
+    expect('answered' in record).toBe(false);
   });
 });
 
@@ -524,7 +617,7 @@ describe('resolver: applyResolution', () => {
       endpoint: 'illust' as const,
       failure: { kind: 'http' as const, status: 404, attempts: 1 },
     };
-    const effects = applyResolution(record, { ok: false, apiFailure: failure });
+    const effects = applyResolution(record, { ok: false, apiFailure: failure, answered: true });
     expect([record.apiFailure, record.phase, effects]).toEqual([
       failure,
       'resolving',
