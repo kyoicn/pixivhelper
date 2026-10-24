@@ -1,6 +1,6 @@
 # Test Strategy & QA Harness
 
-> Last updated: 2026-10-23 22:29:54 (UTC-7)
+> Last updated: 2026-10-24 03:57:53 (UTC-7)
 > Serves: prd-000 — every CUJ's acceptance criteria (CUJ-1 … CUJ-5), including the R-004, R-005 and R-006 amendments; PRD Goal 2 (parity with `ref/pixiv-dl`)
 
 ## Overview
@@ -246,7 +246,7 @@ Branded Chrome stable on macOS and Windows:
   - a re-download of the same work, with its originals served from the HTTP cache so the last files land together, also shows exactly one animation, at the end, and the bubble that opens with it lists the new job's last file (it checks design-download-engine.md "The last hand-off" step 3, rev. 3);
   - after a cancel, the button returns only with the next download (accepted by R-006);
   - a file downloaded from another site while a job runs shows no animation either (the accepted browser-wide side effect), and is listed once the button returns.
-  - on Windows with Enhanced Safe Browsing, an ugoira's zip raises no deep-scan prompt that the hidden bubble would swallow. If one appears, `frames.json` and the video wait for it, and the button stays busy and Chrome's UI hidden until the zip is handled in `chrome://downloads` (system.md §15 gap 1);
+  - on Windows with Enhanced Safe Browsing, an ugoira's zip raises no deep-scan prompt that the hidden bubble would swallow. If one appears, `frames.json` and the video wait for it, and the button stays busy and Chrome's UI hidden until the zip is handled in `chrome://downloads` (a known v1 limitation, PRD CUJ-2 edge; system.md §15 "Known limitation");
   - QA can watch the same in the headed harness browser with an OS-level screenshot, since Playwright captures only page content;
 - **logged in** (owner's session, `npm run qa:live`): the action-row placement and like detection on the logged-in DOM; pixiv's dark theme (`html[data-theme="dark"]`) and the `#5fb9fb` focus ring; an R-18 download after a real login (CUJ-5 AC 2); R-18 display off → `Retry` + `tip_refused` (CUJ-5 AC 7); and, for the deferred R-003 stale-page case ([system.md §8.5](system.md) miss 2), whether `/ajax/illust` returns a non-null `urls.original` for every work the logged-in viewer can see (an `sl` 4 all-ages work, an R-18 work with display on) and `null` with R-18 display off;
 - each of the 4 locales renders without clipping;

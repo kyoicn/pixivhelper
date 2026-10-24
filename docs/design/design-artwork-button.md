@@ -1,7 +1,7 @@
 # Artwork Button (content script)
 
-> Last updated: 2026-10-23 22:29:54 (UTC-7)
-> Serves: prd-000 — CUJ-1 (button, states, SPA, memory), CUJ-2 (ugoira hint/progress), CUJ-4 (per-tab progress only), CUJ-5 (needs-login incl. pixiv's login walls per R-003, error states, floating fallback); PRD §4.7 entirely; index "Accessibility", "Internationalization", "Theming"; R-004 S1 (widths), S2 (contrast), S4 (floating-fallback anchor), S7 (keyboard order), S13 (no busy 100%)
+> Last updated: 2026-10-24 03:57:53 (UTC-7)
+> Serves: prd-000 — CUJ-1 (button, states, SPA, memory), CUJ-2 (ugoira hint/progress), CUJ-4 (per-tab progress only), CUJ-5 (needs-login incl. pixiv's login walls per R-003, error states, floating fallback); PRD §4.7 entirely; index "Accessibility", "Internationalization", "Theming"; R-004 S1 (widths), S2 (contrast), S4 (floating-fallback anchor), S7 (keyboard order), S13 (no busy 100%); R-007 item 6 (a Retry re-writes a `metadata.json` that did not land)
 
 ## Overview
 
@@ -230,7 +230,8 @@ export type ButtonState =
   | { s: 'busy'; jobId: string; progress: JobProgress | null; startedAt: number; armed: boolean }
   | { s: 'saved'; folder: string; kind: 'pages' | 'ugoira'; pages?: number; format?: UgoiraOutput }
   | { s: 'error'; err:
-        | { t: 'partial'; folder: string; total: number; saved: number; failedPages: number[] }
+        | { t: 'partial'; folder: string; total: number; saved: number; failedPages: number[];
+            metadataFailed?: true }    // from the outcome (system.md §10 row 6); never shown, only sent with the Retry (R-007)
         | { t: 'metadataOnly'; folder: string; total: number }
         | { t: 'encodeFailed'; folder: string; format: 'mp4' | 'webm' }
         | { t: 'cause'; cause: ErrorCause } }
@@ -274,7 +275,7 @@ stateDiagram-v2
 | `pending` | `{ mode: 'full', expectedFiles: 0, loggedIn: ctx.loggedIn }` (the SW repeats the needs-login check, R-003) |
 | `idle` | `{ mode: 'full', expectedFiles: work.illustType === 2 ? 1 : work.pageCount, loggedIn: ctx.loggedIn }` |
 | `saved` | same as `idle` (re-download, current settings; PRD CUJ-1 step 8) |
-| `error.partial` | `{ mode: 'retryPages', folder, pages: failedPages, total }` (PRD CUJ-5 step 5) |
+| `error.partial` | `{ mode: 'retryPages', folder, pages: failedPages, total }`, plus `withMetadata: true` when `metadataFailed` (PRD CUJ-5 step 5 and edge "Pages and `metadata.json` both failed", R-007 item 6) |
 | `error.metadataOnly` | `{ mode: 'retryMetadata', folder }` |
 | `error.encodeFailed` | `{ mode: 'retryEncode', folder, format }` (CUJ-5 step 8) |
 | `error.cause` | `{ mode: 'full', … }` (CUJ-5 step 6: "runs the whole job again with the current settings") |

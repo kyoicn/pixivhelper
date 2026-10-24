@@ -1,7 +1,7 @@
 # Helper for Pixiv — System Design
 
-> Last updated: 2026-10-23 22:29:54 (UTC-7)
-> Serves: prd-000 (CUJ-1 … CUJ-5); rulings R-001, R-002, R-003, R-004 (spec-sync S1–S15), R-005 (Chrome's download UI hidden while a job runs), R-006 (it comes back just before the last file of the last running job is handed to Chrome)
+> Last updated: 2026-10-24 03:57:53 (UTC-7)
+> Serves: prd-000 (CUJ-1 … CUJ-5); rulings R-001, R-002, R-003, R-004 (spec-sync S1–S15), R-005 (Chrome's download UI hidden while a job runs), R-006 (it comes back just before the last file of the last running job is handed to Chrome), R-007 (spec-sync of six items: counter wording, the 200-page edge, a mid-job 403, settings-page contrast, the ugoira-zip prompt, a Retry re-writes a `metadata.json` that did not land)
 > Chapters: [design-download-engine.md](design-download-engine.md) · [design-offscreen-worker.md](design-offscreen-worker.md) · [design-artwork-button.md](design-artwork-button.md) · [design-settings-model.md](design-settings-model.md) · [design-options-page.md](design-options-page.md) · [design-test-harness.md](design-test-harness.md)
 
 This chapter holds the cross-cutting architecture: runtime contexts, tech stack, the shared data model, message conventions, the network/Referer strategy, the retry policy, the error model, security/privacy/i18n/a11y conventions, build/release, and the constraints table. Component chapters own everything specific to one context.
@@ -307,7 +307,8 @@ export type JobMode = 'full' | 'retryPages' | 'retryEncode' | 'retryMetadata';
 export type ErrorCause = 'offline' | 'refused' | 'server' | 'disk';
 export type JobOutcome =
   | { type: 'saved'; folder: string; pages?: number; format?: UgoiraOutput }
-  | { type: 'partial'; folder: string; total: number; saved: number; failedPages: number[] }
+  | { type: 'partial'; folder: string; total: number; saved: number; failedPages: number[];
+      metadataFailed?: true }      // metadata.json was queued and did not land; the Retry writes it again (§10 row 6, R-007)
   | { type: 'metadataOnly'; folder: string; total: number }
   | { type: 'encodeFailed'; folder: string; format: 'mp4' | 'webm' }
   | { type: 'error'; cause: ErrorCause }
@@ -560,13 +561,21 @@ Low-level failures are `Failure` values (§6). They are classified into exactly 
 | 3 | Any API call (`/ajax/illust`, `/pages`, `ugoira_meta`) → 401/403 or `pixivError` | `error: refused` | `Retry`, tip_refused (CUJ-5 step 6) |
 | 4 | Any `i.pximg.net` byte request (original or zip) → 403; **or** the `full`-mode resolver found the work requires login for a logged-out page (`requiresLogin`, §8.5). Both set `stopReason = 'forbidden'`. | `needsLogin` (the job stops dispatching new files at the first 403; a resolver hit stops before any byte request) | Log in to download (CUJ-5 step 9; Part A for a click made before the render-time metadata arrived, R-003) |
 | 5 | Ugoira: zip + `frames.json` saved, encode failed | `encodeFailed` | `Retry · MP4/WebM`, tip_encode_failed (CUJ-5 step 8) |
-| 6 | Pages job: ≥ 1 page saved and ≥ 1 page failed | `partial` | `Retry · N failed` (CUJ-5 step 4) |
+| 6 | Pages job: ≥ 1 page saved and ≥ 1 page failed | `partial`, with `metadataFailed: true` when the run queued `metadata.json` and it did not land (absent otherwise; R-007 item 6) | `Retry · N failed` (CUJ-5 step 4; the flag is never shown) |
 | 7 | Pages job: every page saved, `metadata.json` failed | `metadataOnly` | `Retry`, tip_metadata_only |
 | 8 | Nothing saved (0 pages or ugoira zip not saved). Cause from the job's failures (API failure + failed files), first match wins (PRD CUJ-5 step 6, R-004 S3): (a) at least one failure and all are `disk`/`dismissed` → `disk`; (b) `navigator.onLine === false`, **or pixiv answered nothing in this click**: the job is not answered (below) and there is at least one failure and every failure is `network` → `offline`; (c) otherwise → `server`: pixiv answered at least one request of the job (any status, including the artwork API's 200), or a request timed out, or a failure is `internal`, an HTTP status or a `pixivError`. | `error: <cause>` | `Retry`, cause tooltip (CUJ-5 step 6) |
 | 9 | Ugoira: zip saved, video encoded but its save failed (`disk`) | `error: disk` | `Retry`, tip_disk |
 | 10 | Everything required landed | `saved` | Saved (CUJ-1 step 6, CUJ-2 step 5) |
 
 Rows 4, 8 and 9 were derived in iterations 1–2 and are PRD text since R-004: a zip 403 → needs login (CUJ-5 step 9); `dismissed` with `disk`, and a failed ugoira video or `metadata.json` save → `tip_disk` with a full retry (step 6 table, edge cases; S10); `internal` failures and timeouts → `server` (S3, S10); the resolver's login-wall stop (Part A step 1, edge "Clicked before the metadata arrived"; S12).
+
+**A Retry after a partial writes `metadata.json` again only if it did not land (R-007 item 6; PRD CUJ-5 step 5, edge "Pages and `metadata.json` both failed").** Row 6 comes before row 7, so a job whose pages and `metadata.json` both failed ends `partial`. Before R-007 its Retry fetched only the pages, so `Saved · 12P` could show over a folder without `metadata.json`. Now `Saved` after a Retry means every file of the job is on disk:
+- Row 6 sets `metadataFailed: true` when the run queued `metadata.json` and it did not land. With metadata off, or with a landed `metadata.json`, the field is absent, and the Retry leaves `metadata.json` alone, so it is never written twice.
+- The button keeps the flag on its `partial` error and sends `retryPages` with `withMetadata: true` (design-artwork-button.md "Click actions"). Label, tooltip and live text are unchanged, because `metadata.json` is not a page.
+- The resolver then reads `/ajax/illust` before `/pages` and queues `metadata.json` ahead of the pages, built from that body as in `retryMetadata` (design-download-engine.md "Resolving"). A failure of the extra call classifies like any resolve failure (rows 2, 3, 8).
+- The counter (`pagesOffset`) and the badge count pages only, so neither changes: the Retry still runs `9 / 12` → `11 / 12` with badge `3`.
+- The Retry run is classified by the same table. Its pages landing without `metadata.json` gives row 7 (`metadataOnly`). A page failing again re-flags `metadata.json` only if it did not land in this run.
+- The `job/start` and `JobOutcome` guards (`src/shared/messages.ts`) accept `withMetadata` and `metadataFailed` only as `true`.
 
 **How "answered" is tracked (D13, R-004 S3).** The PRD judges "No connection" per click: only if no request of this click's job (to `www.pixiv.net` or `i.pximg.net`) got any HTTP response. Two persisted facts carry that, so the rule needs no time window and no memory outside the job:
 
@@ -622,7 +631,7 @@ There is no analytics, telemetry, crash reporting or remote config. The only net
 ### 11.5 Accessibility and theming
 These are owned by the component chapters, which implement the PRD index "Accessibility" and "Theming" sections: [design-artwork-button.md](design-artwork-button.md) §A11y and [design-options-page.md](design-options-page.md) §A11y. Shared rules:
 - Every interactive element is a native `<button>`/`<input>` (or `role="switch"` on a `<button>`), and `prefers-reduced-motion` disables all transitions and animations.
-- **Contrast** (PRD index "Contrast", §4.7.3, §4.7.7, CUJ-3 steps 3 and 5; R-004 S2). Every text/background pair the extension introduces meets WCAG 2.1 AA 4.5:1 **at rest**, except pixiv blue `#0096FA` with white (about 3.1:1). The index accepts that pair for the button's idle and busy fill and its Saved text, for parity with pixiv's own primary buttons. Two options-page values that CUJ-3 specifies are still open with pm: the footer links (`#0096FA` on `#f6f7f9`, 2.91:1) and the selected Ugoira segment (white on `#0096FA`, 3.11:1) (§15 gap 2). The PRD now specifies the AA values the iteration-2 audit introduced, so design, PRD and mocks agree. Ratios are WCAG relative-luminance ratios computed from the hex values:
+- **Contrast** (PRD index "Contrast", §4.7.3, §4.7.7, CUJ-3 steps 3, 5, 7 and 10; R-004 S2, R-007 item 4). Every text/background pair the extension introduces meets WCAG 2.1 AA 4.5:1 **at rest**, except pixiv blue `#0096FA` with white (about 3.1:1). The index accepts that pair for the button's idle and busy fill and its Saved text, for parity with pixiv's own primary buttons. The PRD now specifies the AA values the iteration-2 audit introduced (R-004 S2) and, since R-007 item 4, those of the options page's links and selected Ugoira segment, so design, PRD and mocks agree. The options page's non-text blues (switch, focus rings, header mark) and its chip hover stay `#0096FA` (design-options-page.md "Styles"). Ratios are WCAG relative-luminance ratios computed from the hex values:
 
 | Where | Value (PRD) | Ratio |
 |---|---|---|
@@ -630,6 +639,8 @@ These are owned by the component chapters, which implement the PRD index "Access
 | Button `Unavailable` text (§4.7.3, CUJ-5 step 7) | `#5f6368` on `#f1f3f4` | 5.44 |
 | Options validation message (CUJ-3 step 5) | light `#c5221f` on `#f6f7f9`; dark `#f28b82` on `#121212`. The invalid field's 2 px border stays `#d93025` (a non-text UI component needs 3:1). | 5.41; 7.84 |
 | Options "Still using" trailing sentence (CUJ-3 step 5) | light `#5c6166`; dark `#8a8f94` on `#121212` | 5.84; 5.74 |
+| Options footer links (CUJ-3 step 10, dark-theme edge; R-007 item 4) | light `#0b6fc2` on `#f6f7f9`; dark `#0096FA` on `#121212` | 4.82; 6.02 |
+| Options selected Ugoira segment (CUJ-3 step 7, dark-theme edge; R-007 item 4) | white semibold on `#0b6fc2`, both modes | 5.16 |
 
 - **Hover-tint exemption** (PRD index, R-004 S2). A background tint shown only under the pointer, which never changes the label and whose meaning the accessible name already carries, may fall below 4.5:1. Two exist: the error hover (`#d93025` on `#fdeceb`, 4.18:1) and the Saved hover (`#0096FA` on `#e6f4fe`, 2.78:1). Nothing else may use the exemption: a new pair below 4.5:1 at rest, or a hover that changes the label, is a defect.
 
@@ -703,6 +714,8 @@ Every implementation-shape constraint in PRD-000 and the index, classified by wh
 
 **Result of the review:** every implementation-shape constraint rests on an external fact, a recorded PRD reason, or a settled product decision. None stands in for an unstated goal in a way that costs the architecture. **No requirement challenge filed.**
 
+**Re-review, iteration 4, against the R-007 spec-sync** (`c8d95bc`, six items). Every amended line is user-facing: the counter wording (CUJ-1 AC 7, CUJ-5 step 5, the 200-page edge), the §4.1 #3 and CUJ-5 step 9 wording for a mid-job 403, the settings-page text colours, the frame-zip prompt as a known v1 limitation (CUJ-2 edge), and which files a Retry writes (CUJ-5 step 5 and edge). None dictates how the product is built. **No requirement challenge filed.**
+
 **Re-review, iteration 4, against the R-006 rev. 3 spec-sync** (quick-fix `c2c9de0`: PRD-000 CUJ-1 AC "up to `11 / 12` … `12 / 12` is never shown", CUJ-5 step 5 "`9 / 12` → `11 / 12`"). Both lines are user-facing: they state the counter values that the rev. 3 settle wait produces (design-download-engine.md "Progress counter"). They add no implementation-shape constraint. The one new number, the 2 s settle cap, is a design parameter, and its basis is recorded in the row above. **No requirement challenge filed.**
 
 **Re-review, iteration 3 QA loop 1, against R-006.** R-006 moves the restore of an existing owner-decided mandate (the `setUiOptions` row above) from the last job's end to just before its last hand-off. The reason is recorded in the ruling, and the platform fact behind it is verified in Chromium's source and by QA's headed run. It adds no implementation-shape constraint. **No requirement challenge filed.**
@@ -740,31 +753,25 @@ Every implementation-shape constraint in PRD-000 and the index, classified by wh
 
 The twelve spec-sync items listed here in iteration 2 were resolved by R-004 (owner: "GO WITH A"; pm applied S1–S15 to prd-000 and the mocks): Chrome-bubble wording (S6), the `Retry-After` marker (S14), the D8 path-safety pass (S8), the `_one` copy keys and every "(derived)" string (S9), the derived outcome mappings including WebM → MP4 when VP9 cannot be encoded and the ugoira metadata-only failure (S10), the job-level "No connection" rule (S3, now D13), the AA contrast values and the hover-tint exemption (S2), the 0-count idle title (S11), the R-003 residuals a–d (S12), the provisional and ugoira widths (S1), keyboard order (S7), and the unclosed `{` (S5). Their design consequences are folded into the sections above and into the chapters. Nothing from that list remains open.
 
+R-007 (owner: "go with A"; pm applied the six items to prd-000 and the mocks in `c8d95bc`) closed the three gaps listed here in iterations 3–4:
+- **The ugoira frame zip held by a Chrome prompt** is a known v1 limitation in CUJ-2's edge cases (item 5, no code change). The analysis and the pre-decided response are under "Known limitation" below.
+- **Settings-page contrast:** the links and the selected Ugoira segment meet 4.5:1 at rest (item 4, built in `f15466a`). See §11.5 and design-options-page.md "Styles".
+- **A mid-job 403:** §4.1 #3 now lists "needed login after a 403 with no other file still on its way to Chrome" as an end without a final hand-off. CUJ-5 step 9 says that files already on their way still land, and the last of them brings the job's one animation (item 3, no code change; design-download-engine.md L2 case "needs login after a 403 with nothing left in flight").
+
+R-007 also rewrote the counter rule (items 1 and 2: CUJ-1 AC 7, CUJ-5 step 5 and the 200-page edge; design-download-engine.md "Progress counter"). And it made a Retry after the pages and `metadata.json` both failed write `metadata.json` again (item 6, built in `8e4606f`; §10 "A Retry after a partial").
+
 ### Open spec gaps for pm (not blocking; `/design-feature` or `/spec-sync`, the PRD is not edited here)
 
-1. **A download that needs a decision in Chrome's bubble while the UI is hidden** (R-005, R-006, PRD §4.1 #3).
-   - **The situation.** Chrome may hold one of a job's files for a user decision: a dangerous-file warning, or an Enhanced Safe Browsing deep-scan prompt, which the risk table below lists for blob-sourced `.zip`. The prompt then lives in the bubble the extension has hidden. The file stays `saving` with its download id, and Chrome reports it `in_progress`.
-   - **A held page or `metadata.json`** delays the busy period's last hand-off by at most the 2 s settle cap (D12 rev. 3). Then the UI comes back with the last file, and the prompt should be reachable in the bubble; that is unverified for an item created while the UI was off. If the held file is itself the last hand-off, the UI is already on.
-   - **A held ugoira zip keeps every later file of that job waiting.** `frames.json` depends on the zip being `done`, and the video on both, so they stay `queued`. That counts as still to be handed off, so no hand-off of the busy period can be the last. The button stays busy, and Chrome's UI stays hidden, for every running job, until the user acts on the zip in `chrome://downloads` (which keeps listing it) or cancels the job (code review iteration 3 retry 1, Info 6). This is the one realistic case.
-   - **The prompt is also out of reach** while other files are still to be handed off, or when no hand-off follows because they all fail.
-   - **Status: pending pm's `/spec-sync`, nothing built.** pm recommends recording the zip case as a known v1 limitation in CUJ-2's edge cases (pm-review iteration 3, priority 3c). It comes with a pre-decided response, if L5 ever observes it: as soon as `downloads.onChanged` reports a `danger` value that needs a decision for a running job's file, restore the UI and keep it on for the rest of the busy period. tl first verifies that the prompt becomes reachable for an item created while the UI was off. The response is a one-branch change in `engine.ts` (the delta path) and `download-ui.ts`.
-   - **Likelihood is low.** pixiv originals are images, and no such prompt appeared in iterations 1–3. The L5 checklist covers it on Windows (design-test-harness.md, release checklist §2).
-2. **Two options-page text pairs below 4.5:1 at rest** (PRD index "Contrast" vs CUJ-3 steps 7 and 10).
-   - **The pairs:**
-     - the footer's `Reset to defaults` and `Report an issue`: `#0096FA` 13 px text on the page's `#f6f7f9`, 2.91:1 (step 10);
-     - the selected Ugoira segment: white semibold 14 px on `#0096FA`, 3.11:1 (step 7, and the dark-theme edge "Selected segment, links, and focus rings stay `#0096FA`"; found by pm in iteration 3).
-   - **Why it conflicts.** The index accepts pixiv blue with white only for the button's idle and busy fill and its Saved text, beside pixiv's own buttons. It requires 4.5:1 at rest for every other pair, and it states that CUJ-3's colours pass, which these two do not. The R-004 S2 audit covered the Saved, validation and "Still using" texts only.
-   - **What ships.** The build ships the PRD's literal values (design-options-page.md "Accessibility").
-   - **Status: pending pm's `/spec-sync`.** pm recommends applying the S2 rule rather than widening the exemption (pm-review iteration 3, priority 3b):
-     - links `#0b6fc2` in light mode (4.82:1 on `#f6f7f9`), `#0096FA` in dark mode (6.02:1 on `#121212`);
-     - the selected segment `#0b6fc2` with white semibold text in both modes (5.16:1);
-     - non-text blues stay `#0096FA`;
-     - the index claim and the three CUJ-3 mocks updated.
+None open. The three listed in iterations 3–4 were closed by R-007 (above).
 
-     The code follows in `src/options/options.css`: one text-accent variable for `.link` and `.seg button[aria-pressed='true']`.
-3. **§4.1 #3 says "needed login after a mid-job 403" is an end without a final hand-off** (PRD §4.1 #3 vs CUJ-5 step 9).
-   - **What the build does.** As designed and built, a byte 403 stops new dispatches, but files already on their way to Chrome still land. The last of them is a final hand-off by §4.1 #3's own definition, so the job ends with one animation while the button reads `Log in to download`. The end is silent only when nothing else was on its way. QA judged it PASS against the definition (design-download-engine.md L2 case "needs login after a 403 with nothing left in flight").
-   - **Status: pending pm's `/spec-sync`, no code change.** pm recommends rewording the parenthetical to "needed login after a 403 with no other file still on its way to Chrome", and adding the in-flight case to CUJ-5 step 9 (pm-review iteration 3, priority 3a).
+### Known limitation: a download held for a decision while Chrome's UI is hidden (R-005, R-006; PRD §4.1 #3, CUJ-2 edge; R-007 item 5)
+
+- **The situation.** Chrome may hold one of a job's files for a user decision: a dangerous-file warning, or an Enhanced Safe Browsing deep-scan prompt, which the risk table below lists for blob-sourced `.zip`. The prompt then lives in the bubble the extension has hidden. The file stays `saving` with its download id, and Chrome reports it `in_progress`.
+- **A held page or `metadata.json`** delays the busy period's last hand-off by at most the 2 s settle cap (D12 rev. 3). Then the UI comes back with the last file, and the prompt should be reachable in the bubble; that is unverified for an item created while the UI was off. If the held file is itself the last hand-off, the UI is already on.
+- **A held ugoira zip keeps every later file of that job waiting.** `frames.json` depends on the zip being `done`, and the video on both, so they stay `queued`. That counts as still to be handed off, so no hand-off of the busy period can be the last. The button stays busy, and Chrome's UI stays hidden, for every running job, until the user acts on the zip in `chrome://downloads` (which keeps listing it) or cancels the job (code review iteration 3 retry 1, Info 6). This is the one realistic case.
+- **The prompt is also out of reach** while other files are still to be handed off, or when no hand-off follows because they all fail.
+- **Status: PRD text since R-007 item 5, nothing built.** The PRD records the zip case as a known v1 limitation (CUJ-2 edge "Chrome prompt on the frame zip"). Pre-decided response, if L5 ever observes it: as soon as `downloads.onChanged` reports a `danger` value that needs a decision for a running job's file, restore the UI and keep it on for the rest of the busy period. tl first verifies that the prompt becomes reachable for an item created while the UI was off. The response is a one-branch change in `engine.ts` (the delta path) and `download-ui.ts`.
+- **Likelihood is low.** pixiv originals are images, and no such prompt appeared in iterations 1–3. The L5 checklist covers it on Windows (design-test-harness.md, release checklist §2).
 
 ### Risks
 | Risk | Likelihood | Mitigation |
@@ -779,4 +786,4 @@ The twelve spec-sync items listed here in iteration 2 were resolved by R-004 (ow
 | Undocumented pixiv AJAX shape changes | Low | Parsing in `pixiv-api.ts` with tolerant defaults; failures surface as button states |
 | Hardware H.264 encoder session limits with concurrent ugoira encodes | Low | On encoder `configure`/`error`, retry once with `hardwareAcceleration: 'prefer-software'` before failing ([design-offscreen-worker.md](design-offscreen-worker.md)) |
 | Very long literal pattern text exceeds 255 bytes per component or Windows path limits | Low | Surfaces as `disk` (`FILE_NAME_TOO_LONG`); bounded by the 200-character field |
-| Enhanced Safe Browsing deep-scan prompts on blob-sourced `.zip` | Low | Not seen so far. On the ugoira zip, the prompt would sit in the hidden bubble and keep `frames.json`, the video and Chrome's UI waiting until the user acts in `chrome://downloads` (§15 gap 1, with a pre-decided response). L5 check on Windows |
+| Enhanced Safe Browsing deep-scan prompts on blob-sourced `.zip` | Low | Not seen so far. On the ugoira zip, the prompt would sit in the hidden bubble and keep `frames.json`, the video and Chrome's UI waiting until the user acts in `chrome://downloads` (a known v1 limitation, PRD CUJ-2 edge; §15 "Known limitation", with a pre-decided response). L5 check on Windows |

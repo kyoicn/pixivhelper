@@ -1,7 +1,7 @@
 # Download Engine (service worker)
 
-> Last updated: 2026-10-23 22:29:54 (UTC-7)
-> Serves: prd-000 — CUJ-1 (pipeline, cancel, re-download, the `N / 12` counter that climbs to `11 / 12`), CUJ-2 (ugoira job orchestration), CUJ-3 (toolbar click → settings tab), CUJ-4 (badge/title), CUJ-5 (retry modes, outcome classification incl. the job-level "No connection" rule per R-004 S3, login-wall check at resolve per R-003); PRD §4.1 #3 (Chrome's download UI hidden while a job runs, R-005; back on just before the last file of the last running job is handed to Chrome, R-006)
+> Last updated: 2026-10-24 03:57:53 (UTC-7)
+> Serves: prd-000 — CUJ-1 (pipeline, cancel, re-download, the `N / 12` counter that climbs to `11 / 12`), CUJ-2 (ugoira job orchestration), CUJ-3 (toolbar click → settings tab), CUJ-4 (badge/title), CUJ-5 (retry modes, incl. a `retryPages` that also re-writes a `metadata.json` that did not land per R-007 item 6; outcome classification incl. the job-level "No connection" rule per R-004 S3; login-wall check at resolve per R-003); PRD §4.1 #3 (Chrome's download UI hidden while a job runs, R-005; back on just before the last file of the last running job is handed to Chrome, R-006)
 
 ## Overview
 
@@ -152,7 +152,9 @@ export type StartRequest =
   | { mode: 'full'; artworkId: string; expectedFiles: number;                        // expectedFiles: pageCount, or 1 for ugoira
       loggedIn: boolean | null }                                                     // the page's login marker (R-003 check at resolve);
                                                                                      // the guard accepts exactly true | false | null, else BAD_REQUEST
-  | { mode: 'retryPages'; artworkId: string; folder: string; pages: number[]; total: number }  // pages: 0-based, unique, < total ≤ 200
+  | { mode: 'retryPages'; artworkId: string; folder: string; pages: number[]; total: number;  // pages: 0-based, unique, < total ≤ 200
+      withMetadata?: true }                                                          // also write metadata.json: the earlier run's did not land (R-007 item 6);
+                                                                                     // the guard accepts only true (or the field absent), else BAD_REQUEST
   | { mode: 'retryEncode'; artworkId: string; folder: string; format: 'mp4' | 'webm' }
   | { mode: 'retryMetadata'; artworkId: string; folder: string };
 ```
@@ -255,7 +257,7 @@ stateDiagram-v2
 |---|---|---|
 | `full`, illustType 0/1 | `/ajax/illust/{id}`, `/pages` | `metadata` (if `saveMetadata`), then `page` × N with names = URL basenames |
 | `full`, illustType 2 | `/ajax/illust/{id}`, `/ugoira_meta`; `caps` for body width×height | `metadata` (if enabled), `zip` (`save: true`), `framesJson` (deps: zip), `video` (deps: zip, framesJson; only if effective format ≠ `zip`) |
-| `retryPages` | `/pages` | `page` × requested indexes (no metadata) |
+| `retryPages` | `/pages`; with `withMetadata`, `/ajax/illust/{id}` first (R-007 item 6) | `metadata` (only with `withMetadata`, from that body as in `retryMetadata`), then `page` × requested indexes |
 | `retryEncode` | `/ajax/illust/{id}` (frame size: the codec-probe key, so the encoder gets the same codec string as the first run), `/ugoira_meta`; `caps` | `zip` (`save: false`), `video` (deps: zip) |
 | `retryMetadata` | `/ajax/illust/{id}` | `metadata` |
 
@@ -372,13 +374,21 @@ A pages job's `JobView.progress` is `{ kind: 'pages', done: pagesOffset + landed
 - **The completion that ends the job pushes only the ended view.** `settle()` emits a running `push` only when pump does not finalize (the `complete` row above).
 - **The busy period's last hand-off waits for every other in-progress file to finish**, capped at 2 s ("The last hand-off", step 3). So in a job of its own, the last file to complete is the one handed to Chrome last, and its completion ends the job. That file is a page: `metadata.json` is dispatched first and built in memory, so it is handed off long before the last page.
 
-Together: the label climbs to `N−1 / N`, and the next view is the ended one, so the button turns `Saved · NP` directly and `N / N` is not shown. This is the PRD text since the R-006 rev. 3 spec-sync: CUJ-1 AC "up to `11 / 12` … `12 / 12` is never shown", and CUJ-5 step 5 "`9 / 12` → `11 / 12`". A `retryPages` job starts at `pagesOffset`, so its running values are `offset … N−1`. A single page shows `0 / 1` and then `Saved`.
+Together: in a job running on its own, the label climbs to `N−1 / N`, and the next view is the ended one, so the button turns `Saved · NP` directly. This is the PRD text since R-007: CUJ-1 AC 7 "tops out at `11 / 12` … When other files are still finishing at that moment (for example a second job's, CUJ-4), `12 / 12` may show for an instant first" (item 1), CUJ-5 step 5 "`9 / 12` → `11 / 12`" (item 1), and the 200-page edge "`0 / 200` … `199 / 200`, then `Saved · 200P`" (item 2). A `retryPages` job starts at `pagesOffset`, so its running values are `offset … N−1`; one with `withMetadata` counts the same, since `metadata.json` is not a page. A single page shows `0 / 1` and then `Saved`.
 
-When `N / N` can still show (all outside the PRD's examples):
+When `N / N` can still show:
+- **An earlier completion's push runs after the last page landed** (measured, QA iteration 4).
+  - **Mechanism.** A page completion's effects are `[release, badge, push]` (`settle()`), and `runEffects` awaits them in order (`src/background/engine.ts`). The `release` is an offscreen round trip. The `push` builds its view from the record when it runs (`src/background/pusher.ts`).
+  - So if the job's last page completes during that round trip, the earlier completion's push sends a running view with `done = N`. The ended view (`Saved`) follows at once.
+  - **Where it happens:** the job's last two pages must complete within a few ms.
+    - Two jobs at once, on the job that ends first. Its last page is not the busy period's last hand-off, so it gets no settle wait. QA saw `N / N` in the DOM for 0–2 ms in 34 of 37 runs, and painted for one frame in 1 of 20 frame-sampled runs.
+    - A single 200-page job: 2 of 13 runs in the DOM, 0 of 11 painted.
+    - Never in a single 12-page job (0 of 55).
+  - **No code change** (pm-review iteration 4; R-007 item 1 amended the AC instead). Suppressing that push would leave a stale `N−1 / N` while every page has landed, which is less truthful than the instant.
 - **`metadata.json` is still in progress when the last page completes.** That needs `metadata.json` held past the 2 s cap, for example by a Save As dialog with "Ask where to save each file" on (a known v1 limitation, PRD CUJ-1 edge cases). The job cannot end yet, so `N / N` shows until `metadata.json` lands. A held *page* never causes it: that page is still missing from N. pm's pre-decided exit (pm-review iteration 3, priority 1) accepts a residual that occurs only at the cap.
-- **The job's last page is not its busy period's last hand-off** (job B ends while job A still has files to hand over, CUJ-4). B's last page has no settle wait, so `N / N` would show if B's `metadata.json` were still in progress at that moment. `metadata.json` is B's first and smallest hand-off, so in practice it finished long before.
+- **A metadata-only retry shows `N / N` throughout, by design.** `resolveRetryMetadata` sets `pagesOffset` to the page count (`src/background/resolver.ts`), and the button's optimistic progress for it is `total / total` (`src/content/button/model.ts`). Every page is already on disk, so `12 / 12` is the honest face until `metadata.json` lands.
 
-Ugoira jobs show a percentage instead, which never shows `100%` (design-artwork-button.md "Fixed width").
+Ugoira jobs show a percentage instead. `ugoiraPercent` (`src/shared/progress.ts`) caps it at 99 even after the job's last file has landed, because the view pushed between that landing and the end is still a busy one. So `100%` never shows (PRD §4.7.5; design-artwork-button.md "Fixed width").
 
 #### Chrome's download UI (download-ui.ts, R-005, R-006)
 
@@ -735,7 +745,7 @@ Sometimes a file that counted as still to be handed off fails instead. Examples:
     - `frames.json` depends on the zip being `done`, and the video on both (Resolving, per-mode table). While Chrome holds the zip, they stay `queued`, which counts as still to be handed off.
     - So no hand-off of the busy period can be the last, for this job or for any other running job. The button stays busy, and Chrome's UI stays hidden.
     - This lasts until the user acts on the zip in `chrome://downloads`, which keeps listing it, or cancels the job; then finalize restores.
-    - This is the realistic case: the risk table lists deep-scan prompts on blob-sourced `.zip` (system.md §15 gap 1; code review iteration 3 retry 1, Info 6).
+    - This is the realistic case: the risk table lists deep-scan prompts on blob-sourced `.zip`. It is a known v1 limitation in PRD CUJ-2's edge cases since R-007 item 5 (system.md §15 "Known limitation"; code review iteration 3 retry 1, Info 6).
   - The prompt is also out of reach while other files are still to be handed off, or when no hand-off follows because they all fail. The job then waits for the user in `chrome://downloads`.
 
 **Performance.**
@@ -1017,7 +1027,7 @@ sequenceDiagram
 - **Observability:** `info` at job start/end with `jobId`, `artworkId`, `mode`, `kind`, outcome, counts, duration; `debug` per file transition. `chrome://extensions` → Errors shows `warn`/`error`.
 - **Testing:**
   - Unit: scheduler pump (cap, order, deps, stop on 403, cancel), `classifyOutcome` (one case per row plus precedence conflicts; row 8 cases: a job without `answered` whose only failure is an unanswered `network` API failure → offline; a resolved job (`answered: true`) whose every original failed with unanswered `network` → server (the PRD's accepted cost); an API `network` failure with `answered: true` → server; any `internal` or `timeout` → server; `navigator.onLine === false` → offline even when answered; all `disk`/`dismissed` → disk; row 4 via `stopReason 'forbidden'` with no failed file), badge/title math including `999+`, singular, a lone 0-count job (idle title, empty badge) and "across N" counting only jobs with files left, `buildMetadata`/`serializeJson` against golden vectors, `effectiveFormat` truth table.
-  - Resolver: `full` with `loggedIn: false` on a withheld body → `loginRequired`, and the fake API saw no `/pages` or `ugoira_meta` call; `loggedIn: true` or `null` on the same body → proceeds; `retryEncode` calls `/ajax/illust` before `ugoira_meta`; a transport error from both the tab and the offscreen fallback → `apiFailure` with `kind: 'internal'` and `answered: false`; `Resolution.answered` per the examples in "Resolving"; `applyResolution` sets `job.answered` for `ok`, the login-wall stop and an answered failure, and leaves it absent for an unanswered failure.
+  - Resolver: `full` with `loggedIn: false` on a withheld body → `loginRequired`, and the fake API saw no `/pages` or `ugoira_meta` call; `loggedIn: true` or `null` on the same body → proceeds; `retryEncode` calls `/ajax/illust` before `ugoira_meta`; `retryPages` with `withMetadata` calls `/ajax/illust` before `/pages`, queues `metadata` first with that body, and fails on a deleted work before `/pages`, while without it no `/ajax/illust` call is made and no body is kept (R-007 item 6); a transport error from both the tab and the offscreen fallback → `apiFailure` with `kind: 'internal'` and `answered: false`; `Resolution.answered` per the examples in "Resolving"; `applyResolution` sets `job.answered` for `ok`, the login-wall stop and an answered failure, and leaves it absent for an unanswered failure.
   - `download-ui.ts` (fake `setUiOptions`):
     - concurrent `hideForHandOff()` calls make one Chrome call and all resolve after it;
     - `restore()` then `hideForHandOff()` in the same tick apply in that order, and so do `hideForHandOff()` then `restore()` (R-006: the last hand-off of a busy period whose first hide is still in flight);
@@ -1041,7 +1051,7 @@ sequenceDiagram
     - a job created while the last hand-off waits (steps 2–3) → the re-check takes the hide path;
     - a job listed as resolving makes another job's last file hide;
     - the `decided` entry is gone after the id is stored, after a throwing `download()`, and after a give-up. This is observable because a later hand-off can then be last.
-  - Integration (Vitest + `test/fakes/chrome.ts`): full job runs with a fake offscreen; SW restart is simulated by discarding the module instance and re-importing with the same fake `storage.session`/`downloads` at every await point of a scripted job, including `await:handoff.hideUi` and `await:handoff.restoreUi` (R-006). Also concurrent jobs, and cancel races: `off/ready` after a cancel, and a cancel while the hide or the restore is in flight → no `download` call. The counter (`sw-pages.test.ts`): a 12-page job's running views never decrease and end at `11 / 12`, and the next view is the ended `saved` one ("Progress counter").
+  - Integration (Vitest + `test/fakes/chrome.ts`): full job runs with a fake offscreen; SW restart is simulated by discarding the module instance and re-importing with the same fake `storage.session`/`downloads` at every await point of a scripted job, including `await:handoff.hideUi` and `await:handoff.restoreUi` (R-006). Also concurrent jobs, and cancel races: `off/ready` after a cancel, and a cancel while the hide or the restore is in flight → no `download` call. The counter (`sw-pages.test.ts`): a 12-page job's running views never decrease and end at `11 / 12`, and the next view is the ended `saved` one ("Progress counter"). The Retry after a partial (`sw-pages.test.ts`, R-007 item 6): 3 pages and `metadata.json` fail, and the Retry writes both, counts `9 … 11 / 12`, badges 3 pages and ends `saved`; after only pages failed, the Retry does not write `metadata.json` again.
   - R-005/R-006 order, from the fake's combined call log (design-test-harness.md L2):
     - no `setUiOptions` while a job only resolves or fetches;
     - `{ enabled: false }` resolves before the first `download` of a multi-file busy period;
@@ -1060,6 +1070,10 @@ sequenceDiagram
   - E2E: [design-test-harness.md](design-test-harness.md).
 
 ## Migration / Rollout
+
+**Iteration 4 (R-007 item 6).**
+- **Persisted shape.** `StartRequest.retryPages` gains `withMetadata?: true`, which rides in `JobRecord.request`, and `JobOutcome.partial` gains `metadataFailed?: true`. A record or message without either reads as before: no `metadata.json` in the Retry. The guards accept only `true`. No migration and no bump of `JobRecord.v`, for the reason under iteration 3 (`storage.session` is cleared on update).
+- **Rollback** is a plain revert. The flag on a `partial` button state lives only in the content script's memory.
 
 **Iteration 3.**
 - **Persisted shape.** `Failure.lastStatus` is removed; `Failure.answered?: true` and `JobRecord.answered?: true` are added. `storage.session` is cleared when the extension is updated or reloaded, so no record of an earlier build is ever hydrated: no migration and no bump of `JobRecord.v`. A record without `answered` reads as "nothing answered yet", which is exactly what an absent field means. The `isFailure` guard in `messages.ts` accepts `answered: true` (and nothing else under that key) and drops `lastStatus`.
@@ -1086,8 +1100,8 @@ sequenceDiagram
 - **A Chrome prompt for a job file while the UI is hidden** (dangerous-file or deep-scan).
   - A held page or `metadata.json` delays the busy period's last hand-off by at most the 2 s cap. That hand-off then brings the UI, and so the prompt, back.
   - A held ugoira zip keeps `frames.json` and the video `queued`. The job stays busy and the UI hidden until the user acts in `chrome://downloads` ("Error handling").
-  - Spec status: [system.md §15](system.md) gap 1, with pm's recommended wording and pre-decided response.
-- **`N / N` can still show in two edge cases** ("Progress counter"): `metadata.json` held past the settle cap as the last page lands (pm's pre-decided exit accepts a residual at the cap), or a job whose last page is not its busy period's last hand-off and whose `metadata.json` is somehow still being written.
+  - Spec status: a known v1 limitation in PRD CUJ-2's edge cases since R-007 item 5. The pre-decided response is in [system.md §15](system.md) "Known limitation".
+- **`N / N` can still show for an instant** ("Progress counter"). It happens when an earlier completion's push runs after the job's last page landed (two jobs at once, or a 200-page job), and while `metadata.json` is held past the settle cap. PRD CUJ-1 AC 7 allows the instant since R-007 item 1, so there is no code change.
 - **A second animation, or an early bubble, after a settle stall** (platform timing, R-006 rev. 3).
   - Step 3 waits for every in-progress file of the busy period to finish before the enable, capped at 2 s.
   - If a file takes longer (a Save As dialog, a danger prompt, another extension's `onDeterminingFilename`, a stalled disk), the restore goes ahead; that file may then animate and open the bubble before the last file exists.

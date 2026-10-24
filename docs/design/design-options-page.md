@@ -1,7 +1,7 @@
 # Options Page
 
-> Last updated: 2026-10-23 22:29:54 (UTC-7)
-> Serves: prd-000 — CUJ-3 (all steps and edge cases), CUJ-2 step 1 / CUJ-3 step 7 (hint reactivity, via storage), R-001 (Report-an-issue URL), R-002 (product name), R-004 S2 (contrast), S5 (unclosed `{`), S15 ("Still using:" on one line)
+> Last updated: 2026-10-24 03:57:53 (UTC-7)
+> Serves: prd-000 — CUJ-3 (all steps and edge cases), CUJ-2 step 1 / CUJ-3 step 7 (hint reactivity, via storage), R-001 (Report-an-issue URL), R-002 (product name), R-004 S2 (contrast), S5 (unclosed `{`), S15 ("Still using:" on one line), R-007 item 4 (link and selected-segment contrast)
 
 ## Overview
 
@@ -99,13 +99,19 @@ interface PageState {
 | field bg / border | `#fff` / 1px `#d0d5db` | `#1f1f1f` / `#3a3f45` |
 | field invalid (border) | 2px `#d93025` (a non-text component: 3:1 suffices) | same |
 | chip bg / border / hover | `#fff` / `#d0d5db` / border+text `#0096FA`, fill `#f0f8ff` | `#1f1f1f` / `#3a3f45` / fill `#102a3f` |
-| segment bg / border / hover / selected | `#fff` / `#d0d5db` / `#f5f7f9` / `#0096FA` + white 600 | `#1f1f1f` / `#3a3f45` / `#2a2f35` / same |
+| segment bg / border / hover / selected | `#fff` / `#d0d5db` / `#f5f7f9` / `--seg-selected` `#0b6fc2` + white 600 (5.16:1; CUJ-3 step 7, R-007 item 4) | `#1f1f1f` / `#3a3f45` / `#2a2f35` / same `#0b6fc2` |
 | switch on / off | `#0096FA` knob right / `#bdc1c6` knob left | same / `#5f6368` |
 | saved | `#188038`, 12.5 px, check icon (4.68:1 on `#f6f7f9`; CUJ-3 step 3) | `#1a9f5a` (5.49:1 on `#121212`) |
 | error text (validation message) | `#c5221f`, 13 px, info icon (5.41:1; CUJ-3 step 5) | `#f28b82` (7.84:1) |
 | "Still using" trailing sentence (`— your last valid pattern stays in effect …`) | `#5c6166` (5.84:1; CUJ-3 step 5) | `#8a8f94` (5.74:1) |
-| links, focus ring | `#0096FA`; focus 2 px `#0096FA` on `:focus-visible` | same |
+| links (`--accent-text`) | `#0b6fc2` (4.82:1 on `#f6f7f9`; CUJ-3 step 10, R-007 item 4) | `#0096FA` (6.02:1 on `#121212`) |
+| focus ring | 2 px `#0096FA` on `:focus-visible` | same |
 | footer rule | `#e3e6ea` | `#2a2f35` |
+
+Blues (R-007 item 4):
+- `--accent`, `#0096FA` in both modes, is for the non-text blues only: the switch, focus rings, the header mark and the chip hover.
+- Blue text has its own variables: `--accent-text` for `.link` and `--seg-selected` for `.seg button[aria-pressed='true']`.
+- Two variables, not one, because no single blue serves both pairs in dark mode. White on `#0096FA` is 3.11:1, and `#0b6fc2` text on `#121212` is 3.63:1. So the segment keeps `#0b6fc2` in both modes, while the dark-mode links return to `#0096FA`.
 
 Geometry:
 - Column 640 px; header icon 48×48 radius 12; h1 22/700; h2 16/600; help 14; sections 48 px apart.
@@ -258,11 +264,7 @@ There is no confirmation (PRD).
 - Chips are `<button type="button">`. The segmented control is `role="group"` with `aria-pressed` buttons. The switch is `role="switch"` + `aria-checked`. Reset is a `<button>`; Report is an `<a>`.
 - The DOM order equals the PRD tab order: field → 4 chips → MP4 → WebM → ZIP only → switch → Reset to defaults → Report an issue.
 - Every control shows a 2 px `#0096FA` `:focus-visible` ring. Help text is linked via `aria-describedby` on each section's primary control.
-- Contrast: the Saved, validation and "Still using" colours are the PRD's AA values (CUJ-3 steps 3 and 5, R-004 S2; [system.md §11.5](system.md)). The chip hover (`#0096FA` on `#f0f8ff`, 2.90:1) shows only under the pointer and leaves the token text unchanged, which is the index's hover-tint case. Two PRD values are below 4.5:1 **at rest** and are covered by neither acceptance, because the index accepts pixiv blue with white only for the injected button's fill and Saved text:
-  - the selected Ugoira segment, white semibold 14 px on `#0096FA`, 3.11:1 (CUJ-3 step 7);
-  - the footer links, `#0096FA` 13 px on the page's `#f6f7f9`, 2.91:1 (CUJ-3 step 10).
-
-  The page ships the PRD values. The conflict with the index rule is with pm, pending `/spec-sync` ([system.md §15](system.md) gap 2).
+- Contrast: the Saved, validation, "Still using", link and selected-segment colours are the PRD's AA values (CUJ-3 steps 3, 5, 7 and 10 and the dark-theme edge; R-004 S2, R-007 item 4; [system.md §11.5](system.md)). The chip hover (`#0096FA` on `#f0f8ff`, 2.90:1) shows only under the pointer and leaves the token text unchanged, which is the index's hover-tint case.
 
 ## Data Flow
 
@@ -307,7 +309,8 @@ sequenceDiagram
 - **i18n:** every string comes from `_locales` (keys in PRD Appendix A "Settings page"). Placeholder parts are styled via `splitOnPlaceholder` ([system.md §11.4](system.md)). The layout must not clip in any locale: the segmented control widths are intrinsic, and the column wraps.
 - **Testing:**
   - Unit (happy-dom, fake timers): `bindSingleLine` with synthetic `InputEvent`s: `insertFromPaste` of `pixiv/\n{artist}\r\n-{id}\n` into an empty field → `pixiv/{artist}-{id}`, caret at the end, one `input` event; the same over a selection replaces it; `insertFromDrop` at a caret inside the value; `insertText` with a newline; text without line breaks is not prevented; a non-cancelable event is not prevented; only newlines with a collapsed selection → no change and no `input`; the 200 cap with a surrogate pair at the cut; `stillUsingLine` returns the label span without trailing whitespace, a space text node, the pattern span and the muted sentence, in all 4 locales; debounce timing; each validation message rendered with the right ARIA, including `pixiv/{user` → `Unknown token {user. …` with no write; "Still using" shows the last valid pattern; a valid save then an invalid edit within 2 s leaves the folder indicator empty the moment the error renders; a write that resolves after the field turned invalid does not flash; `clear()` cancels a pending fade; chip insertion at caret, with a selection, never-focused append and the 200-char guard; reset's changed-section detection; cross-tab update rules (invalid-draft and typing exemptions; own-echo suppression).
-  - E2E: real page in Chromium in light and dark (`emulateMedia`) × 4 locales (launch flag `--lang`), keyboard-only walkthrough in PRD tab order, reload persistence, two-tab sync ([design-test-harness.md](design-test-harness.md)); regression for the CUJ-3 bug: insert a chip (valid, saves), then within 2 s type `pixiv/{artst}-{id}` → no `Saved` beside Download folder while the error shows; computed colours of the Saved, error and "Still using" texts in light and dark equal the Styles table; QA's paste test (`pixiv/\n{artist}\r\n-{id}\n` → `pixiv/{artist}-{id}`, preview `Downloads/pixiv/みずき-135882741/135882741_p0.jpg`) plus a single-line paste with a trailing newline (no trailing space) and `keyboard.insertText` with a newline; `pixiv/{user` paused → the message, no `Saved`, reload shows the last valid pattern; `pixiv/a}b` saves; in the error state of all 4 locales the `.label` has one client rect and the default pattern one client rect.
+  - Unit (`test/unit/options/styles.test.ts`, R-007 item 4): reads `options.css` and asserts `--accent-text` and `--seg-selected` per mode, that `.link` and the selected segment use them, that both pairs reach 4.5:1 in both modes (WCAG ratios from the hex values), and that the switch, focus rings, header mark and chip hover keep `--accent`.
+  - E2E: real page in Chromium in light and dark (`emulateMedia`) × 4 locales (launch flag `--lang`), keyboard-only walkthrough in PRD tab order, reload persistence, two-tab sync ([design-test-harness.md](design-test-harness.md)); regression for the CUJ-3 bug: insert a chip (valid, saves), then within 2 s type `pixiv/{artst}-{id}` → no `Saved` beside Download folder while the error shows; computed colours of the Saved, error, "Still using" and link texts and of the selected segment in light and dark equal the Styles table; QA's paste test (`pixiv/\n{artist}\r\n-{id}\n` → `pixiv/{artist}-{id}`, preview `Downloads/pixiv/みずき-135882741/135882741_p0.jpg`) plus a single-line paste with a trailing newline (no trailing space) and `keyboard.insertText` with a newline; `pixiv/{user` paused → the message, no `Saved`, reload shows the last valid pattern; `pixiv/a}b` saves; in the error state of all 4 locales the `.label` has one client rect and the default pattern one client rect.
 
 ## Dependencies & Integration Points
 
@@ -317,8 +320,4 @@ sequenceDiagram
 ## Open Questions & Risks
 
 - **No PRD copy for a total storage failure** (both areas reject). The design shows no `Saved` and keeps the value. pm may want a message. Low priority.
-- **Footer link and selected-segment contrast** (system.md §15 gap 2).
-  - PRD CUJ-3 step 10's `#0096FA` links on `#f6f7f9` measure 2.91:1. Step 7's selected segment, white on `#0096FA`, measures 3.11:1.
-  - The index requires 4.5:1 at rest for every pair outside the button's pixiv-blue acceptance, and it says CUJ-3's colours pass.
-  - Both are kept as specified until pm's `/spec-sync`. pm recommends `#0b6fc2` for the light-mode links and for the selected segment in both modes. In `options.css` that is one text-accent variable used by `.link` and `.seg button[aria-pressed='true']`.
 - **Drop placement is verified once by QA.** `bindSingleLine` reads the drop point from the selection, which Blink sets before `insertFromDrop` (Line breaks in inserted text, step 3). Synthesizing a native text drag in Playwright is fiddly, so the unit tests cover the handler and QA drags multi-line text into the field once per run. If the text ever lands at the old caret instead, leave `insertFromDrop` to the browser: the PRD names paste only.
