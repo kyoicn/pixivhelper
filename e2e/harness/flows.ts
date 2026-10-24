@@ -1,7 +1,8 @@
 // Steps shared by the CUJ specs: opening an artwork tab, holding originals in flight, and reading
-// the toolbar badge and title through the extension service worker.
+// the toolbar badge and title and Chrome's download UI calls through the extension service worker.
 
 import { expect, type Page } from '@playwright/test';
+import type { DownloadUiCall, DownloadUiReport } from '../../src/background/download-ui';
 import { artworkUrl, originalUrl, type IllustWork } from '../fixtures/works';
 import type { LoggedRequest } from '../server/server';
 import { buttonView, exposeButton, hoverButton, type ButtonView } from './hfp-button';
@@ -48,6 +49,37 @@ export function badgeText(harness: Harness): Promise<string> {
 
 export function actionTitle(harness: Harness): Promise<string> {
   return harness.swEval(() => chrome.action.getTitle({}));
+}
+
+/**
+ * `self.__hfpTest.downloadUi()` in dist-e2e (R-005): what the running SW instance asked of Chrome's
+ * download UI, and what the real Chrome answered. Chrome has no getter for the UI itself, and
+ * Playwright cannot see the toolbar, so the visual effect is an L5 check.
+ */
+export function downloadUi(harness: Harness): Promise<DownloadUiReport> {
+  return harness.swEval(() =>
+    (self as unknown as { __hfpTest: { downloadUi(): DownloadUiReport } }).__hfpTest.downloadUi(),
+  );
+}
+
+/** The SW's report once its boot, with no job running, has turned Chrome's UI on. */
+export async function downloadUiAfterBoot(harness: Harness): Promise<DownloadUiReport> {
+  await expect.poll(async () => (await downloadUi(harness)).requested).toBe(true);
+  return downloadUi(harness);
+}
+
+/** The report once Chrome's UI is back on after a job (the restore follows the final view). */
+export async function downloadUiRestored(harness: Harness): Promise<DownloadUiReport> {
+  await expect.poll(async () => (await downloadUi(harness)).calls.at(-1)?.enabled).toBe(true);
+  return downloadUi(harness);
+}
+
+/** `calls` from index `from` on, without their times. */
+export function uiCalls(
+  calls: readonly DownloadUiCall[],
+  from = 0,
+): Array<{ enabled: boolean; ok: boolean }> {
+  return calls.slice(from).map(({ enabled, ok }) => ({ enabled, ok }));
 }
 
 /** Badge text and action title reach these values within 1 s. */
