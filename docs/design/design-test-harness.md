@@ -1,6 +1,6 @@
 # Test Strategy & QA Harness
 
-> Last updated: 2026-10-23 18:44:59 (UTC-7)
+> Last updated: 2026-10-23 22:29:54 (UTC-7)
 > Serves: prd-000 — every CUJ's acceptance criteria (CUJ-1 … CUJ-5), including the R-004, R-005 and R-006 amendments; PRD Goal 2 (parity with `ref/pixiv-dl`)
 
 ## Overview
@@ -90,6 +90,7 @@ Every await point in `registry.mutate`, the resolver and the hand-off is enumera
 - `{ op: 'ui', enabled: false }` precedes the first `download` of every multi-file busy period;
 - `{ op: 'ui', enabled: true }` sits immediately before the busy period's last `download` and after every other `download` of it, and no `ui` entry follows the last record's deletion;
 - exactly one `download` per busy period is called while `uiEnabled` is `true`: the last;
+- for a Saved job, `settledWhileShown` holds exactly that last file: no earlier file finishes while the UI is on (rev. 3, below);
 - a busy period without a final hand-off gets exactly one `{ enabled: true }`, after the last record is deleted. The cases: cancel; a partial job whose failing file settles last; needs login after a 403 with nothing left in flight; Unavailable as the last job to end, while another job's last file hid because this one was still resolving;
 - none when job B ends while job A runs;
 - a single-file job after an idle boot → no `ui` entry, so the file plays Chrome's usual animation as before R-005;
@@ -105,7 +106,7 @@ Every await point in `registry.mutate`, the resolver and the hand-off is enumera
 - `name(id)` sets the item's `filename` and fires `onChanged({ id, filename: { previous: '', current } })`.
 - `complete(id)` and `interrupt(id)` name an unnamed item first.
 
-With naming off, items are named at creation, as now, so every existing test is unchanged. The combined call log already records each applied `setUiOptions` and each `download()` call in order. The fake also records `settledWhileShown`: the files that finished or were interrupted while the UI was on. For a Saved job it must hold exactly the busy period's last file (R-006 rev. 3: an earlier file finishing after the enable opens the bubble before the last file exists).
+With naming off, items are named at creation, as now, so every existing test is unchanged. The combined call log already records each applied `setUiOptions` and each `download()` call in order. The fake also records `settledWhileShown`: the files that finished or were interrupted while the UI was on. For a Saved job it must hold exactly the busy period's last file (R-006 rev. 3: an earlier file finishing after the enable opens the bubble before the last file exists). For a single busy period this also pins the single animation, so the separate `animated` flag that code review iteration 3 retry 1 proposed (Info 3) is not needed. Chrome names an item before it settles, and nothing turns the UI off again inside one busy period. So a file that settled while the UI was off was also named while it was off, and only the last file can have been named with the UI on.
 
 ### L3: E2E harness
 
@@ -242,10 +243,10 @@ Branded Chrome stable on macOS and Windows:
   - during a 12-page download Chrome shows no fly-to-toolbar animation and no downloads button, not even for `metadata.json`;
   - the last file plays one animation and brings the button back, and after `Saved · 12P` the bubble lists the 13 files;
   - with two jobs, the button returns only with the last file of the job that ends last;
-  - a re-download of the same work, with its originals served from the HTTP cache so the last files land together, also shows exactly one animation, at the end (it checks design-download-engine.md step 3, "The last hand-off");
+  - a re-download of the same work, with its originals served from the HTTP cache so the last files land together, also shows exactly one animation, at the end, and the bubble that opens with it lists the new job's last file (it checks design-download-engine.md "The last hand-off" step 3, rev. 3);
   - after a cancel, the button returns only with the next download (accepted by R-006);
   - a file downloaded from another site while a job runs shows no animation either (the accepted browser-wide side effect), and is listed once the button returns.
-  - on Windows with Enhanced Safe Browsing, an ugoira's zip raises no deep-scan prompt that the hidden bubble would swallow (system.md §15 gap 1).
+  - on Windows with Enhanced Safe Browsing, an ugoira's zip raises no deep-scan prompt that the hidden bubble would swallow. If one appears, `frames.json` and the video wait for it, and the button stays busy and Chrome's UI hidden until the zip is handled in `chrome://downloads` (system.md §15 gap 1);
   - QA can watch the same in the headed harness browser with an OS-level screenshot, since Playwright captures only page content;
 - **logged in** (owner's session, `npm run qa:live`): the action-row placement and like detection on the logged-in DOM; pixiv's dark theme (`html[data-theme="dark"]`) and the `#5fb9fb` focus ring; an R-18 download after a real login (CUJ-5 AC 2); R-18 display off → `Retry` + `tip_refused` (CUJ-5 AC 7); and, for the deferred R-003 stale-page case ([system.md §8.5](system.md) miss 2), whether `/ajax/illust` returns a non-null `urls.original` for every work the logged-in viewer can see (an `sl` 4 all-ages work, an R-18 work with display on) and `null` with R-18 display off;
 - each of the 4 locales renders without clipping;

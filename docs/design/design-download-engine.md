@@ -1,7 +1,7 @@
 # Download Engine (service worker)
 
-> Last updated: 2026-10-23 18:44:59 (UTC-7)
-> Serves: prd-000 — CUJ-1 (pipeline, cancel, re-download), CUJ-2 (ugoira job orchestration), CUJ-3 (toolbar click → settings tab), CUJ-4 (badge/title), CUJ-5 (retry modes, outcome classification incl. the job-level "No connection" rule per R-004 S3, login-wall check at resolve per R-003); PRD §4.1 #3 (Chrome's download UI hidden while a job runs, R-005; back on just before the last file of the last running job is handed to Chrome, R-006)
+> Last updated: 2026-10-23 22:29:54 (UTC-7)
+> Serves: prd-000 — CUJ-1 (pipeline, cancel, re-download, the `N / 12` counter that climbs to `11 / 12`), CUJ-2 (ugoira job orchestration), CUJ-3 (toolbar click → settings tab), CUJ-4 (badge/title), CUJ-5 (retry modes, outcome classification incl. the job-level "No connection" rule per R-004 S3, login-wall check at resolve per R-003); PRD §4.1 #3 (Chrome's download UI hidden while a job runs, R-005; back on just before the last file of the last running job is handed to Chrome, R-006)
 
 ## Overview
 
@@ -342,7 +342,7 @@ pump(job):
 | Dispatch refused (`{ ok: false }` ack) or undeliverable (`sendMessage` rejects after the one `ensureOffscreen` resend) | `fetching → failed{ internal }` for every role except `video`, which fails `{ encode }` (the zip landed, so `Retry · MP4` is the right next action, §10 row 5) | release, pump |
 | `off/progress` | update `ugoira.zipLoaded/zipTotal/encDone`; recompute percent (monotonic) | throttled `job/update` push (≤ 4/s) |
 | `off/failed { failure }` | `fetching → failed` | if `failure.status === 403` and role ∈ {page, zip}: `stopReason = 'forbidden'` (no new dispatches; in-flight files finish, PRD CUJ-5 step 9). Release task; pump. |
-| `downloads.onChanged` `state: complete` | `saving → done` | `off/release` (with `keepRetained: true` for a `zip` file whose `video` is still pending), pump, badge, push |
+| `downloads.onChanged` `state: complete` | `saving → done` | `off/release` (with `keepRetained: true` for a `zip` file whose `video` is still pending), pump, badge, push. When pump returns `finalize`, `settle()` (`scheduler.ts`) adds neither `badge` nor a running `push`, because finalize sends both: the completion that ends a job reaches the tab only as the ended view ("Progress counter" below). |
 | `downloads.onChanged` `state: interrupted` | `saving → failed{ disk \| dismissed }` (`USER_CANCELED` → `dismissed`; every `FILE_*`, `CRASH` and others → `disk`) | release, pump, badge, push |
 
 Events for unknown task or download IDs (job already ended or cancelled) → `off/release` for the task and nothing else.
@@ -365,6 +365,20 @@ Already completed files stay on disk (PRD CUJ-1 step 5). An in-progress encode i
 3. Delete `job:<jobId>`; drop in-memory indexes; `off/release` all remaining task IDs of the job.
 4. `badge.render()`.
 5. If the registry is empty (no running job is left; a job still finalizing is still listed): `await downloadUi.restore()` (R-005, below; without a Chrome call when the job's last hand-off already restored the UI, R-006), then `offscreenClient.scheduleClose()` unless a codec probe is pending (5 s grace; cancelled by any new command).
+
+#### Progress counter (pages jobs)
+
+A pages job's `JobView.progress` is `{ kind: 'pages', done: pagesOffset + landed pages, total: pagesTotal }` (`pagesProgress()` in `src/shared/progress.ts`). Only `page` files count, so `metadata.json` never changes N (PRD CUJ-1 AC). Two rules decide its last running value:
+- **The completion that ends the job pushes only the ended view.** `settle()` emits a running `push` only when pump does not finalize (the `complete` row above).
+- **The busy period's last hand-off waits for every other in-progress file to finish**, capped at 2 s ("The last hand-off", step 3). So in a job of its own, the last file to complete is the one handed to Chrome last, and its completion ends the job. That file is a page: `metadata.json` is dispatched first and built in memory, so it is handed off long before the last page.
+
+Together: the label climbs to `N−1 / N`, and the next view is the ended one, so the button turns `Saved · NP` directly and `N / N` is not shown. This is the PRD text since the R-006 rev. 3 spec-sync: CUJ-1 AC "up to `11 / 12` … `12 / 12` is never shown", and CUJ-5 step 5 "`9 / 12` → `11 / 12`". A `retryPages` job starts at `pagesOffset`, so its running values are `offset … N−1`. A single page shows `0 / 1` and then `Saved`.
+
+When `N / N` can still show (all outside the PRD's examples):
+- **`metadata.json` is still in progress when the last page completes.** That needs `metadata.json` held past the 2 s cap, for example by a Save As dialog with "Ask where to save each file" on (a known v1 limitation, PRD CUJ-1 edge cases). The job cannot end yet, so `N / N` shows until `metadata.json` lands. A held *page* never causes it: that page is still missing from N. pm's pre-decided exit (pm-review iteration 3, priority 1) accepts a residual that occurs only at the cap.
+- **The job's last page is not its busy period's last hand-off** (job B ends while job A still has files to hand over, CUJ-4). B's last page has no settle wait, so `N / N` would show if B's `metadata.json` were still in progress at that moment. `metadata.json` is B's first and smallest hand-off, so in practice it finished long before.
+
+Ugoira jobs show a percentage instead, which never shows `100%` (design-artwork-button.md "Fixed width").
 
 #### Chrome's download UI (download-ui.ts, R-005, R-006)
 
@@ -654,6 +668,12 @@ flowchart TD
 - The new instance finds the job running, so boot makes no call.
 - Reconcile finds no Chrome download for the blob URL and re-issues the hand-off through `handOff()`. If the offscreen document lost the blob, reconcile re-fetches the file instead, and the file is handed off later.
 - `handOff()` decides again: still last, since `decided` is empty. It calls `restore()`, which makes one `{ enabled: true }` call because `requested === null`, and downloads the file exactly once.
+- **At boot, only the search or the cap can end the settle wait** (code review iteration 3 retry 1, Info 1).
+  - Reconcile awaits the effects of its mutations, `ready` waits for reconcile, and `sw.ts` passes `downloads.onChanged` deltas to the engine only after `ready`.
+  - So when a last hand-off that reconcile issued finds an earlier file still `in_progress`, no delta can reach `othersSettled`. Only its one `downloads.search` or `HANDOFF_SETTLE_WAIT_MS` ends the wait, and boot, with every message queued behind `ready`, waits up to 2 s longer.
+  - Nothing the user sees depends on it. The badge is rendered before reconcile, so CUJ-4's 1 s budget holds. The UI is still off during the wait, so an earlier file that finishes in it opens no bubble.
+  - It needs the worker to die inside the busy period's last hand-off while an earlier file is still being written, a window of milliseconds.
+  - Not changed: feeding the watchers from the `sw.ts` listener before `ready` would need a new `Engine` method and gains nothing visible.
 
 The waits in steps 2 and 3 have no hook of their own. Dying there leaves the same state as dying at `await:registry.effects` before the hand-off, which the restart test already covers.
 
@@ -678,14 +698,14 @@ Sometimes a file that counted as still to be handed off fails instead. Examples:
 
 | Race | What happens | Why it is right |
 |---|---|---|
-| Two files land together as the busy period's last two | The first `handOff()` to run sees the other still to be handed off, and hides. The second sees the first in `decided`, waits for its `download()` and for Chrome to name it, then restores. Exactly one restore and one animation. | Step 1 claims in the deciding step. Steps 2–3 make Chrome create and name the earlier file, with the UI still off, before the enable. |
+| Two files land together as the busy period's last two | The first `handOff()` to run sees the other still to be handed off, and hides. The second sees the first in `decided`, waits for its `download()` and for it to finish, then restores. Exactly one restore and one animation, and the bubble that opens with it lists both files. | Step 1 claims in the deciding step. Steps 2–3 make Chrome create, name and finish the earlier file with the UI still off, before the enable (rev. 3). |
 | A job starts before the decision (it is listed, resolving) | The file is not last and hides. The new job's last hand-off restores, or its finalize does if it ends with no file. | R-006's "last running job": the new job is running. |
 | A job starts during the waits (steps 2–3) | The step-4 re-check sees it resolving, so the file takes the hide path. | Same. |
 | A job starts after the restore was requested | `restore()` set `requested = true` synchronously, so the new job's first `hideForHandOff()` enqueues `{ enabled: false }` behind the enable. Chrome applies enable, then disable. The new job's first `download()` waits for its own hide. The earlier job's last file animates unless Chrome determines its target path after the re-hide. The new job's last hand-off restores again. | The unchanged `chain` queue orders calls by request time. Two jobs started back to back can each end with one animation: each was the last running job when its last file was handed off. |
 | Cancel between the restore and the download, or while the restore is in flight | The live check fails, so there is no `download()`: no "Canceled" entry and no animation. The UI stays on. The cancel's finalize calls `restore()`, which finds `requested === true` and makes no call. | No job is running, so the UI belongs on. The button returns with Chrome's next download, as after any cancel. |
 | The last file's `download()` throws (`failed{disk}`) or Chrome interrupts it | The UI stays on, and finalize makes no further call. | The job is ending. |
 | A file counted as still to be handed off fails instead | No hand-off was the last, so finalize restores. | R-006: an end without a final hand-off. |
-| Chrome takes longer than 500 ms to name an earlier file (another extension holding it in `onDeterminingFilename`, a stalled disk) | The cap expires, the restore goes ahead, and that file may animate too. | A bounded delay of the last file is worth more than a guaranteed single animation in a rare case (risk in "Open Questions & Risks"). |
+| An earlier file is still `in_progress` after 2 s (held by a Save As dialog or a danger prompt, by another extension in `onDeterminingFilename`, or by a stalled disk) | The cap expires and the restore goes ahead. That file animates too if Chrome had not named it yet, and its completion can open the bubble before the last file exists. | A bounded delay of the last file is worth more than a guaranteed single animation and a complete bubble in a rare case (risk in "Open Questions & Risks"). A held ugoira zip is a different case: its dependants stay `queued`, so no hand-off is last at all ("Error handling"). |
 
 **Call sites** (the only three):
 1. **`handOff(job, idx)`** in `engine.ts`, after its `saving` guard and before `chrome.downloads.download`: steps 1–6 above.
@@ -709,14 +729,18 @@ Sometimes a file that counted as still to be handed off fails instead. Examples:
 - **Restore refused:** `debug`. This is expected when another extension keeps the UI off, and Chrome has already removed our entry before refusing. `requested` stays `true`. At the last hand-off the download goes on and plays no animation, because the other extension keeps the UI off.
 - Neither method ever rejects into the effect runner, `finalize` or boot.
 - **SW killed between deleting the last record and the restore:** the next SW start finds no job and restores (call site 3). Chrome also clears the entry when the extension unloads. For a kill at `await:handoff.restoreUi`, see "Restart at `await:handoff.restoreUi`" above.
-- **Chrome holds a job file for a user decision** (dangerous-file or deep-scan prompt) while the UI is hidden.
-  - The file stays `saving` with its `downloadId`, so it does not hold back the last hand-off. When the busy period's last file is handed off, the UI returns with it and the prompt is reachable in the bubble. The job ends once the user decides.
-  - If the held file is itself the last hand-off, the UI is already on.
-  - The prompt stays out of reach only while other files are still to be handed off, or when no hand-off follows because they all fail. The job then waits for the user in `chrome://downloads` (system.md §15 gap 1).
+- **Chrome holds a job file for a user decision** (dangerous-file or deep-scan prompt) while the UI is hidden. The file stays `saving` with its `downloadId`, and Chrome reports it `in_progress`.
+  - **A held page or `metadata.json`.** Chrome already has it, so it never makes another file's hand-off non-last. The last hand-off's settle wait (step 3) waits for it, at most 2 s. Then the UI returns with the last file, and the prompt should be reachable in the bubble; whether Chrome surfaces a prompt for an item created while the UI was off is unverified (L5). The job ends once the user decides. If the held file is itself the last hand-off, the UI is already on.
+  - **A held ugoira zip keeps every later file of its job waiting, and so keeps the UI hidden.**
+    - `frames.json` depends on the zip being `done`, and the video on both (Resolving, per-mode table). While Chrome holds the zip, they stay `queued`, which counts as still to be handed off.
+    - So no hand-off of the busy period can be the last, for this job or for any other running job. The button stays busy, and Chrome's UI stays hidden.
+    - This lasts until the user acts on the zip in `chrome://downloads`, which keeps listing it, or cancels the job; then finalize restores.
+    - This is the realistic case: the risk table lists deep-scan prompts on blob-sourced `.zip` (system.md §15 gap 1; code review iteration 3 retry 1, Info 6).
+  - The prompt is also out of reach while other files are still to be handed off, or when no hand-off follows because they all fail. The job then waits for the user in `chrome://downloads`.
 
 **Performance.**
 - Two IPC calls per busy period, about 1 ms each: the hide before its first hand-off, and the restore before its last hand-off (or at its end).
-- The first hand-off waits one round trip for the hide. The last waits one for the restore. When earlier files are still in flight, it also waits for their `download()` calls and Chrome's naming of them: usually a few milliseconds, capped at 500 ms.
+- The first hand-off waits one round trip for the hide. The last waits one for the restore. When earlier files are still in flight, it also waits for their `download()` calls and for them to finish. That is Chrome writing a blob that is already in memory: 0–7 ms in the bursts QA measured (iteration 3 retry 1), capped at 2 s (`HANDOFF_SETTLE_WAIT_MS`). The wait delays only the last file's hand-off. The PRD's 300 ms for `Saved` counts from the last file landing, and the wait comes before that.
 - The rule scans every file of every running job: at most 201 files per job, about a microsecond per hand-off, under 1 ms over a 200-page job's life.
 
 **Test API.**
@@ -746,7 +770,7 @@ sequenceDiagram
   Note over SW: job B starts and hands off · its last page sees A's pages still to come → hide (no call) · B ends
   SW->>SW: finalize(B): registry still holds A → no restore
   OD-->>SW: off/ready A:p11 (nothing queued, fetching or unclaimed anywhere, no job resolving)
-  SW->>SW: isLastHandOff? yes · await earlier download() calls and Chrome's naming of in-progress files · re-check: yes
+  SW->>SW: isLastHandOff? yes · await earlier download() calls and every in-progress file finishing (≤ 2 s) · re-check: yes
   SW->>UI: restore()
   UI->>DL: setUiOptions({enabled:true})
   DL-->>UI: ok
@@ -871,7 +895,7 @@ sequenceDiagram
     SW->>DL: download(blobUrl, folder/name, uniquify)
     DL-->>SW: onChanged complete
     SW->>OD: off/release
-    SW->>CS: job/update "k / 12"
+    SW->>CS: job/update "k / 12" (k ≤ 11: the completion that ends the job sends only the ended view)
     SW->>SW: badge 12−k
   end
   SW->>SW: classify → saved
@@ -1011,13 +1035,13 @@ sequenceDiagram
     - the last hand-off calls `restore()` and never `hideForHandOff()`, and no `download()` is asked for until the restore resolves;
     - every other hand-off calls `hideForHandOff()` only;
     - the last two files' `off/ready` in one tick → exactly one `restore()`, from the second hand-off, called only after the first file's `download()` has resolved and the file has finished; the same with the first hand-off's hide still held (the claim is synchronous);
-    - an earlier file still `in_progress` → no `restore()` until it leaves `in_progress`; its `filename` delta alone does not release it; the restore goes ahead after 2000 ms regardless (fake timers);
-    - `othersSettled([])` makes no `downloads.search` call; once the earlier file finished, the wait leaves no timer behind;
+    - an earlier file still `in_progress` → no `restore()` until it leaves `in_progress`; its `filename` delta alone does not release it; leaving `in_progress` unnamed (interrupted) does; the restore goes ahead after 2000 ms regardless (fake timers);
+    - with no other file in Chrome, the last hand-off makes no `downloads.search` call; once the earlier file finished, the wait leaves no timer behind; a `downloads.search` failure does not hold the restore back;
     - a cancel while the restore is in flight → no `download()` and no hide;
     - a job created while the last hand-off waits (steps 2–3) → the re-check takes the hide path;
     - a job listed as resolving makes another job's last file hide;
     - the `decided` entry is gone after the id is stored, after a throwing `download()`, and after a give-up. This is observable because a later hand-off can then be last.
-  - Integration (Vitest + `test/fakes/chrome.ts`): full job runs with a fake offscreen; SW restart is simulated by discarding the module instance and re-importing with the same fake `storage.session`/`downloads` at every await point of a scripted job, including `await:handoff.hideUi` and `await:handoff.restoreUi` (R-006). Also concurrent jobs, and cancel races: `off/ready` after a cancel, and a cancel while the hide or the restore is in flight → no `download` call.
+  - Integration (Vitest + `test/fakes/chrome.ts`): full job runs with a fake offscreen; SW restart is simulated by discarding the module instance and re-importing with the same fake `storage.session`/`downloads` at every await point of a scripted job, including `await:handoff.hideUi` and `await:handoff.restoreUi` (R-006). Also concurrent jobs, and cancel races: `off/ready` after a cancel, and a cancel while the hide or the restore is in flight → no `download` call. The counter (`sw-pages.test.ts`): a 12-page job's running views never decrease and end at `11 / 12`, and the next view is the ended `saved` one ("Progress counter").
   - R-005/R-006 order, from the fake's combined call log (design-test-harness.md L2):
     - no `setUiOptions` while a job only resolves or fetches;
     - `{ enabled: false }` resolves before the first `download` of a multi-file busy period;
@@ -1059,7 +1083,11 @@ sequenceDiagram
 
 - **Byte path verified** (ENG-002): the DNR rule as written matches offscreen fetches and nothing else, and `chrome.downloads.download(blobUrl)` from the SW saves a blob created in the offscreen document ([system.md §8.2](system.md)). No fallback rule is implemented.
 - **"Ask where to save each file" on:** `saveAs: false` may still prompt per file. A dismissed dialog → `dismissed` → counted as failed and not retried (PRD CUJ-1 edge). The Save As dialog is a separate window, not part of the download UI that R-005 hides, so it is expected to appear while the UI is hidden. Verify on branded Chrome (L5).
-- **A Chrome prompt for a job file while the UI is hidden** (dangerous-file or deep-scan). The held file does not hold back the busy period's last hand-off, which brings the UI, and so the prompt, back. The prompt stays hidden only while other files are still to be handed off, or when no hand-off follows because they all fail ([system.md §15](system.md) gap 1, with pm).
+- **A Chrome prompt for a job file while the UI is hidden** (dangerous-file or deep-scan).
+  - A held page or `metadata.json` delays the busy period's last hand-off by at most the 2 s cap. That hand-off then brings the UI, and so the prompt, back.
+  - A held ugoira zip keeps `frames.json` and the video `queued`. The job stays busy and the UI hidden until the user acts in `chrome://downloads` ("Error handling").
+  - Spec status: [system.md §15](system.md) gap 1, with pm's recommended wording and pre-decided response.
+- **`N / N` can still show in two edge cases** ("Progress counter"): `metadata.json` held past the settle cap as the last page lands (pm's pre-decided exit accepts a residual at the cap), or a job whose last page is not its busy period's last hand-off and whose `metadata.json` is somehow still being written.
 - **A second animation, or an early bubble, after a settle stall** (platform timing, R-006 rev. 3).
   - Step 3 waits for every in-progress file of the busy period to finish before the enable, capped at 2 s.
   - If a file takes longer (a Save As dialog, a danger prompt, another extension's `onDeterminingFilename`, a stalled disk), the restore goes ahead; that file may then animate and open the bubble before the last file exists.

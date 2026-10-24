@@ -1,6 +1,6 @@
 # Artwork Button (content script)
 
-> Last updated: 2026-10-23 16:31:01 (UTC-7)
+> Last updated: 2026-10-23 22:29:54 (UTC-7)
 > Serves: prd-000 — CUJ-1 (button, states, SPA, memory), CUJ-2 (ugoira hint/progress), CUJ-4 (per-tab progress only), CUJ-5 (needs-login incl. pixiv's login walls per R-003, error states, floating fallback); PRD §4.7 entirely; index "Accessibility", "Internationalization", "Theming"; R-004 S1 (widths), S2 (contrast), S4 (floating-fallback anchor), S7 (keyboard order), S13 (no busy 100%)
 
 ## Overview
@@ -319,6 +319,9 @@ PRD §4.7.2: the width equals the widest label this button can show for this art
 candidates(work | null, locale):
   pages(n):  idle(n) · busy(`n / n`) · cancel · saved(n) · needsLogin · retry(`n failed`) · retry · unavailable
   ugoira:    idle(MP4|WebM|ZIP) · busy(`100%`) · cancel · saved(MP4|WebM|ZIP) · needsLogin · retry · retry(MP4|WebM) · unavailable
+             // busy(`n / n`) is likewise an upper bound for the pages face: a job's running label tops at `n−1 / n`
+             // (PRD CUJ-1 AC, R-006 rev. 3; design-download-engine.md "Progress counter"), but `n / n` can still show past
+             // the 2 s settle cap, so it stays a candidate: the width is a maximum, and an upper bound can never clip
              // busy(`100%`) is an upper bound for the percent face: the label never shows 100% (PRD §4.7.5, R-004 S13),
              // and the face is far narrower than `Download · WebM`, so it never decides the width
   null:      pages(99)                                  // metadata not known yet: "starts at the 2-digit width"

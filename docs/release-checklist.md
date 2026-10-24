@@ -30,7 +30,7 @@ Use Chrome stable, not Chrome for Testing. Unzip the release zip into an empty f
   - During the download of a live all-ages 12-page work, Chrome shows no fly-to-toolbar animation and no downloads button for the first 12 files, not even for `metadata.json`.
   - **One animation, at the last file**: it brings the downloads button back, and after `Saved · 12P` its bubble lists the 13 files (`metadata.json` and the 12 originals).
   - With two jobs, the button returns only with the last file of the job that ends last.
-  - **A re-download served from the HTTP cache** (click `Saved · 12P` again, so the last files land together) also shows exactly one animation, at the end.
+  - **A re-download served from the HTTP cache** (click `Saved · 12P` again, so the last files land together) also shows exactly one animation, at the end, and the bubble that opens with it lists the new job's last file (`135882741_p11 (1).jpg` or whichever page landed last).
   - **After a cancel, the button returns only with the next download** (accepted by R-006).
   - A file downloaded from another site while a job runs shows no animation either (the browser-wide side effect R-005 accepts), and is listed once the button returns.
   - Windows, with Enhanced Safe Browsing on: an ugoira's zip raises no deep-scan or dangerous-file prompt that the hidden bubble would swallow. If one appears, the job waits and the button stays hidden until the file is handled in `chrome://downloads`; record it for pm (system.md §15, open spec gap 1).
@@ -53,7 +53,7 @@ These need a real pixiv session, which no agent has. Run `npm run qa:live` (head
   - an R-18 work with R-18 display on;
   - the same R-18 work with R-18 display off.
 
-  Record the three results and work IDs for tl and pm (system.md §15 item 9). They decide whether the stale-page gap can close: it can only if `urls.original` is a URL for every work the logged-in viewer can see, and `null` only with R-18 display off.
+  Record the three results and work IDs for tl and pm (system.md §8.5, miss 2). They decide whether the stale-page gap can close: it can only if `urls.original` is a URL for every work the logged-in viewer can see, and `null` only with R-18 display off.
 
 ## 4. Store listing (en, ja, zh_CN, zh_TW)
 

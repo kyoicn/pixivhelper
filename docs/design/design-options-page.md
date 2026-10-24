@@ -1,6 +1,6 @@
 # Options Page
 
-> Last updated: 2026-10-23 16:31:01 (UTC-7)
+> Last updated: 2026-10-23 22:29:54 (UTC-7)
 > Serves: prd-000 — CUJ-3 (all steps and edge cases), CUJ-2 step 1 / CUJ-3 step 7 (hint reactivity, via storage), R-001 (Report-an-issue URL), R-002 (product name), R-004 S2 (contrast), S5 (unclosed `{`), S15 ("Still using:" on one line)
 
 ## Overview
@@ -258,7 +258,11 @@ There is no confirmation (PRD).
 - Chips are `<button type="button">`. The segmented control is `role="group"` with `aria-pressed` buttons. The switch is `role="switch"` + `aria-checked`. Reset is a `<button>`; Report is an `<a>`.
 - The DOM order equals the PRD tab order: field → 4 chips → MP4 → WebM → ZIP only → switch → Reset to defaults → Report an issue.
 - Every control shows a 2 px `#0096FA` `:focus-visible` ring. Help text is linked via `aria-describedby` on each section's primary control.
-- Contrast: the Saved, validation and "Still using" colours are the PRD's AA values (CUJ-3 steps 3 and 5, R-004 S2; [system.md §11.5](system.md)). Selected-segment white on `#0096FA` (3.1:1) is the pixiv-blue pair the index accepts. The chip hover (`#0096FA` on `#f0f8ff`, 2.90:1) shows only under the pointer and leaves the token text unchanged, the index's hover-tint case. One PRD value is below 4.5:1 **at rest** and is not covered by either acceptance: the footer links, `#0096FA` 13 px on the page's `#f6f7f9` (2.91:1, CUJ-3 step 10). The page ships the PRD value; the conflict with the index rule is with pm ([system.md §15](system.md) gap 2).
+- Contrast: the Saved, validation and "Still using" colours are the PRD's AA values (CUJ-3 steps 3 and 5, R-004 S2; [system.md §11.5](system.md)). The chip hover (`#0096FA` on `#f0f8ff`, 2.90:1) shows only under the pointer and leaves the token text unchanged, which is the index's hover-tint case. Two PRD values are below 4.5:1 **at rest** and are covered by neither acceptance, because the index accepts pixiv blue with white only for the injected button's fill and Saved text:
+  - the selected Ugoira segment, white semibold 14 px on `#0096FA`, 3.11:1 (CUJ-3 step 7);
+  - the footer links, `#0096FA` 13 px on the page's `#f6f7f9`, 2.91:1 (CUJ-3 step 10).
+
+  The page ships the PRD values. The conflict with the index rule is with pm, pending `/spec-sync` ([system.md §15](system.md) gap 2).
 
 ## Data Flow
 
@@ -313,5 +317,8 @@ sequenceDiagram
 ## Open Questions & Risks
 
 - **No PRD copy for a total storage failure** (both areas reject). The design shows no `Saved` and keeps the value. pm may want a message. Low priority.
-- **Footer link contrast** (system.md §15 gap 2): PRD CUJ-3 step 10's `#0096FA` links on `#f6f7f9` measure 2.91:1, while the index requires 4.5:1 at rest for every pair outside the pixiv-blue acceptance and says CUJ-3's colours pass. Kept as specified until pm decides; a darker link blue is a one-token change in `options.css`.
+- **Footer link and selected-segment contrast** (system.md §15 gap 2).
+  - PRD CUJ-3 step 10's `#0096FA` links on `#f6f7f9` measure 2.91:1. Step 7's selected segment, white on `#0096FA`, measures 3.11:1.
+  - The index requires 4.5:1 at rest for every pair outside the button's pixiv-blue acceptance, and it says CUJ-3's colours pass.
+  - Both are kept as specified until pm's `/spec-sync`. pm recommends `#0b6fc2` for the light-mode links and for the selected segment in both modes. In `options.css` that is one text-accent variable used by `.link` and `.seg button[aria-pressed='true']`.
 - **Drop placement is verified once by QA.** `bindSingleLine` reads the drop point from the selection, which Blink sets before `insertFromDrop` (Line breaks in inserted text, step 3). Synthesizing a native text drag in Playwright is fiddly, so the unit tests cover the handler and QA drags multi-line text into the field once per run. If the text ever lands at the old caret instead, leave `insertFromDrop` to the browser: the PRD names paste only.
