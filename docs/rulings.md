@@ -45,3 +45,10 @@ Chrome re-enables its download UI on `setUiOptions({ enabled: true })` but shows
 
 **Scope**: prd-000
 **Ruling**: Option B — the extension re-enables Chrome's download UI just before the LAST file of the last running job is handed to Chrome, so each job ends with exactly one fly-to-toolbar animation (the "done" signal) and the bubble lists every file of the job. CUJ-1 AC 14 changes from "no animation" to "at most one animation, at the end"; jobs that end without a final hand-off (cancel, failure, needs-login, unavailable) still restore the UI at finalize. (2026-10-24)
+
+### R-007 · Apply pm's prd-000 spec-sync batch (6 items)?
+
+Six prd-000 lines overstated, contradicted each other, or left a case open after iterations 3 and 4 (counter wording, the 200-page edge, the mid-job 403 wording, settings-page contrast, the ugoira-zip prompt, Retry after a `metadata.json` failure). Details: docs/pm-review.md "Spec-sync batch (R-007)".
+
+**Scope**: prd-000
+**Ruling**: Option A — approve all six as pm recommended. Items 1, 2, 3 and 5 are wording that makes the PRD match what ships; item 4 raises the settings-page links and the selected segment to the PRD's own 4.5:1 contrast rule; item 6 makes `Saved` after a Retry guarantee `metadata.json` is on disk. pm amends the PRD and mocks; items 4 and 6 become code tasks. Owner's words: "go with A". (2026-10-24)
