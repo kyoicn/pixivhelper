@@ -2,53 +2,66 @@
 // Written by the QA gate (iteration 1); failures here are findings, not test problems.
 //
 // AC → test (docs/prd/prd-000-mvp.md, CUJ-5 "Acceptance Criteria"):
-// | AC                                                                          | Test                    |
-// | --------------------------------------------------------------------------- | ----------------------- |
-// | 1  Logged out, xRestrict ≥ 1: `Log in to download` (white, #c4c7c5 border,  | 'needs login'           |
-// |    #3c4043 text, no icon) before any click, tooltip; no other text         |                         |
-// | 2  Click → accounts.pixiv.net/login?return_to=<encoded URL>; after login    | 'login round-trip';     |
-// |    `Download · 68P`                                                         | 'logged in elsewhere'   |
-// | 3  Logged out, all-ages: normal idle `Download · NP`, download succeeds     | 'logged out all-ages'   |
-// | 4  Logged out, all-ages behind pixiv's sensitive-content wall (R-003):      | 'needs login (R-003)'   |
-// |    `Log in to download` before any click, same styling and tooltip, name    | (3 tests: walled work,  |
-// |    `Log in to pixiv to download this work.`; login → `Download · 4P`        | pending click, logged   |
-// |                                                                             | in)                     |
-// | 5  Some pages fail after 4 attempts: `Retry · 3 failed`, red outline,       | 'partial'               |
-// |    warning triangle, same width, exact tooltip                              |                         |
-// | 6  `Retry · 3 failed` fetches only the 3 pages into the same folder, ends   | 'partial'               |
-// |    `Saved · 12P`                                                            |                         |
-// | 7  Network disconnected → `Retry` + "No connection…"                        | 'offline' (2 tests)     |
-// | 8  Logged in, R-18 display off → `Retry` + "pixiv refused this work…"       | 'refused' (2 tests)     |
-// | 9  Deleted after page load → gray `Unavailable`, click does nothing         | 'unavailable' (2 tests) |
-// | 10 Encode fails: zip + frames.json, no video, `Retry · MP4` + exact tooltip;| 'encode failure' (2     |
-// |    clicking it produces only the video                                      | tests)                  |
-// | 11 403 on originals mid-job: saved files stay, back to `Log in to download` | '403 mid-job'           |
-// | 12 No error state shows a badge unless another job is in flight             | 'badge in error states';|
-// |                                                                             | also every error test   |
-// | 13 Cancelling never produces red styling or any message                     | 'cancel a retry'        |
-// | 14 Action row removed before navigation → floating pill at the artwork's    | 'floating fallback'     |
-// |    bottom-right within 3 s; downloads normally                              | (2 tests)               |
-// | 15 403 never retried; 429/500/502/503/504 and network errors retried up to  | 'retry policy';         |
-// |    4 attempts                                                               | '403 mid-job'; 'partial'|
-// | Edge: 5xx with 0 pages saved → `Retry` + "pixiv isn't responding…"          | 'server failure'        |
-// | Edge: exactly 1 failure → `Retry · 1 failed` + tip_partial_one; reload      | 'partial one'           |
-// |       clears the failure memory and a click re-runs the whole job           |                         |
-// | Edge: retry after the pattern changed still writes into the original folder | 'partial'               |
-// | Edge: logged out in another tab after load → `Retry` + refused              | 'refused … logged out'  |
-// | Edge: 429 with Retry-After: 120 waits min(RA, 30) s (×0.01 in dist-e2e)     | 'retry policy'          |
-// | Edge: floating fallback on pixiv's dark theme: #5fb9fb focus ring           | 'floating fallback'     |
+// | AC                                                                          | Test                     |
+// | --------------------------------------------------------------------------- | ------------------------ |
+// | 1  Logged out, xRestrict ≥ 1: `Log in to download` (white, #c4c7c5 border,  | 'needs login'            |
+// |    #3c4043 text, no icon) before any click, tooltip; no other text          |                          |
+// | 2  Click → accounts.pixiv.net/login?return_to=<encoded URL>; after login    | 'login round-trip';      |
+// |    `Download · 68P`                                                         | 'logged in elsewhere'    |
+// | 3  Logged out, all-ages: normal idle `Download · NP`, download succeeds     | 'logged out all-ages'    |
+// | 4  Logged out, all-ages behind pixiv's sensitive-content wall (R-003):      | 'needs login (R-003)'    |
+// |    `Log in to download` before any click, same styling and tooltip, name    | (3 tests: walled work,   |
+// |    `Log in to pixiv to download this work.`; login → `Download · 4P`        | pending click, logged    |
+// |                                                                             | in)                      |
+// | 5  Some pages fail after 4 attempts: `Retry · 3 failed`, red outline,       | 'partial'                |
+// |    warning triangle, same width, exact tooltip                              |                          |
+// | 6  `Retry · 3 failed` fetches only the 3 pages into the same folder, ends   | 'partial'                |
+// |    `Saved · 12P`                                                            |                          |
+// | 7  Network disconnected → `Retry` + "No connection…"                        | 'offline'; 'sustained    |
+// |                                                                             | outage' (last click)     |
+// | 8  Sustained outage (every image request 500/503): every click → `Retry` +  | 'sustained outage'       |
+// |    "pixiv isn't responding…", including the 7th consecutive Retry; none     |                          |
+// |    reads "No connection…" (R-004 S3)                                        |                          |
+// | 9  Logged in, R-18 display off → `Retry` + "pixiv refused this work…"       | 'refused' (2 tests)      |
+// | 10 Deleted after page load → gray `Unavailable`, click does nothing         | 'unavailable' (2 tests)  |
+// | 11 Encode fails: zip + frames.json, no video, `Retry · MP4` + exact         | 'encode failure' (2      |
+// |    tooltip; clicking it produces only the video                             | tests)                   |
+// | 12 403 on originals mid-job: saved files stay, back to `Log in to download` | '403 mid-job'            |
+// | 13 No error state shows a badge unless another job is in flight             | 'badge in error states'; |
+// |                                                                             | also every error test    |
+// | 14 Cancelling never produces red styling or any message                     | 'cancel a retry'         |
+// | 15 Action row removed before navigation → floating pill at the artwork's    | 'floating fallback'      |
+// |    bottom-right within 3 s of the page loading or of the in-app navigation, | (2 tests)                |
+// |    measured to the pill appearing (R-004 S4); downloads normally            |                          |
+// | 16 403 never retried; 429/500/502/503/504 and network errors retried up to  | 'retry policy';          |
+// |    4 attempts                                                               | '403 mid-job'; 'partial' |
+// | Edge: 5xx with 0 pages saved → `Retry` + "pixiv isn't responding…"          | 'server failure'         |
+// | Edge (step 6, accepted cost): the API answered, then every original drops   | 'server failure: every   |
+// |       its connection → `Retry` + "pixiv isn't responding…"                  | original drops'          |
+// | Edge: exactly 1 failure → `Retry · 1 failed` + tip_partial_one; reload      | 'partial one'            |
+// |       clears the failure memory and a click re-runs the whole job           |                          |
+// | Edge: retry after the pattern changed still writes into the original folder | 'partial'                |
+// | Edge: logged out in another tab after load → `Retry` + refused              | 'refused … logged out'   |
+// | Edge: 429 with Retry-After: 120 waits min(RA, 30) s (×0.01 in dist-e2e)     | 'retry policy'           |
+// | Edge: floating fallback on pixiv's dark theme: #5fb9fb focus ring           | 'floating fallback'      |
+//
+// "No connection" is judged per click (system.md §10 row 8, D13, R-004 S3): only when no request of
+// the click's job got an HTTP response. A disconnected network, or a pixiv that answers nothing, is
+// simulated by dropping every pixiv request (`reset`); once the job's API calls have answered,
+// failed originals read "pixiv isn't responding".
 //
 // Chromium throttles an extension's requests to a URL after repeated 500/503 answers ("Request
 // throttled", https://dev.chromium.org/throttling). dist-e2e scales the backoff ×0.01 (15/30/60 ms),
-// so a 4th 500/503 attempt in quick succession never reaches the server and fails as a network
-// error. Exhausted-retry scenarios therefore use 502/504, and 500/503 sequences fail at most twice;
-// 4 attempts on 500/503 under the real 1.5/3/6 s backoff were verified with the dev build (QA report).
+// so a later 500/503 attempt in quick succession may never reach the server and fails locally as a
+// network error. Tests that count 4 server attempts therefore use 502/504, and their 500/503
+// sequences fail at most twice. 'sustained outage' uses 503 on purpose: whatever the throttling
+// refuses, the job's API calls answered, so every click reads "pixiv isn't responding". It records
+// the server hits per click as an annotation instead of asserting them. 4 attempts on 500/503 under
+// the real 1.5/3/6 s backoff, and a stopped server, are QA's dev-build checks (diagOutage.ts).
 //
 // Not covered here: "only metadata.json failed" (needs a chrome.downloads failure on one file; L1/L2
-// cover the classifier row and retryMetadata), R-18G (xRestrict 2; no fixture, same `≥ 1` rule),
-// and "pixiv isn't responding" after Chromium throttled the later attempts of a sustained 503 (the
-// ×0.01 backoff cannot reproduce the throttling deterministically; retry.test.ts and
-// outcome.test.ts pin `lastStatus` → server, and QA replays it against the dev build).
+// cover the classifier row and retryMetadata). R-18G (xRestrict 2) is in the QA gate additions
+// (iteration 2) below.
 
 import type { Page } from '@playwright/test';
 import { CAPS_KEY_PREFIX } from '../src/shared/constants';
@@ -527,7 +540,9 @@ test.describe('CUJ-5: recover when a download can’t start or breaks', { tag: '
     expect(paths).toContain(`${FOLDER}/metadata (1).json`);
   });
 
-  test('offline: every original drops its connection → Retry with "No connection"; Retry re-runs the whole job', async ({
+  // PRD CUJ-5 step 6, accepted cost: the job's API calls answered, so this reads as a server
+  // failure although no original got a response (R-004 S3).
+  test('server failure: every original drops its connection while the API answered → Retry with "pixiv isn’t responding"; Retry re-runs the whole job', async ({
     harness,
     server,
   }) => {
@@ -538,9 +553,9 @@ test.describe('CUJ-5: recover when a download can’t start or breaks', { tag: '
     await clickButton(page);
     const view = await settle(page, 'Retry', 30_000);
     expectRedOutline(await restingView(page));
-    expect(view.title).toBe(TIP_OFFLINE);
-    expect(view.ariaLabel).toBe(ariaFailed(TIP_OFFLINE));
-    expect(view.live).toBe(TIP_OFFLINE);
+    expect(view.title).toBe(TIP_SERVER);
+    expect(view.ariaLabel).toBe(ariaFailed(TIP_SERVER));
+    expect(view.live).toBe(TIP_SERVER);
     await expectBadge(harness, '', IDLE_TITLE);
     for (const p of ALL_PAGES) {
       expect(server.requests(pagesOf(EXAMPLE, [p])), `page ${p}`).toHaveLength(4);
@@ -591,6 +606,45 @@ test.describe('CUJ-5: recover when a download can’t start or breaks', { tag: '
     for (const p of ALL_PAGES) {
       expect(server.requests(pagesOf(EXAMPLE, [p])), `page ${p}`).toHaveLength(4);
     }
+  });
+
+  test('sustained outage: every original answers 503; 7 consecutive clicks each end Retry with "pixiv isn’t responding", never "No connection"', async ({
+    harness,
+    server,
+  }) => {
+    // Chromium refuses some later attempts locally; which ones is its call, so the server hits per
+    // click are recorded, not asserted.
+    harness.allowConsoleErrors(...FAULT_LOGS, /Request throttled/);
+    const original = originalUrl(SINGLE, 0);
+    const isOriginal = (r: LoggedRequest) => r.url.startsWith(original);
+    const isJobPages = (r: LoggedRequest) => r.path === `/ajax/illust/${SINGLE.id}/pages`;
+    server.fault({ match: original, responses: 503 });
+    const page = await openArtwork(harness, SINGLE.id);
+    await waitForText(page, 'Download');
+    const hits: number[] = [];
+    for (let click = 1; click <= 7; click++) {
+      const since = Date.now();
+      await clickButton(page);
+      const view = await settle(page, 'Retry', 30_000);
+      expect(requestsAfter(server, isJobPages, since), `click ${click} ran a job`).toHaveLength(1);
+      expect(view.title, `click ${click}`).toBe(TIP_SERVER);
+      expect(view.ariaLabel, `click ${click}`).toBe(ariaFailed(TIP_SERVER));
+      hits.push(requestsAfter(server, isOriginal, since).length);
+    }
+    test.info().annotations.push({ type: 'server hits per click', description: hits.join(', ') });
+    expectRedOutline(await restingView(page));
+    await expectBadge(harness, '', IDLE_TITLE);
+
+    // pixiv now answers nothing at all: this click's job got no response, so "No connection".
+    server.clearFaults();
+    server.fault({
+      match: /^https:\/\/(www\.pixiv\.net\/ajax|i\.pximg\.net)\//,
+      responses: { reset: true },
+    });
+    await clickButton(page);
+    const offline = await settle(page, 'Retry', 30_000);
+    expect(offline.title).toBe(TIP_OFFLINE);
+    expect(offline.ariaLabel).toBe(ariaFailed(TIP_OFFLINE));
   });
 
   test('refused: logged in with R-18 display off → Retry with "pixiv refused this work"', async ({
@@ -1059,7 +1113,7 @@ test.describe('CUJ-5: recover when a download can’t start or breaks', { tag: '
 // |      incl. a click before the metadata: no ugoira_meta, no zip, no file      | ugoira'                 |
 // | AC 4 + CUJ-1 step 7: SPA navigation into and out of a walled work             | 'needs login: SPA'      |
 // | Step 6 detection: "pixiv server failure" when a 429/5xx answer precedes the   | 'server failure: an     |
-// |      final dropped connections (system.md §10 row 8, `lastStatus`)            | answer, then drops'     |
+// |      final dropped connections (system.md §10 row 8, `answered`)              | answer, then drops'     |
 test.describe('CUJ-5: QA gate additions (iteration 2)', { tag: '@cuj5' }, () => {
   test('needs login: R-18G (xRestrict 2) logged out → Log in to download before any click; nothing fetched but the metadata', async ({
     harness,
