@@ -347,7 +347,7 @@ Mocks for this CUJ:
 - After one click on the example, `Downloads/pixiv/みずき-135882741/` contains `metadata.json` and exactly 12 originals named `135882741_p0` … `135882741_p11` with their original extensions. Each file's byte size equals the `Content-Length` served by `i.pximg.net` for that page.
 - `metadata.json` contains exactly the 12 keys of 4.3 in order. Non-ASCII text is written literally, and line breaks from pixiv's description are kept as `\n`.
 - At no moment does `chrome://downloads` show more than 5 of this artwork's files in progress at once.
-- During the job the label reads `N / 12` with N rising as files complete. It reaches `12 / 12` only after every original has completed, and `metadata.json` never changes N.
+- During the job the label reads `N / 12` with N rising as files complete, up to `11 / 12`; the last original is handed to Chrome only after every other file has finished, so its landing turns the button to `Saved` directly and `12 / 12` is never shown (Spec-sync: R-006 rev. 3). `metadata.json` never changes N.
 - Hovering the busy button (after the pointer has left it once) shows `Cancel` on `#3c4043`. Clicking it stops the job: no further files of this artwork start in `chrome://downloads`, completed files remain on disk, and the button returns to `Download · 12P` with no error styling.
 - On completion the button shows `Saved · 12P` (white fill, blue 1.5 px border, checkmark), and the tooltip reads `Saved to Downloads/pixiv/みずき-135882741`.
 - Navigating within pixiv to another artwork and back still shows `Saved · 12P`. After a reload with no job running, the button shows `Download · 12P`.
@@ -660,7 +660,7 @@ Downloads fail for reasons the user can fix (not logged in, connection dropped, 
 
 5. **User action**: User clicks `Retry · 3 failed`.
    - **System response**: Only the 3 failed pages are fetched again, into the **same folder** as the original job (not re-resolved from current settings), with the full retry policy. `metadata.json` is not written again.
-   - **User sees**: The busy state continues from the earlier count, `9 / 12` → `12 / 12` (assumption — confirm), and the badge shows `3`. On success the button shows `Saved · 12P`. If some still fail, `Retry · N failed` returns with updated numbers.
+   - **User sees**: The busy state continues from the earlier count, `9 / 12` → `11 / 12`, and the badge shows `3`. On success the last retried page turns the button to `Saved · 12P` directly, so `12 / 12` is never shown (Spec-sync: R-006 rev. 3). If some still fail, `Retry · N failed` returns with updated numbers.
 
 6. **User action**: User clicks Download while nothing can be saved.
    - **System response / User sees**: The button shows the red error style with the label `Retry` (no hint). The tooltip names the cause:

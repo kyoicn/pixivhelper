@@ -410,6 +410,8 @@ export class FakeDownloads {
   #nextId = 1;
   #downloadErrors: string[] = [];
   #uiErrors: string[] = [];
+  /** Files that finished or were interrupted while Chrome's download UI was on (R-006: only the busy period's last). */
+  settledWhileShown: string[] = [];
   #deferNaming = false;
   /** Targets of items created while naming was deferred, by id, until name() sets them. */
   #reserved = new Map<number, string>();
@@ -542,6 +544,7 @@ export class FakeDownloads {
     const item = this.pending(id);
     if (this.#reserved.has(item.id)) this.name(item.id);
     item.state = 'complete';
+    if (this.uiEnabled) this.settledWhileShown.push(item.filename);
     item.endTime = new Date().toISOString();
     this.onChanged.dispatch({
       id: item.id,
@@ -559,6 +562,7 @@ export class FakeDownloads {
     const item = this.pending(id);
     if (this.#reserved.has(item.id)) this.name(item.id);
     item.state = 'interrupted';
+    if (this.uiEnabled) this.settledWhileShown.push(item.filename);
     item.error = reason;
     item.exists = false;
     this.onChanged.dispatch({
@@ -583,6 +587,7 @@ export class FakeDownloads {
     this.#reserved.clear();
     this.uiEnabled = true;
     this.callLog.length = 0;
+    this.settledWhileShown.length = 0;
     this.onChanged.clear();
   }
 

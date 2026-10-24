@@ -1,13 +1,13 @@
 // The engine's three download-UI call sites (design-download-engine.md "Chrome's download UI
 // (download-ui.ts, R-005, R-006)"): every hand-off but the busy period's last waits for the hide,
-// the last one waits for the restore (after Chrome has created and named every earlier file), and
+// the last one waits for the restore (after every earlier file has finished), and
 // both re-check the job; finalize restores once no job is left, and restoreDownloadUiIfIdle()
 // (boot) restores only with no job.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DownloadUi } from '../../../src/background/download-ui';
 import { createEngine, type Engine } from '../../../src/background/engine';
-import { HANDOFF_TARGET_WAIT_MS } from '../../../src/shared/constants';
+import { HANDOFF_SETTLE_WAIT_MS } from '../../../src/shared/constants';
 import type { FileTask, JobRecord } from '../../../src/shared/job';
 import {
   DOWNLOADS_DIR,
@@ -300,7 +300,7 @@ describe('engine: the last hand-off restores the UI first (R-006)', () => {
     expect([stub.events, fake.api.downloads.search.mock.calls]).toEqual([['restore'], []]);
   });
 
-  it('handOff: the last two files landing together make one restore, from the second, after Chrome created and named the first', async () => {
+  it('handOff: the last two files landing together make one restore, from the second, after the first finished', async () => {
     const stub = stubUi();
     seedJob('job-1', [fetching(0), fetching(1)]);
     const engine = await hydrated(stub.ui);
@@ -313,10 +313,10 @@ describe('engine: the last hand-off restores the UI first (R-006)', () => {
     land(engine, 0);
     land(engine, 1);
     await flush();
-    const beforeNaming = [...atRestore];
-    fake.downloads.name(1);
+    const beforeFinish = [...atRestore];
+    fake.downloads.complete(1);
     await flush();
-    expect([beforeNaming, atRestore, stub.ui.hideForHandOff.mock.calls.length]).toEqual([
+    expect([beforeFinish, atRestore, stub.ui.hideForHandOff.mock.calls.length]).toEqual([
       [],
       [{ downloads: [p(0)], first: `${DOWNLOADS_DIR}/${p(0)}` }],
       1,
@@ -330,7 +330,7 @@ describe('engine: the last hand-off restores the UI first (R-006)', () => {
     land(engine, 0);
     land(engine, 1);
     await flush();
-    fake.downloads.name(1);
+    fake.downloads.complete(1);
     await flush();
     expect(fake.downloads.callLog).toEqual([
       { op: 'ui', enabled: false },
@@ -340,17 +340,41 @@ describe('engine: the last hand-off restores the UI first (R-006)', () => {
     ]);
   });
 
-  it('handOff: an earlier file Chrome has not named holds the restore back', async () => {
+  it('handOff: the last two landing while the first hand-off still waits for its hide make one restore, from the second', async () => {
+    const stub = stubUi();
+    stub.holdHide();
+    seedJob('job-1', [fetching(0), fetching(1)]);
+    const engine = await hydrated(stub.ui);
+    land(engine, 0);
+    await flush();
+    land(engine, 1);
+    await flush();
+    stub.releaseHide();
+    await flush();
+    // The second hand-off decided "last" while the first still waited for its hide (the claim is
+    // synchronous); it then waits for the first file to finish before restoring.
+    fake.downloads.complete(1);
+    await flush();
+    expect([stub.events, fake.downloads.callLog]).toEqual([
+      ['hide', 'restore'],
+      [
+        { op: 'download', filename: p(0) },
+        { op: 'download', filename: p(1) },
+      ],
+    ]);
+  });
+
+  it('handOff: an earlier file still in progress holds the restore back', async () => {
     const stub = stubUi();
     const inChrome = await unnamedInChrome(0);
     seedJob('job-1', [inChrome, fetching(1)]);
     const engine = await hydrated(stub.ui);
     land(engine, 1);
-    await vi.advanceTimersByTimeAsync(HANDOFF_TARGET_WAIT_MS - 2);
+    await vi.advanceTimersByTimeAsync(HANDOFF_SETTLE_WAIT_MS - 2);
     expect([stub.events, downloadsOf()]).toEqual([[], [p(0)]]);
   });
 
-  it('handOff: the earlier file’s filename delta lets the restore go ahead', async () => {
+  it('handOff: the earlier file’s filename delta alone does not let the restore go ahead (it may still finish after the enable)', async () => {
     const stub = stubUi();
     const inChrome = await unnamedInChrome(0);
     seedJob('job-1', [inChrome, fetching(1)]);
@@ -359,7 +383,7 @@ describe('engine: the last hand-off restores the UI first (R-006)', () => {
     await flush();
     fake.downloads.name(1);
     await flush();
-    expect([stub.events, downloadsOf()]).toEqual([['restore'], [p(0), p(1)]]);
+    expect([stub.events, downloadsOf()]).toEqual([[], [p(0)]]);
   });
 
   it('handOff: the earlier file leaving in_progress unnamed lets the restore go ahead', async () => {
@@ -377,13 +401,13 @@ describe('engine: the last hand-off restores the UI first (R-006)', () => {
     expect([stub.events, downloadsOf()]).toEqual([['restore'], [p(0), p(1)]]);
   });
 
-  it(`handOff: without a name the restore goes ahead after ${HANDOFF_TARGET_WAIT_MS} ms`, async () => {
+  it(`handOff: a file still in progress holds the restore back for at most ${HANDOFF_SETTLE_WAIT_MS} ms`, async () => {
     const stub = stubUi();
     const inChrome = await unnamedInChrome(0);
     seedJob('job-1', [inChrome, fetching(1)]);
     const engine = await hydrated(stub.ui);
     land(engine, 1);
-    await vi.advanceTimersByTimeAsync(HANDOFF_TARGET_WAIT_MS + 1);
+    await vi.advanceTimersByTimeAsync(HANDOFF_SETTLE_WAIT_MS + 1);
     expect([stub.events, downloadsOf()]).toEqual([['restore'], [p(0), p(1)]]);
   });
 
@@ -398,7 +422,7 @@ describe('engine: the last hand-off restores the UI first (R-006)', () => {
     expect([stub.events, downloadsOf()]).toEqual([['restore'], [p(0), p(1)]]);
   });
 
-  it('handOff: once Chrome named the file, the wait leaves no timer behind', async () => {
+  it('handOff: once the earlier file finished, the wait leaves no timer behind', async () => {
     const stub = stubUi();
     const inChrome = await unnamedInChrome(0);
     seedJob('job-1', [inChrome, fetching(1)]);
@@ -406,8 +430,10 @@ describe('engine: the last hand-off restores the UI first (R-006)', () => {
     land(engine, 1);
     await flush();
     const waiting = vi.getTimerCount();
-    fake.downloads.name(1);
-    await flush();
+    fake.downloads.complete(1);
+    // Past the badge's 50 ms coalesce timer that the completed file schedules, far below the 2 s cap:
+    // a leaked cap timer would still be pending here.
+    await vi.advanceTimersByTimeAsync(60);
     expect([waiting, vi.getTimerCount(), stub.events]).toEqual([1, 0, ['restore']]);
   });
 
@@ -422,7 +448,7 @@ describe('engine: the last hand-off restores the UI first (R-006)', () => {
       { mode: 'full', artworkId: '136120877', expectedFiles: 8, loggedIn: null },
       TAB_ID,
     );
-    fake.downloads.name(1);
+    fake.downloads.complete(1);
     await flush();
     expect([stub.events, downloadsOf()]).toEqual([['hide'], [p(0), p(1)]]);
   });

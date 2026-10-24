@@ -5,7 +5,7 @@
 // end when it has no final hand-off.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { HANDOFF_TARGET_WAIT_MS } from '../../src/shared/constants';
+import { HANDOFF_SETTLE_WAIT_MS } from '../../src/shared/constants';
 import type { FileTask, JobRecord } from '../../src/shared/job';
 import type { JobStartResponse } from '../../src/shared/messages';
 import { UI_DISABLED_ERROR, UI_PERMISSION_ERROR, type ChromeFake } from '../fakes/chrome';
@@ -243,7 +243,10 @@ describe('sw: a job that ends with a final hand-off turns the UI on right before
     const tab = artworkTab(ID, 12);
     await start(tab, ID, 12);
     await driveToEnd(tab);
-    expect([tab.ended()?.outcome?.type, names(afterBoot)]).toEqual([
+    // Only the last file may finish while the UI is on: an earlier file finishing after the enable
+    // would open Chrome's bubble before the last file exists (QA iteration 3, retry 1).
+    const settledWhileShown = fake.downloads.settledWhileShown.map((f) => f.split('/').pop());
+    expect([tab.ended()?.outcome?.type, names(afterBoot), settledWhileShown]).toEqual([
       'saved',
       [
         'ui:false',
@@ -252,6 +255,7 @@ describe('sw: a job that ends with a final hand-off turns the UI on right before
         'ui:true',
         `${ID}_p11.jpg`,
       ],
+      [`${ID}_p11.jpg`],
     ]);
   });
 
@@ -529,7 +533,7 @@ describe('sw: two jobs share one busy period (CUJ-4, R-006)', () => {
   });
 });
 
-describe('sw: the last hand-off waits for Chrome to name the files before it (R-006)', () => {
+describe('sw: the last hand-off waits for the files before it to finish (R-006)', () => {
   /** A 3-page job whose metadata.json and p0 are saved, then p1 and p2 land together. */
   async function lastTwoTogether() {
     const { offscreen, afterBoot } = await bootIdle({ auto: false });
@@ -551,20 +555,23 @@ describe('sw: the last hand-off waits for Chrome to name the files before it (R-
     return { tab, afterBoot, p1 };
   }
 
-  it('sw: deferred naming: no ui:true until the earlier of the last two is named', async () => {
+  it('sw: deferred naming: no ui:true until the earlier of the last two has finished (being named is not enough)', async () => {
     const { afterBoot, p1 } = await lastTwoTogether();
     const beforeNaming = names(afterBoot);
     fake.downloads.name(p1);
     await advance(10);
-    expect([beforeNaming, names(afterBoot)]).toEqual([
-      ['ui:false', 'metadata.json', `${ID}_p0.jpg`, `${ID}_p1.jpg`],
-      ['ui:false', 'metadata.json', `${ID}_p0.jpg`, `${ID}_p1.jpg`, 'ui:true', `${ID}_p2.jpg`],
-    ]);
+    const afterNaming = names(afterBoot);
+    fake.downloads.complete(p1);
+    await advance(10);
+    const partial = ['ui:false', 'metadata.json', `${ID}_p0.jpg`, `${ID}_p1.jpg`];
+    expect([beforeNaming, afterNaming, names(afterBoot), fake.downloads.settledWhileShown]).toEqual(
+      [partial, partial, [...partial, 'ui:true', `${ID}_p2.jpg`], []],
+    );
   });
 
-  it(`sw: deferred naming: without a name the restore goes ahead after ${HANDOFF_TARGET_WAIT_MS} ms`, async () => {
+  it(`sw: a file still in progress holds the restore back for at most ${HANDOFF_SETTLE_WAIT_MS} ms`, async () => {
     const { afterBoot } = await lastTwoTogether();
-    await advance(HANDOFF_TARGET_WAIT_MS);
+    await advance(HANDOFF_SETTLE_WAIT_MS);
     expect(names(afterBoot)).toEqual([
       'ui:false',
       'metadata.json',

@@ -105,7 +105,7 @@ Every await point in `registry.mutate`, the resolver and the hand-off is enumera
 - `name(id)` sets the item's `filename` and fires `onChanged({ id, filename: { previous: '', current } })`.
 - `complete(id)` and `interrupt(id)` name an unnamed item first.
 
-With naming off, items are named at creation, as now, so every existing test is unchanged. The combined call log already records each applied `setUiOptions` and each `download()` call in order.
+With naming off, items are named at creation, as now, so every existing test is unchanged. The combined call log already records each applied `setUiOptions` and each `download()` call in order. The fake also records `settledWhileShown`: the files that finished or were interrupted while the UI was on. For a Saved job it must hold exactly the busy period's last file (R-006 rev. 3: an earlier file finishing after the enable opens the bubble before the last file exists).
 
 ### L3: E2E harness
 

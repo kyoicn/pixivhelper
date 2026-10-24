@@ -161,12 +161,18 @@ describe('sw: a 12-page job (CUJ-1)', () => {
     });
   });
 
-  it('sw: pushes k / 12 progress as pages land', async () => {
+  it('sw: pushes k / 12 progress as pages land, and the last page ends the job', async () => {
     const { tab } = await runJob();
     const done = tab.views
       .filter((v) => v.status === 'running' && v.progress?.kind === 'pages')
       .map((v) => (v.progress?.kind === 'pages' ? v.progress.done : -1));
-    expect(done.at(-1)).toBe(12);
+    // The last page is handed to Chrome only after every other file has finished (R-006 rev. 3),
+    // so its landing ends the job: the running views climb to 11 / 12 and Saved follows directly.
+    expect([
+      done.at(-1),
+      done.every((d, i) => i === 0 || d >= done[i - 1]!),
+      tab.ended()?.outcome,
+    ]).toEqual([11, true, { type: 'saved', folder: FOLDER, pages: 12 }]);
   });
 
   it('sw: ends saved with the resolved folder and page count', async () => {

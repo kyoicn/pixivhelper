@@ -4,7 +4,7 @@
 // reconcile() repairs whatever a restart interrupted.
 
 import {
-  HANDOFF_TARGET_WAIT_MS,
+  HANDOFF_SETTLE_WAIT_MS,
   MAX_PAGES_PER_WORK,
   OFFSCREEN_DOCUMENT_PATH,
 } from '../shared/constants';
@@ -203,30 +203,29 @@ export function createEngine(downloadUi: DownloadUi = createDownloadUi()): Engin
   }
 
   /**
-   * Resolves once Chrome has determined the target path of each download in `ids` (or the download
-   * left `in_progress`, or Chrome no longer knows it), or after HANDOFF_TARGET_WAIT_MS. Never
-   * rejects.
+   * Resolves once each download in `ids` has left `in_progress` (finished or interrupted), or
+   * Chrome no longer knows it, or after HANDOFF_SETTLE_WAIT_MS. Never rejects. Being named is not
+   * enough: a file that finishes after the enable opens Chrome's bubble before the last file
+   * exists, and the open bubble never adds it (QA iteration 3, retry 1).
    */
-  async function targetsKnown(ids: readonly number[]): Promise<void> {
+  async function othersSettled(ids: readonly number[]): Promise<void> {
     const pending = new Set(ids);
     if (pending.size === 0) return;
     let release!: () => void;
     const settled = new Promise<void>((resolve) => (release = resolve));
     const watch = (delta: chrome.downloads.DownloadDelta): void => {
-      if (delta.filename?.current || (delta.state && delta.state.current !== 'in_progress')) {
-        pending.delete(delta.id);
-      }
+      if (delta.state && delta.state.current !== 'in_progress') pending.delete(delta.id);
       if (pending.size === 0) release();
     };
     // Before the search, so no delta falls between the two.
     deltaWatchers.add(watch);
-    const timer = setTimeout(release, HANDOFF_TARGET_WAIT_MS);
+    const timer = setTimeout(release, HANDOFF_SETTLE_WAIT_MS);
     try {
       const found = await Promise.all(
         [...pending].map(async (id) => [id, (await chrome.downloads.search({ id }))[0]] as const),
       );
       for (const [id, item] of found) {
-        if (!item || item.filename !== '' || item.state !== 'in_progress') pending.delete(id);
+        if (!item || item.state !== 'in_progress') pending.delete(id);
       }
       if (pending.size > 0) await settled;
     } catch (error) {
@@ -256,9 +255,9 @@ export function createEngine(downloadUi: DownloadUi = createDownloadUi()): Engin
   /**
    * Hands a `saving` file's blob URL to Chrome and stores the download id. Every hand-off but the
    * busy period's last hides Chrome's download UI first (R-005), so not even the job's first file
-   * plays Chrome's animation. The last one turns the UI back on first instead (R-006), once Chrome
-   * has created and named every earlier file, so its own download brings the downloads button back
-   * with one animation.
+   * plays Chrome's animation. The last one turns the UI back on first instead (R-006), once every
+   * earlier file has finished, so its own download brings the downloads button back with one
+   * animation and the bubble it opens lists every file.
    */
   async function handOff(job: JobRecord, idx: number): Promise<void> {
     const file = fileAt(job, idx);
@@ -276,10 +275,10 @@ export function createEngine(downloadUi: DownloadUi = createDownloadUi()): Engin
     decided.set(key, new Promise<number | null>((resolve) => (markIssued = resolve)));
     try {
       if (last) {
-        // Chrome creates and names every earlier file while the UI is still off, so none of them
-        // animates after the enable.
+        // Every earlier file finishes while the UI is still off, so none of them animates after
+        // the enable or opens the bubble before the last file exists.
         const earlierIds = await Promise.all(earlier.values());
-        await targetsKnown([
+        await othersSettled([
           ...earlierIds.filter((id): id is number => id !== null),
           ...otherSavingIds(self),
         ]);

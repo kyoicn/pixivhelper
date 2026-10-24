@@ -393,7 +393,7 @@ A **busy period** is a span in which at least one job is running; overlapping jo
 - **Consequences:**
   - a file whose target path is determined while the UI is off never animates later;
   - a file handed to Chrome after the enable has been applied animates once and brings the button back.
-- **Naming and the UI decision happen in one pass.** Chrome sets a download's target path and then notifies its item observers synchronously: the toolbar's controller, which makes the animate-or-not decision, and the extension API's event router, which sends `downloads.onChanged` with the new `filename`. So once the SW has received a `filename` delta for an item, or the item has left `in_progress`, Chrome has already decided that item's UI. This comes from reading the source (`download_ui_controller.cc`, `downloads_api.cc`). The 500 ms cap in step 3 below bounds the wait if it ever does not hold; L5 confirms it.
+- **Naming and the UI decision happen in one pass.** Chrome sets a download's target path and then notifies its item observers synchronously: the toolbar's controller, which makes the animate-or-not decision, and the extension API's event router, which sends `downloads.onChanged` with the new `filename`. So once the SW has received a `filename` delta for an item, or the item has left `in_progress`, Chrome has already decided that item's UI. This comes from reading the source (`download_ui_controller.cc`, `downloads_api.cc`). Rev. 3 waits for the earlier files to finish (not merely to be named): a file finishing after the enable opens the bubble before the last file exists. The 2 s cap in step 3 below bounds the wait; L5 confirms it.
 
 ```ts
 // src/background/download-ui.ts
@@ -516,12 +516,12 @@ export function isLastHandOff(
    - This makes Chrome create every file decided before this one before the UI comes back, and yields their download ids.
    - It puts every earlier `download()` call before the enable, whatever the microtask interleaving. Without the wait the order is not guaranteed: the test builds' `await __testHook(...)` yields even with no handler installed, so a queued enable would overtake an earlier `download()`.
    - Only hand-offs decided earlier are awaited, so waits follow decision order and can never form a cycle.
-3. **Last only: wait until Chrome has named every other in-progress file** with `await targetsKnown(ids)`.
+3. **Last only: wait until every other in-progress file has finished** with `await othersSettled(ids)`.
    - `ids` = the non-null `earlierIds`, plus the `downloadId` of every other `saving` file of a running job.
-   - Chrome makes its animate-or-not decision for a download when it determines the target path, a few milliseconds after creating the item (platform facts). An earlier file named after the enable would animate too, breaking the PRD's "exactly one animation accompanies the last file" (CUJ-1 AC, R-006).
-   - `targetsKnown` (below) resolves once each item has reported a `filename` or left `in_progress`, capped at `HANDOFF_TARGET_WAIT_MS` = 500 ms (`src/shared/constants.ts`).
+   - Chrome makes its animate-or-not decision for a download when it determines the target path (platform facts), so being named protects against a second animation. It does not protect the bubble: a file that *finishes* after the enable makes Chrome open the bubble for it, before the last file exists, and the open bubble never adds the last file (QA iteration 3, retry 1: 5 of 8 bursts on the fake). So the wait is for the file to leave `in_progress`, not merely to be named. **Revision 3 (quick-fix after retry 1).**
+   - `othersSettled` (below) resolves once each item has left `in_progress` (finished or interrupted) or Chrome no longer knows it, capped at `HANDOFF_SETTLE_WAIT_MS` = 2000 ms (`src/shared/constants.ts`). The cap bounds a file held by a Save As dialog or a danger prompt; past it the restore goes ahead and that file may animate or open the bubble early.
    - Steps 2 and 3 cost nothing in the usual case. There every earlier file has already landed: no promise is pending, no file is `saving`, and `ids` is empty.
-   - When the last files land together, they add one `download()` round trip, one `downloads.search` per in-progress item, and Chrome's naming latency: a few milliseconds, never more than 500 ms.
+   - When the last files land together, they add one `download()` round trip, one `downloads.search` per in-progress item, and the time Chrome needs to write the earlier blobs to disk: milliseconds for pixiv-sized files, never more than 2 s.
 4. **Last only: re-check** `last = isLastHandOff(registry.list(), self, earlier)`. Use the same snapshot, immediately before the `restore()` call, with no `await` in between.
    - A job created during the waits is listed as resolving.
    - A hand-off decided during the waits is not in `earlier`.
@@ -543,24 +543,24 @@ const decided = new Map<string, Promise<number | null>>();
 const deltaWatchers = new Set<(delta: chrome.downloads.DownloadDelta) => void>();
 
 /**
- * Resolves once Chrome has determined the target path of each download in `ids` (or the download left
- * `in_progress`, or Chrome no longer knows it), or after HANDOFF_TARGET_WAIT_MS. Never rejects.
+ * Resolves once each download in `ids` has left `in_progress` (finished or interrupted), or Chrome no
+ * longer knows it, or after HANDOFF_SETTLE_WAIT_MS. Never rejects. Being named is not enough (rev. 3).
  */
-async function targetsKnown(ids: readonly number[]): Promise<void> {
+async function othersSettled(ids: readonly number[]): Promise<void> {
   const pending = new Set(ids);
   if (pending.size === 0) return;
   let release!: () => void;
   const settled = new Promise<void>((resolve) => (release = resolve));
   const watch = (delta: chrome.downloads.DownloadDelta): void => {
-    if (delta.filename?.current || (delta.state && delta.state.current !== 'in_progress')) pending.delete(delta.id);
+    if (delta.state && delta.state.current !== 'in_progress') pending.delete(delta.id);
     if (pending.size === 0) release();
   };
   deltaWatchers.add(watch);                        // before the search, so no delta falls between the two
-  const timer = setTimeout(release, HANDOFF_TARGET_WAIT_MS);
+  const timer = setTimeout(release, HANDOFF_SETTLE_WAIT_MS);
   try {
     const found = await Promise.all([...pending].map(async (id) => [id, (await chrome.downloads.search({ id }))[0]] as const));
     for (const [id, item] of found) {
-      if (!item || item.filename !== '' || item.state !== 'in_progress') pending.delete(id);
+      if (!item || item.state !== 'in_progress') pending.delete(id);
     }
     if (pending.size > 0) await settled;
   } catch (error) {
@@ -599,7 +599,7 @@ async function handOff(job: JobRecord, idx: number): Promise<void> {
   try {
     if (last) {
       const earlierIds = await Promise.all(earlier.values());                    // step 2
-      await targetsKnown([...earlierIds.filter((id): id is number => id !== null), ...otherSavingIds(self)]); // step 3
+      await othersSettled([...earlierIds.filter((id): id is number => id !== null), ...otherSavingIds(self)]); // step 3
       last = isLastHandOff(registry.list(), self, earlier);                       // step 4
     }
     if (last) {
@@ -636,7 +636,7 @@ flowchart TD
   B -- yes --> C["earlier = copy of decided<br/>last = isLastHandOff(registry.list(), self, earlier)<br/>decided.set(key, issued) — one synchronous step"]
   C --> D{last?}
   D -- yes --> W["await every promise in earlier<br/>(Chrome has created each earlier file)"]
-  W --> T["await targetsKnown(ids)<br/>(Chrome has named each in-progress file, ≤ 500 ms)"]
+  W --> T["await othersSettled(ids)<br/>(each in-progress file has finished, ≤ 2 s)"]
   T --> R{"isLastHandOff again,<br/>same snapshot?"}
   R -- yes --> E["await downloadUi.restore()<br/>hook await:handoff.restoreUi"]
   R -- "no: a job started meanwhile" --> F
@@ -965,12 +965,12 @@ sequenceDiagram
 
 **When Chrome's download UI comes back (R-006)**
 
-| Criteria | **Restore just before the busy period's last hand-off; finalize and boot as safety nets** | Restore at finalize only (iteration 3, R-005) | Finalize restore plus a marker download to wake the button | Hold the last file until every other file has landed, then restore and hand it off |
+| Criteria | **Restore just before the busy period's last hand-off, after the other in-progress files have finished (≤ 2 s); finalize and boot as safety nets** (rev. 3) | Restore at finalize only (iteration 3, R-005) | Finalize restore plus a marker download to wake the button | Hold the last file until every other file has landed, uncapped |
 |---|---|---|---|---|
 | Button back after a Saved job | Yes, through Chrome's own download of the last file | **No**: Chrome waits for its next download event (QA iteration 3) | Yes | Yes |
 | Bubble lists the job's files | Yes | Only after the next download | Yes, plus the marker | Yes |
 | Animations per job | One, at the end | None | One, for a file the user never asked for | Exactly one |
-| Side effects | None | None | An extra file in Downloads and in `chrome://downloads`, which no CUJ allows (CUJ-1/CUJ-2 list each folder's exact contents) | The last file waits for the others to land (milliseconds to seconds). A file held for a danger decision blocks it indefinitely. |
+| Side effects | The last file waits for the others to finish, at most 2 s; past the cap one file may animate or open the bubble early | None | An extra file in Downloads and in `chrome://downloads`, which no CUJ allows (CUJ-1/CUJ-2 list each folder's exact contents) | A file held for a danger decision blocks the job's end indefinitely |
 | Ends without a final hand-off | Finalize restores; the button returns with the next download (accepted by R-006) | Same | The marker wakes it | Same as the selected option |
 | Code | One pure predicate in `scheduler.ts`, plus an in-memory map and two bounded waits in `handOff()` | Existing | A marker file, its cleanup (`removeFile`/`erase`), and PRD changes | A completion-keyed waiter, plus a timeout for held files |
 | **Verdict** | **Selected (R-006 option B)** | Replaced | Rejected | Rejected |
@@ -1010,9 +1010,9 @@ sequenceDiagram
   - Engine (`engine-download-ui.test.ts`, injected `DownloadUi` spy):
     - the last hand-off calls `restore()` and never `hideForHandOff()`, and no `download()` is asked for until the restore resolves;
     - every other hand-off calls `hideForHandOff()` only;
-    - the last two files' `off/ready` in one tick → exactly one `restore()`, from the second hand-off, called only after the first file's `download()` has resolved and Chrome has named it;
-    - an earlier file still `in_progress` with no `filename` → no `restore()` until its `filename` delta (or a terminal state) arrives, and the restore goes ahead after 500 ms without one (fake timers);
-    - `targetsKnown([])` makes no `downloads.search` call; the watcher is gone afterwards;
+    - the last two files' `off/ready` in one tick → exactly one `restore()`, from the second hand-off, called only after the first file's `download()` has resolved and the file has finished; the same with the first hand-off's hide still held (the claim is synchronous);
+    - an earlier file still `in_progress` → no `restore()` until it leaves `in_progress`; its `filename` delta alone does not release it; the restore goes ahead after 2000 ms regardless (fake timers);
+    - `othersSettled([])` makes no `downloads.search` call; once the earlier file finished, the wait leaves no timer behind;
     - a cancel while the restore is in flight → no `download()` and no hide;
     - a job created while the last hand-off waits (steps 2–3) → the re-check takes the hide path;
     - a job listed as resolving makes another job's last file hide;
@@ -1023,7 +1023,7 @@ sequenceDiagram
     - `{ enabled: false }` resolves before the first `download` of a multi-file busy period;
     - a Saved job logs `ui:false`, every other `download`, `ui:true`, then the last `download`, and nothing after its record is deleted;
     - only one `download` is ever called while the UI is on: the busy period's last;
-    - with the fake's deferred naming on, two files landing together as the last two → no `ui:true` until the earlier one is named;
+    - with the fake's deferred naming on, two files landing together as the last two → no `ui:true` after the earlier one is named, only after it finishes; `fake.downloads.settledWhileShown` (files that finished while the UI was on) holds exactly the last file for a Saved job;
     - ends without a final hand-off (cancel; a partial job whose failing file settles last; needs login after a 403 with nothing left in flight; Unavailable as the last job to end) → one `{ enabled: true }` after the last record is deleted;
     - a partial job whose last-settling file succeeds restores before that file;
     - none when job B ends while job A runs, and A's `ui:true` sits right before A's last `download`;
@@ -1060,10 +1060,10 @@ sequenceDiagram
 - **Byte path verified** (ENG-002): the DNR rule as written matches offscreen fetches and nothing else, and `chrome.downloads.download(blobUrl)` from the SW saves a blob created in the offscreen document ([system.md §8.2](system.md)). No fallback rule is implemented.
 - **"Ask where to save each file" on:** `saveAs: false` may still prompt per file. A dismissed dialog → `dismissed` → counted as failed and not retried (PRD CUJ-1 edge). The Save As dialog is a separate window, not part of the download UI that R-005 hides, so it is expected to appear while the UI is hidden. Verify on branded Chrome (L5).
 - **A Chrome prompt for a job file while the UI is hidden** (dangerous-file or deep-scan). The held file does not hold back the busy period's last hand-off, which brings the UI, and so the prompt, back. The prompt stays hidden only while other files are still to be handed off, or when no hand-off follows because they all fail ([system.md §15](system.md) gap 1, with pm).
-- **A second animation after a naming stall** (platform timing, R-006).
-  - Step 3 waits for Chrome to name every in-progress file of the busy period before the enable, capped at 500 ms.
-  - If Chrome takes longer, the restore goes ahead and that file may animate too. Causes: another extension holding the name in `onDeterminingFilename`, or a stalled disk.
-  - Likelihood is low, and the cap bounds the delay of the job's last file.
-  - The step rests on Chrome deciding a download's UI in the same observer pass that reports its `filename` (platform facts, from source reading). L5 watches a re-download served from the HTTP cache, where the last files land together, for exactly one animation.
+- **A second animation, or an early bubble, after a settle stall** (platform timing, R-006 rev. 3).
+  - Step 3 waits for every in-progress file of the busy period to finish before the enable, capped at 2 s.
+  - If a file takes longer (a Save As dialog, a danger prompt, another extension's `onDeterminingFilename`, a stalled disk), the restore goes ahead; that file may then animate and open the bubble before the last file exists.
+  - Likelihood is low: pixiv-sized blobs are written in milliseconds. The cap bounds the delay of the job's last file.
+  - L5 watches a re-download served from the HTTP cache, where the last files land together, for exactly one animation and a bubble that lists every file.
 - **An end without a final hand-off leaves the button away until Chrome's next download.** This covers cancel, failure, needs login, Unavailable, and a last outstanding file that fails. The UI is on, but Chrome shows the button only with its next download event, and no extension API can show it sooner. R-006 accepts this.
 - **Stale logged-in page** (user logged out in another tab): the resolver does not treat a withheld body as a refusal while the page claims to be logged in, so a walled all-ages work downloads in that case. This is PRD text now (CUJ-5 edge, R-004 S12a), to be revisited after the release checklist's logged-in stale-page probe ([system.md §8.5](system.md) miss 2).
