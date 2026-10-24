@@ -1,49 +1,82 @@
-# Code Review — dev-cycle iteration 3 (Phase 3.6)
+# Code Review — dev-cycle iteration 4 (Phase 3.6)
 
-> Reviewed: 2026-10-23 17:32:24 (UTC-7)
-> Scope: `git diff 91749c2..HEAD` (the iteration-3 plan commit to the merge `3cef87b`): tasks 1.1 (job-level outage rule, D13), 1.2 (Chrome's download UI, R-005/D12), 1.3 (CUJ-3 paste, S5, S15) and 1.4 (D14 fallback timer, 176 px ugoira floor), merged without conflicts. Also covers this review's own fix commits `fbe4066` and `7f5960c`.
+> Reviewed: 2026-10-23 23:02:22 (UTC-7)
+> Scope: `git diff a8dd551..0ce05cd`. It holds two pieces of work:
+> - the between-cycles quick-fix `c2c9de0` (D12 rev. 3), which had no Phase 3.6 review yet. It makes `othersSettled()` wait for earlier in-progress files to *finish*, sets `HANDOFF_SETTLE_WAIT_MS = 2000`, adds the fake's `settledWhileShown`, adds the W1 held-hide test, adapts the sw-pages progress test, updates design D12 rev. 3 and syncs two PRD lines;
+> - this iteration's ENG-012 task: `a9d9212` (counter pins in cuj1, cuj5 and sw-pages, `counts()` moved to `e2e/harness/hfp-button.ts`, AC-mapping wording) and `0ce05cd` (the constant's comment). The plan commit `a2e8897` was read for context.
+>
+> Baseline: design-download-engine.md "Progress counter (pages jobs)" and "The last hand-off (R-006)" rev. 3, system.md D12 rev. 3 and the §13 constraints row, design-test-harness.md "R-005/R-006 assertions (L2)", and PRD-000 CUJ-1 AC and CUJ-5 step 5 as amended by R-006 rev. 3.
 > Guidelines: no `docs/*-guidelines.md` exist. The code was reviewed against `docs/design/*` and standard engineering practice.
+> Constraint: QA gates this exact HEAD in parallel. This review changed no file under `src/`, `test/` or `e2e/`, and never rebuilt the shared `dist/` or `dist-e2e/`. Every gate and mutation ran in an isolated `git archive 0ce05cd` copy in the session scratchpad, which has its own `dist/` and `dist-e2e/`. The e2e fake server listens on an ephemeral port and each run uses a temporary profile, so nothing was shared with QA's run. Code findings are recorded here and in `docs/eng-backlog.md`, not fixed.
 
 ## Code Review Summary
-- **Files reviewed:** 49 in the diff (20 `src/`, 21 `test/`, 7 `e2e/`, 1 `docs/`).
-  - Read in full: every changed `src/**` module (`download-ui.ts`, the `engine.ts`/`sw.ts`/`options-tab.ts`/`resolver.ts` hunks, `retry.ts`, `outcome.ts`, `messages.ts`, `types.ts`, `job.ts`, `test-hooks.ts`, `single-line.ts`, `strings.ts`, `options.css`, `pattern.ts`, `mount.ts`, `width.ts`, `constants.ts`, `manifest.json`), the chrome fake, `e2e/harness/flows.ts`, the new R-005 e2e cases in `cuj1`, the cancel-race tests in `engine-download-ui.test.ts` and `sw-cancel.test.ts`, the `download-ui.test.ts` suite, and the `e2e/README.md` diff.
-  - Sampled: the other unit and integration tests, and the `cuj2`/`cuj3`/`cuj4`/`cuj5` additions.
-- **Issues found:** 0 critical, 0 warnings, 3 info.
-- **Auto-fixed:** 4 items in 2 commits (one code, one design docs).
-- **Final gates on `main` after the fixes:**
-  - `npm run check` passes: typecheck 0 errors, eslint 0, prettier clean, **2973/2973** vitest tests in 66 files, build.
-  - `HFP_HEADLESS=1 npm run test:e2e`: **128 passed, 0 failed**.
-  - `npm run size`: **35.3 KB minified / 13.1 KB gzip** (budget 40 / 15).
+- **Files reviewed:** 19 in the diff (2 `src/`, 4 `test/`, 4 `e2e/`, 9 `docs/`).
+  - Read in full: the whole `handOff`/`othersSettled`/`otherSavingIds`/`finalize` region of `engine.ts`, plus `onDownloadChanged`; `constants.ts`; the `FakeDownloads` hunks; every changed unit, integration and e2e test; `e2e/harness/hfp-button.ts`; the design and PRD hunks.
+  - Also read for context: `scheduler.ts` `settle()`, `downloads.ts` `onDownloadInterrupted`, `pusher.ts`, the integration harness (`DownloadDriver`, `ScriptedOffscreen`, `until`), and the e2e launcher (repo-root resolution, port).
+- **Issues found:** 0 critical, 1 warning, 6 info.
+- **Auto-fixed:** none, because of the parallel-QA constraint. The warning is filed as **ENG-013** (P2).
+- **Gates on `0ce05cd`** (isolated copy):
+  - `tsc --noEmit`: 0 errors. `eslint .`: 0 problems. `prettier --check .`: clean.
+  - vitest: **3066/3066** tests in 67 files.
+  - `npm run build:prod && ! grep -qE 'testHook|__hfpTest|await:(registry|resolver|handoff)' dist/*.js`: **passes**. Prod `sw.js` keeps both `in_progress` checks and `setTimeout(release2, 2e3)`.
+  - `npm run size`: **35.3 KB minified / 13.1 KB gzip** (budget 40 / 15). This is unchanged, because the diff touches only SW code and tests.
+  - ENG-012's e2e Verify: **4 passed** (below).
 
 ## Checklist results
 
 | Area | Result |
 |---|---|
-| Type check | `tsc --noEmit`: 0 errors. The `src/` diff adds no `any`, no `as` cast, no `@ts-*` comment and no `eslint-disable`. `download-ui.ts` and `single-line.ts` carry no cast at all. The `answered` plumbing is typed end to end: `Failure.answered?: true`, `JobRecord.answered?: true`, `Resolution`'s failure variant `answered: boolean`, and the internal `Draft` type, so `resolve()` cannot return a failure without the flag. Test-side casts are the established window/`self` globals in e2e (`__hfpWidths`, `__pillPaintedAt`, `__clickAt`, `__hfpTest`). |
-| `answered` plumbing (1.1) | `retry.ts` sets `answered` the moment `fetch()` resolves, so an `http` answer, a short or long body, a reset mid-body and a stall mid-body all count, and a rejected `fetch()` (DNS, refused, offline, Chromium's local throttle) does not. `withAnswered` adds the flag only to a final `network`/`timeout`. The resolver wraps `apiFetchJson` once, so every API step of every mode is counted, including a 2xx before a later failure. `applyResolution` sets `job.answered` for a plan, the login-wall stop and an answered failure, inside its existing guard. `errorCause` is §10's code line for line. The offscreen and tab-proxy paths forward the `Failure` object unchanged, so the flag survives `off/failed` and `api/fetchJson`; `isFailure` accepts exactly `true`. `! grep -rn lastStatus src test e2e` prints nothing. |
-| Layering (D11) | `npm run lint` passes. `resolver.ts` imports `gotAnswer` from `src/shared/outcome.ts` (background → shared, allowed); `e2e/harness/flows.ts` imports only types from `download-ui.ts`. |
-| MV3: listeners | `sw.ts` still registers every listener synchronously at top level. The diff adds one `await engine.restoreDownloadUiIfIdle()` inside `boot()`, after the first `badge.render()` (so the 1 s badge budget is untouched) and before `reconcile()`, as designed. |
-| MV3: permissions | `src/manifest.json` `permissions` is exactly `["downloads","storage","offscreen","declarativeNetRequestWithHostAccess","downloads.ui"]` (the `node -e` check exits 0); hosts unchanged. `test/unit/manifest.test.ts` is renamed to "five approved permissions" and its whole-manifest literal matches. |
-| Prod bundle | `npm run build:prod && ! grep -qE 'testHook\|__hfpTest\|await:(registry\|resolver\|handoff)' dist/*.js` passes, before and after Fixed 1. After Fixed 1, prod `createDownloadUi` keeps only `requested`, `chain` and `hideRefused`. |
-| pixiv selectors | No new DOM query in the diff. Selectors stay in `src/content/pixiv-dom.ts`; the options page queries only its own markup. |
-| `innerHTML` | None added; the ESLint ban still holds outside `icons.ts`. |
-| Security | No secrets, tokens or cookies in the diff. Both `DownloadUi` methods never reject: `apply()` catches every failure (also a synchronous throw, unit-tested), so `chain` never rejects into `handOff`, `finalize` or boot. The `downloads.ui` justification is in `docs/release-checklist.md` §5, verbatim from the PRD index, and system.md §5 records why the permission adds no install warning. |
-| Performance | The `setUiOptions` queue holds one promise reference (`chain`), so it never grows. Per busy period it makes one hide and one restore call, and racing hand-offs share one hide. The hand-off path adds exactly what the design specifies: `await hideForHandOff()` (an already-settled `chain` after the first hand-off, so one microtask), the test-only `await:handoff.hideUi`, and two in-memory lookups. `finalize` awaits `restore()` only when the registry is empty, after the final view is pushed. |
-| Constants | `FLOAT_PLACEMENT_BUDGET_MS = 250` sits next to `FLOAT_FALLBACK_MS` in `src/shared/constants.ts`; `mount.ts` derives its module-local `FALLBACK_TIMER_MS` from the two. `UGOIRA_LOCALE_FLOOR_PX` sits next to `LOCALE_FLOOR_PX` in `width.ts`, its only user, as design-artwork-button.md "Fixed width" specifies. The fake's error strings are test-only constants. No duplicate constant was found. |
-| `e2e/README.md` (g) | Prettier-clean (`npm run lint`). The section headings are identical to `91749c2`, and each of the six diff hunks lies inside the section its task owned: Harness API and CUJ-1/CUJ-4 (1.2), CUJ-2 (1.4), CUJ-3 (1.3), CUJ-5 (1.1). Every table keeps its column count. Nothing was clobbered. |
+| Type safety | No `any`, `@ts-*`, `eslint-disable` or weak `as` cast in the changed engine lines. `[id, …[0]] as const` builds a readonly tuple. `(id): id is number => id !== null` is a real guard. `search(...)[0]` is typed possibly `undefined` (`noUncheckedIndexedAccess`), and `!item` handles it. `let release!` is the same definite-assignment pattern as `markIssued`, assigned synchronously by the Promise executor (iteration 3 retry 1, Info 5). Test-side, the only new `!`s are the `done[i - 1]!` lookups in `sw-pages.test.ts`, guarded by `i === 0 \|\|`. `counts()` now takes `LabelSample[]` rather than `{ text: string }[]`, which is stricter. |
+| Layering (D11) | `eslint .` passes. No import changed in `src/`. `e2e/harness/hfp-button.ts` gains an export, and both specs import it from there. |
+| MV3 listeners | `sw.ts` is not in the diff. Every listener is still registered synchronously at top level. `onDownloadChanged` still feeds `deltaWatchers` before its `complete`/`interrupted` filter. |
+| Prod bundle | The grep check passes (above). No test seam leaked: `settledWhileShown` lives only in `test/fakes/chrome.ts`. |
+| Delta watch | `if (delta.state && delta.state.current !== 'in_progress') pending.delete(delta.id)`, as in the design's step 3. A `filename` delta alone no longer releases the wait. `interrupted` releases it, which is right: an interrupted file is terminal (`onDownloadInterrupted` → `failed`, not retried), so it can open no bubble later. A user cancel of another job's file arrives as `interrupted` and also releases the wait. |
+| Search fallback | `if (!item \|\| item.state !== 'in_progress') pending.delete(id)`, as in the design. The watcher is added in the same synchronous turn that computes `ids` and before the first `await`, so a delta either reaches the watcher or happened before it, and then the search sees the terminal state. **Correct, but unpinned (Warning 1).** |
+| Cap | `HANDOFF_SETTLE_WAIT_MS = 2000` in `src/shared/constants.ts`. The timer starts before the search and is cleared in `finally`. The cap bounds the delta wait, but not a `downloads.search` that never answers (Info 1). |
+| Watcher cleanup | `deltaWatchers.delete(watch)` runs in `finally` on every path: release, cap, and search rejection. A leaked watcher would have no observable effect (Info 3). |
+| `decided` settle | Unchanged from rev. 2 and still correct. `earlierIds = await Promise.all(earlier.values())` only awaits hand-offs decided earlier. Each of those settles with an id once `download()` resolves, or `null` on a throw or give-up (outer `finally`). The longer wait cannot form a cycle: `othersSettled` waits on Chrome download states, never on a `decided` promise. A hand-off decided *during* the wait awaits this one's promise, and this one's re-check then takes the hide path. The worst case is two caps in series (≤ 4 s), and only with a file held by the user. |
+| Re-check | `last = isLastHandOff(registry.list(), self, earlier)` uses the same snapshot, with no `await` between it and `restore()`'s synchronous `requested = true`. Pinned by "a job created while the last hand-off waits makes the re-check hide instead" (killed by mutation M5). |
+| Id set | `ids` = the non-null `earlierIds` plus `otherSavingIds(self)`. That covers every other file of every running job that Chrome has, including `metadata.json` and other jobs' files. The `Set` removes duplicates when an earlier id is also stored on its record. **The cross-job part is unpinned (Warning 1).** |
+| Counter (pages) | Matches "Progress counter (pages jobs)". `settle()` emits no running push when pump finalizes (`scheduler.ts:118-122`). In a job of its own, the wait makes the last hand-off also the last completion, so the running views top out at `N−1 / N` and the next view is the ended one. The settle push is unthrottled (`{ type: 'push' }`), so `N−1 / N` is always pushed before the last hand-off starts. |
+| Configuration | The 2 s cap is a centralized constant, recorded in system.md §13 (Constraints) with its basis: a design parameter inside pm's ≤ 2 s bound, ≈ 300× the measured 0–7 ms write tail, and needed to bound a file held by a prompt. D12 rev. 3 and design-download-engine.md step 3, "Performance" and the boot note all cite it. The old name has no remaining reference (`grep HANDOFF_TARGET_WAIT_MS\|targetsKnown` over `src test e2e docs/design` is empty). |
+| Design ↔ code | **No drift.** The design's `othersSettled` code block matches `engine.ts` line for line, and so do the handOff flow and its comments. design-artwork-button.md keeps `busy(n / n)` as a width candidate. That is right, because `N / N` can still show past the cap. |
+| PRD ↔ design | The two synced PRD lines (CUJ-1 AC, CUJ-5 step 5) match design-download-engine.md "Progress counter". The design names two residuals where `N / N` can show. The PRD line is absolute; that is a pm item, not code (next-cycle item 2). |
+| Commit hygiene | Each commit's type matches its paths. `c2c9de0` `fix:` carries the quick-fix's design and PRD sync, as `/quick-fix` does. `a9d9212` `test(e2e)` also carries `test/integration/sw-pages.test.ts`: the type fits, the scope is narrower than the paths (Info 5). `0ce05cd` `chore(constants)` carries `src/shared/constants.ts` only. |
 
-## Items the coders flagged
+## Test strength: mutation run
 
-| # | Item | Verdict |
+Each mutation was applied to `src/background/engine.ts` in the isolated copy, the full vitest suite (3066 tests) was run, and the file was restored. A `diff` against `git show 0ce05cd:…` confirmed each restore.
+
+| # | Mutation | Result |
 |---|---|---|
-| a | `handOff()` re-checks that the file is still `saving` after the hide, not only `registry.get(jobId)` | **Correct, and needed.** `cancel()` fails every in-flight file in its own mutation, but the record stays listed until `finalize` has awaited the final push and deleted it. A hand-off resuming in that window would pass a registry-only check, call `downloads.download`, and then `onDownloadStarted`'s cancel path would cancel it, leaving the very "Canceled" entry the design wants to avoid (PRD CUJ-1 step 5). The check costs one array lookup. Unit test: `engine-download-ui.test.ts` "a cancel whose final push is still pending also hands nothing to Chrome"; integration: `sw-cancel.test.ts` "a cancel while Chrome applies the hide hands no file to Chrome". The design now states the rule (Fixed 2). |
-| b | `job/cancel`'s response now waits for `restore()`, queued behind an in-flight hide | **No user-visible latency.** The button shows idle optimistically and synchronously on the click (`content.ts` `onActivate`), and `run()` ignores the `job/cancel` response. In `finalize`, the cancelled view is pushed before the record is deleted and before `restore()`. `sw-cancel.test.ts` pins it: the cancelled view reaches the tab while the hide is still gated. The extra wait is at most one in-flight `setUiOptions` round trip (about 1 ms) plus the restore itself. |
-| c | Prod bundle kept the unused locals `ok` and `calls` | **Fixed** (Fixed 1). The recording moved into a test-only wrapper around `setUiOptions`, installed by `if (__TEST_HOOKS__) setUiOptions = withTestApi(…)`. The prod output has neither local. Behaviour and the test API are unchanged: 59 download-UI unit and integration tests and the cuj1/cuj4 e2e cases pass. |
-| d | A body that stays short or long on every attempt now ends `answered: true` | **Matches system.md §9**, which names "a short or long body, a reset or a stall mid-body" as answered, and PRD CUJ-5 step 6 ("pixiv answered at least one request … any HTTP status"): the status line and headers arrived, so pixiv answered. Row 8 reads such a job as `server`. |
-| e | An insertion with line breaks is not on the native undo stack | **Recorded.** design-options-page.md "Line breaks in inserted text", **Cost** paragraph, and the alternatives table's "Native undo" row. `docs/tasks.md` lists it in the QA expectations, so QA will not log it as a defect. |
-| f | design-test-harness.md "Open Questions" still said the README's CUJ-5 mapping was for the "next iteration" | **Fixed** (Fixed 2): the line is removed. The README's CUJ-5 section now points to the mapping at the top of `cuj5.spec.ts`. |
-| g | `e2e/README.md` was edited by all four tasks | **Clean.** See the checklist row above. |
-| h | Content-bundle size | **Changed: 35.2 / 13.0 → 35.3 / 13.1 KB.** Recorded in system.md §11.6 (Fixed 2). |
+| M1 | Rev. 2 condition: a `filename` delta, or a named search result, releases the wait | **Killed**: 5 fail. They include "12 pages: ui:false, metadata.json and 11 pages, ui:true, then …_p11.jpg", **only through `settledWhileShown`** (`[p9, p10, p11]` instead of `[p11]`); the `names()` call log is identical to the passing run. Also killed by both sw-pages counter cases, the deferred-naming integration case and the "filename delta alone" unit test. |
+| M2 | No settle wait at all (`void othersSettled(…)`) | **Killed**: 9 fail. |
+| M3 | Timer not cleared | **Killed**: 1 ("once the earlier file finished, the wait leaves no timer behind"). |
+| M4 | Watcher not removed | Survives (Info 3). |
+| M5 | No re-check after the waits | **Killed**: 1 ("a job created while the last hand-off waits …"). |
+| M6 / M6b / M6c | Search ignores finished items / keeps unknown ids pending / is ignored entirely | **All survive (Warning 1).** At `a8dd551`, ignoring the search killed "pushes k / 12 progress as pages land". The rev.-3 version of that test no longer reaches the search. Instrumenting the cap timer shows it fires only in the 2 explicit cap tests, both at HEAD and under M6c. So no test reaches the search path; this is a coverage gap, not a test that silently stalls. |
+| M7 | Delta watch ignored | **Killed**: 8 fail. |
+| M8 | Any delta releases the wait | **Killed**: 2 fail. |
+| M9 | `otherSavingIds()` limited to the hand-off's own job | **Survives (Warning 1).** Pre-existing: it survives at `a8dd551` too. |
+| M10 | `otherSavingIds()` dropped | **Killed**: 7 fail. |
+| M11 | `earlierIds` dropped from `ids` | **Killed**: 3 fail. |
+| W1 | Claim (`decided.set`) moved after the UI call | **Killed**: 2 fail, including the new held-hide test "the last two landing while the first hand-off still waits for its hide make one restore, from the second". **Iteration 3 retry 1 W1 is closed.** |
+| ENG-012 | `settle()` always pushes a running view before finalize | **Killed**: both sw-pages counter cases, the cuj1 "counter and badge" e2e test and the cuj5 "partial" e2e test fail. The other two tests the grep matches ("partial one", "download UI: partial") check no counter and pass, as expected. |
+
+Answers to the two test-strength questions:
+- **Does `settledWhileShown` pin the bubble race?** Yes, and nothing else in the 12-page test does. Under the rev.-2 condition (M1), the fake names synchronously, so the call log keeps `ui:false … ui:true, p11`. Only `settledWhileShown` shows `p9` and `p10` finishing after the enable. The `DownloadDriver` completes a download one 1 ms step after it appears, and the auto offscreen lands the last five in-flight pages together. So the last hand-off reliably finds earlier pages still `in_progress`, and the race is exercised deterministically.
+- **Would a regression that restores before earlier files finish fail the 12-page call-log test?** Yes for a same-job regression (M1, M2). For other jobs' files (M9) no test fails; that is Warning 1.
+
+## Items from iteration 3 retry 1
+
+| Item | Status |
+|---|---|
+| W1: decide+claim not directly pinned | **Closed** by `c2c9de0`'s held-hide test (the W1 mutation is killed above). |
+| Info 1: boot-time deltas wait for `ready` | **Closed** in the design. design-download-engine.md "Restart at `await:handoff.restoreUi`" records it. The cost grew from 500 ms to 2 s (Info 2). |
+| Info 3: fake `animated` flag | **Superseded** by `settledWhileShown`. design-test-harness.md explains why it also pins the single animation within one busy period. |
+| Info 6: gap-1 wording for the ugoira zip | **Closed** in system.md §15 gap 1 and design-test-harness.md L5. |
+| Info 7: design claims watcher removal is tested | **Closed**: the design's test list no longer claims it. The mutation still survives (Info 3). |
+| Info 2, 4, 5 | Unchanged, accepted. |
 
 ## Critical Issues (must fix before QA)
 
@@ -51,182 +84,45 @@ None.
 
 ## Warnings (should fix)
 
-None.
+1. **[test/unit/background/engine-download-ui.test.ts] Two parts of `othersSettled()`'s input and release are unpinned.** Filed as **ENG-013** (P2).
+   - **(a) The `downloads.search` fallback (M6, M6b, M6c survive).** The search releases the wait when an earlier file finished before the watcher existed but its record still says `saving`, because the completion mutation was still in flight when the last file landed. That is exactly the "last files land together" burst. A regression there would hold the restore, and so `Saved`, to the 2 s cap. It would also make every boot-time last hand-off wait the full cap. At rev. 2 the sw-pages progress test pinned the search by accident; rev. 3's version of the test does not.
+   - **(b) Other jobs' in-progress files (M9 survives, also at `a8dd551`).** If `otherSavingIds()` stopped looking across jobs, job B's file could finish after job A's last hand-off turned the UI on. That is the QA iteration-3 bubble bug again, for CUJ-4. Only QA's `two-b-first`/`two-a-first` probe would catch it.
+   - **Fix.** Three unit tests are specified in ENG-013: an earlier file Chrome already finished, an id Chrome no longer knows, and another job's in-progress file. They were prototyped in the scratch copy: all pass on `0ce05cd`, M6c fails the first two, and M9 fails the third.
 
 ## Info
 
-1. **`isFailure` accepts `answered: true` on any failure kind**, while the type comment says `network`/`timeout` only. It is harmless: `gotAnswer` already treats `http` and `pixivError` as answered, and no producer sets the flag on another kind. Tightening the guard would add a kind check for no behavioural gain. No change.
-2. **Every SW start with no job running calls `setUiOptions({ enabled: true })`.** The worker wakes on every pixiv page load (`job/listForTab`), so this is one IPC call per wake, about 1 ms, after the badge render. This is the design (D12 call site 3), and it is what closes the "SW killed before restore" risk. No change.
-3. **`finalize` now awaits `restore()` before `scheduleClose()`** when no job is left. This delays the 5 s offscreen-close grace by one IPC round trip. Negligible, and it follows design-download-engine.md "Finalize" step 5.
+1. **The cap does not bound `downloads.search` itself.** `othersSettled` awaits `Promise.all(search…)` before `await settled`. A search that never answers would stall the last hand-off past 2 s. This is unchanged from rev. 2, and `downloads.search` is a browser-process query that always answers. No change. If ever needed, the fix is a one-line `Promise.race` against `settled`.
+2. **The boot-time stall is now up to 2 s, not 500 ms.** Suppose a reconcile-issued last hand-off finds an earlier file still `in_progress`. Before `ready`, no delta can reach the watcher, and the search finds `in_progress`. So that wait now always runs to the full cap, where rev. 2's search released a merely named file at once. Messages queue behind `ready` for that long. The badge renders before reconcile, so CUJ-4's 1 s budget holds. It needs the SW to die within milliseconds of the busy period's last hand-off. The design records it. No change.
+3. **Watcher cleanup is unpinned (M4).** A leaked watcher removes ids from an empty `Set` and calls `release()` on a promise that has already resolved. That is one closure per last hand-off, per SW instance. Not worth a test seam. No change.
+4. **The cuj5 retry e2e pins the range, not the top.** It asserts that every count lies in 9 … 11, that no `12 / 12` shows, and that the log ends with `Saved · 12P`. Unlike cuj1, it does not assert that `11 / 12` directly precedes `Saved`. The sw-pages `retryPages` case pins that the last running value is 11. ENG-012's scope is met, so no change is needed. Adding `expect(log.at(-2)?.text).toBe('11 / 12')` is an option if QA ever sees a skipped step.
+5. **`a9d9212`'s scope `(e2e)` is narrower than its paths** (`test/integration/sw-pages.test.ts`). The type is right. Cosmetic.
+6. **`HANDOFF_SETTLE_WAIT_MS` also bounds the counter residual.** The design names two cases where `N / N` can still show: `metadata.json` held past the cap, and a CUJ-4 job B whose last page is not the busy period's last hand-off. The PRD line "`12 / 12` is never shown" is absolute. This is a pm wording item (next-cycle item 2), not a code defect.
 
 ## Fixed
 
-1. **[src/background/download-ui.ts] The prod module no longer carries the test API's recording state.** In the shipped bundle, the `if (__TEST_HOOKS__) calls.push(…)` branch was dropped, but its inputs remained as dead locals: `calls = []` and the `ok` flag.
-   - **Fix.** Recording now lives in a module-level `withTestApi(setUiOptions, requested)`. It installs `downloadUi()` and returns `setUiOptions` wrapped to push `{ enabled, ok, at }` when each call settles. `createDownloadUi` calls it from `if (__TEST_HOOKS__)`, so prod drops both the branch and the function.
-   - **Behaviour.** `apply()` is back to the design's error handling only. `at` is still `Date.now()` when Chrome answered.
-   - Commit `fbe4066`.
-2. **[docs/design] The design docs now record what shipped:**
-   - design-download-engine.md "Chrome's download UI", call site 1, and the `off/ready` row: the hand-off returns unless the record is listed **and** the file is still `saving`, with the cancel-window rationale and the pinning test (item a). "Test API" now notes the recording wrapper (item c).
-   - design-test-harness.md: the stale "next iteration" README line is removed from "Open Questions" (item f), and the "ENG backlog" note now says the release checklist carries the R-005 items.
-   - system.md §11.6: the iteration-3 size, 35.3 / 13.1 KB (item h).
-
-   Commit `7f5960c`.
+None (parallel-QA constraint).
 
 ## Engineering-task verification (eng done-gate)
 
-No task this iteration came from `docs/eng-backlog.md`. The backlog is empty (`Next-ID: ENG-012`), and nothing was removed or filed. This review found no engineering work without a product surface that needs a backlog entry.
+**ENG-012: confirmed and removed.**
+
+| Verify / AC | Evidence |
+|---|---|
+| `npx vitest run test/integration/sw-pages.test.ts` passes | Re-run on the isolated `0ce05cd` copy: **32/32** pass. The full suite has 3066/3066. |
+| `HFP_HEADLESS=1 npm run test:e2e -- e2e/cuj1.spec.ts e2e/cuj5.spec.ts --grep "counter and badge\|partial"` passes | Re-run on the isolated copy, with its own `dist-e2e` build, `--workers=1`: **4 passed** (cuj1 "counter and badge"; cuj5 "partial", "partial one", "download UI: partial"). |
+| `! grep -rnE '12 / 12`? only after\|to name earlier' e2e src test` | Exits 0 and prints nothing, run on the main checkout. |
+| Mutation check names the failing tests | Re-run with the `settle()` mutation: the two sw-pages counter cases, cuj1 "counter and badge" and cuj5 "partial" fail. This matches the coder's report of 4. Restored afterwards, `diff` clean. |
+| The four tests assert the amended values | cuj1: no `12 / 12`, last count 11, `log.at(-2)` is `11 / 12`, `log.at(-1)` is `Saved · 12P`. cuj5: counts within 9 … 11, no `12 / 12`, ends with `Saved · 12P`. sw-pages full job and `retryPages`: non-decreasing, last 11, ended `saved`. |
+| AC mappings and comment | cuj1 row 7 and the `e2e/README.md` CUJ-1 row state the amended AC. The constant's comment reads "…to finish before the UI restore (R-006 rev. 3)". `git diff c2c9de0..0ce05cd -- src/` is that one comment line. |
+
+The ENG-012 block is removed from `docs/eng-backlog.md`. The commits referencing ENG-012 (`a9d9212`, `0ce05cd`) are the record.
+
+**Filed: ENG-013** (P2, test-only), from Warning 1. The backlog is therefore **not** empty after this review: it holds ENG-013, and `Next-ID` is ENG-014.
 
 ## Design-level items for next cycle (Phase 1)
 
-1. **Still open for pm** (system.md §15 "Open spec gaps"):
-   - gap 1: a Chrome decision prompt for a job file while the UI is hidden (R-005);
-   - gap 2: the options footer links at 2.91:1.
+1. **ENG-013** (P2): three unit tests for the settle wait's search fallback and its cross-job ids. When it lands, tl adds the three cases to the engine test list in design-download-engine.md "Cross-Cutting Concerns → Testing", next to "with no other file in Chrome, the last hand-off makes no `downloads.search` call".
+2. **Counter residual wording** (pm, `/spec-sync`; already in `docs/tasks.md` "Document-authority notes"). Two cases fall outside the PRD's absolute "`12 / 12` is never shown": a file held past the 2 s cap, and a CUJ-4 job B whose last page is not the busy period's last hand-off. pm's pre-decided exit accepts the cap residual. Not a blocker.
+3. **pm spec-sync items still open** (system.md §15 gaps 1–3; pm-review iteration 3, priorities 3a–3c). They are unchanged by this diff, and none blocks QA.
 
-   Neither blocks QA. The design follows the PRD as written for both.
-2. **QA re-measurements named in `docs/tasks.md`** (not review items): `diagOutage.ts` (≥ 3 × 7 clicks for 503 and 500 read "pixiv isn't responding"; a stopped server reads "No connection"), `diagFloat.ts` (10 samples ≤ 3000 ms), one manual multi-line drag into the folder field (design-options-page.md "Open Questions", drop placement), and the R-005 visual check by OS-level screenshot of the headed harness browser.
-3. **R-003 residual "miss 2"** (stale logged-in page) remains accepted per system.md §8.5. The release checklist §3 probe collects the evidence to close it.
-
----
-
-# Iteration 3 retry 1 addendum — R-006 (Phase 3.6)
-
-> Reviewed: 2026-10-23 19:49:53 (UTC-7)
-> Scope: `git diff 02b4ecf..68c35d7`. Commits: `ed7a579` (fake `deferNaming`/`name`), `6c184ac` (engine: restore before the last hand-off), `0a2da83` (e2e expectations), `68c35d7` (release checklist).
-> Baseline: design-download-engine.md "The last hand-off (R-006)", system.md D12 rev. 2, design-test-harness.md "R-005/R-006 assertions (L2)", and PRD-000 §4.1 #3 as amended by R-006.
-> Constraint: QA re-verifies this exact HEAD in parallel, so this review changed no file under `src/`, `test/` or `e2e/`. Every gate ran in an isolated `git archive 68c35d7` copy, so the shared `dist/` and `dist-e2e/` were never rebuilt. Every finding, simple ones included, is recorded here instead of fixed.
-
-## Code Review Summary
-- **Files reviewed:** 18 in the diff (5 `src/`, 7 `test/`, 5 `e2e/`, 1 `docs/`).
-  - Read in full: `engine.ts` (whole file), `scheduler.ts` and `download-ui.ts` hunks, `constants.ts`, the fake's `FakeDownloads`, `engine-download-ui.test.ts`, `sw-download-ui.test.ts`, the `sw-restart.test.ts` hunks, the e2e expectation hunks and the release checklist.
-  - Also read for context: `sw.ts`, `registry.ts`, `downloads.ts`, `applyResolution`.
-  - Sampled: `scheduler-last-handoff.test.ts`, `chrome-fake.test.ts`, and the `e2e/README.md` table re-flow.
-- **Issues found:** 0 critical, 1 warning, 7 info.
-- **Auto-fixed:** none, because of the parallel QA constraint.
-- **Gates on `68c35d7`:**
-  - `tsc --noEmit`: 0 errors. `eslint` and `prettier --check`: clean.
-  - vitest: **3065/3065** tests in 67 files.
-  - `npm run build:prod && ! grep -qE 'testHook|__hfpTest|await:(registry|resolver|handoff)' dist/*.js`: **passes**. The prod `handOff` keeps the decision, the waits and the re-check. It has no hook yields.
-  - `npm run size`: **35.3 KB minified / 13.1 KB gzip** (budget 40 / 15). This is unchanged, because R-006 touches only SW code. The prod `sw.js` grows from 124,062 to 126,782 bytes (+2.7 KB, unminified).
-  - e2e was not re-run here, because QA owns the e2e run on this HEAD.
-
-## Checklist results
-
-| Area | Result |
-|---|---|
-| `isLastHandOff` across jobs | **Matches the design table line for line.** `awaitsHandOff` returns false for `save === false`. It returns true for `queued`/`fetching`/`ready`. For `saving` it returns true only with no `downloadId` and not `decided`. Terminal states return false. The switch is exhaustive (no default; `strict` with `noFallthroughCasesInSwitch`). "Still resolving" is `phase === 'resolving' && stopReason === null && apiFailure === null`, the same test `reconcile()` uses. A finalizing job (all files terminal) never blocks. This matches PRD §4.1 #3: "no file queued, being fetched, waiting to retry [inside the offscreen fetch, so `fetching`], or being encoded [`fetching` video], and no job still resolving". |
-| Decide + claim | **Synchronous.** `new Map(decided)`, `isLastHandOff(...)` and `decided.set(key, …)` run with no `await` between them (engine.ts:273–276). Mutators are synchronous, so the rule never sees a half-applied mutation. `onOffReady` returns `[download]` alone, so `handOff` starts inside the registry's `run()` call. |
-| `decided` always settles | **Yes.** `markIssued(id)` runs right after `download()` resolves, before the `onDownloadStarted` mutation. `markIssued(null)` runs on a throw, and again in the outer `finally`, which covers the live-check give-up and any hook rejection. `decided.delete(key)` runs only in that `finally`, after the id is stored, the file failed, or the hand-off gave up. So the invariant holds: a `saving` file without an id is either in `decided` or still to be handed off. Waits follow decision order, so they cannot form a cycle. No awaited dependency needs the registry lock. |
-| `targetsKnown` | The watcher is added before the search, so no delta can fall between the two. Duplicate ids (an earlier id that is also in `otherSavingIds`) are deduplicated by the `Set`. `otherSavingIds` is evaluated after `Promise.all(earlier)`, so it sees the ids stored meanwhile. A search rejection logs `warn` and goes on. The timer starts before the search, so the 500 ms cap includes the search. `finally` removes the watcher and clears the timer. `HANDOFF_TARGET_WAIT_MS = 500` lives in `src/shared/constants.ts`. |
-| Re-check after the waits | Uses the same `earlier` snapshot. Nothing awaits between the re-check and the synchronous `requested = true` inside `restore()`. A job created during the waits is listed as `resolving`, and a hand-off decided during the waits is absent from `earlier`. Either one sends the file down the hide path. |
-| Restore / hide / hook | The last hand-off awaits `restore()` and then `await:handoff.restoreUi`, and never calls `hideForHandOff()`. Every other hand-off is unchanged. The live check (record listed **and** file `saving`) follows both paths. |
-| Finalize safety net | Unchanged code. After a final hand-off, `restore()` finds `requested === true` and makes no Chrome call. Pinned by "finalize: after a final hand-off, Chrome gets no second restore". |
-| Races | Covered: a job starting during the waits (re-check), a cancel while the restore is in flight (live check), and two files landing together (claim + step 2 + step 3). See the mutation table below for how strongly each is pinned. |
-| Type safety | No `any`, `@ts-*`, `eslint-disable` or `as`-cast in `src/`. `as const` builds a readonly tuple. `(id): id is number => id !== null` is a real guard. `noUncheckedIndexedAccess` types `search(...)[0]` as possibly `undefined`, and the code checks it. The two definite-assignment `!`s (`release`, `markIssued`) are assigned synchronously by Promise executors. `Promise.withResolvers` would remove them but needs Chrome 119, above `minimum_chrome_version` 116. Test-side, the only cast is the established `settle(...) as JobStartResponse`. |
-| MV3 listeners | `sw.ts` is not in the diff. Every listener is still registered synchronously at top level. |
-| Prod bundle | The grep check passes (above). |
-| Design drift (item 7) | **None.** `decided`, `deltaWatchers`, `targetsKnown`, `otherSavingIds`, the first line of `onDownloadChanged` (watchers before the `complete`/`interrupted` filter) and the constant all match the code block in design-download-engine.md nearly verbatim. design-test-harness.md records the fake's `deferNaming`/`name`, including "complete/interrupt name an unnamed item first". The harness's `finish(match)` is a trivial test helper that needs no design entry. |
-
-## Test strength (item 6): mutation run
-
-Each mutation was applied to the isolated copy, and `test/unit/background` plus `test/integration` (660 tests) were re-run.
-
-| Mutation | Result |
-|---|---|
-| The last hand-off hides, then restores **after** its `download()` | **Killed**: 112 fail, including "12 pages: ui:false, metadata.json and 11 pages, ui:true, then …_p11.jpg", whose `names()` sequence is exact. |
-| Restore at finalize only (iteration-3 / R-005 behaviour) | **Killed**: 114 fail. |
-| Drop step 2 (no wait for earlier `download()` calls) | **Killed**: 4 fail (both deferred-naming integration cases, "last two together … named the first", and the give-up case). |
-| Drop the step-4 re-check | **Killed**: 1 fail ("a job created while the last hand-off waits"). |
-| Drop the 500 ms cap | **Killed**: 2 fail (unit + integration "without a name … after 500 ms"). |
-| No delta watchers in `onDownloadChanged` | **Killed**: 7 fail. |
-| No `markIssued(null)` in `finally` (a give-up never settles) | **Killed**: 1 fail. |
-| Live check by record only (drops the `saving` check) | **Killed**: 1 fail. |
-| Rule ignores resolving jobs | **Killed**: 5 fail. |
-| `saving` without an id never counts | **Killed**: 20 fail (restart matrix). |
-| `decided.delete` dropped | **Killed**: 1 fail. |
-| Timer not cleared | **Killed**: 1 fail ("leaves no timer behind"). |
-| **Claim moved after the UI call** (`decided.set` after `await hideForHandOff()/restore()`) | **Killed by 1 test only, incidentally**: the cross-job give-up case. Neither "last two together" test fails (W1). |
-| Claim delayed by one microtask | Survives. **Benign**: in prod, two hand-off decisions are always separated by at least one `storage.session` write (each comes from its own serialized mutation). |
-| Watcher not removed from `deltaWatchers` | Survives (I7). |
-
-Answer to item 6:
-- **The integration assertions pin `ui:false, 12 downloads, ui:true, last download` exactly.** `names(afterBoot)` compares the whole call log: the fake logs `ui` once Chrome applied it and `download` at call time.
-- **A regression where the restore follows the last download fails 112 tests.**
-- The e2e checks compare whole-millisecond timestamps with `≤`, so a same-millisecond inversion can slip through there (I4). The L2 call log is the exact pin.
-
-## Critical Issues (must fix before QA)
-
-None.
-
-## Warnings (should fix next cycle)
-
-1. **[test/unit/background/engine-download-ui.test.ts] The synchronous decide+claim is not directly pinned.**
-   - The design's core race is "two files land together as the busy period's last two".
-   - Both tests for it ("the last two files landing together make one restore …" and "… hand the second to Chrome after the restore") run with a hide that resolves at once. So the first hand-off has already passed its UI call, and claimed, by the time the second decides.
-   - A regression that claims after the UI call keeps both passing. Only the cross-job give-up test catches it, and only incidentally.
-   - Proposed test. It passes on `68c35d7` and fails with the claim moved after the UI call; both were verified in the scratch copy:
-     ```ts
-     it('handOff: the last two landing while the first hand-off still waits for its hide make one restore, from the second', async () => {
-       const stub = stubUi();
-       stub.holdHide();
-       seedJob('job-1', [fetching(0), fetching(1)]);
-       const engine = await hydrated(stub.ui);
-       land(engine, 0);
-       await flush();
-       land(engine, 1);
-       await flush();
-       stub.releaseHide();
-       await flush();
-       expect([stub.events, fake.downloads.callLog]).toEqual([
-         ['hide', 'restore'],
-         [{ op: 'download', filename: p(0) }, { op: 'download', filename: p(1) }],
-       ]);
-     });
-     ```
-
-## Info
-
-1. **Boot-time deltas wait for `ready`.**
-   - At boot, reconcile awaits its `download` effects (`mutate` awaits `effectsDone`). Meanwhile `sw.ts` delivers `downloads.onChanged` only after `ready` (sw.ts:50–53), and `ready` waits for reconcile.
-   - So a reconcile-issued last hand-off that finds an earlier item still unnamed can be released only by its search or by the 500 ms cap. The deltas cannot arrive in time.
-   - The impact is bounded (boot and the first messages wait at most 500 ms more) and practically never happens: the item would need to be created within milliseconds of the SW's death, and Chrome names an item in a few milliseconds.
-   - The cap is what makes this safe. The design's "Restart at `await:handoff.restoreUi`" does not mention it. Next cycle: record it in one sentence, or feed the watchers from the `sw.ts` listener before `ready`. That needs one new `Engine` method and is not needed today.
-2. **A cancel during the last file's `download()` call.**
-   - The window is after the live check, about 1 ms of IPC. The started-after-cancel path cancels the download.
-   - With R-006 that item was created with the UI on, so it animates and appears as "Canceled" in the bubble. Under R-005 the same window existed for every file but was invisible.
-   - The window is too narrow to matter. No change.
-3. **The fake versus Chrome's naming order (item 5).**
-   - **The fake matches Chrome on the order that matters:** `download()` resolves with the id before the item is named, and the `filename` delta follows (`{ previous: '', current }`). In Chrome the id comes at item creation and target determination comes later.
-   - **Divergences:**
-     - The fake reserves `uniquify` targets in creation order. Chrome reserves them in determination order, so which file gets ` (1)` can differ while naming is deferred. No test depends on it.
-     - The fake's `interrupt()` always names first. Chrome can interrupt an item that was never named. The engine accepts any non-`in_progress` state, and the unit test "the earlier file leaving in_progress unnamed …" drives that path with a direct delta.
-     - Chrome may bundle `filename` with other fields (`danger`, `totalBytes`) in one delta. The watcher handles that.
-   - **Gap:** the fake does not model the animate-or-not decision itself. Suggested improvement (P2): record `animated = uiEnabled` when an item is named, and add an L2 assertion that exactly one item animated, the busy period's last. That pins CUJ-1 AC 14 ("at most one animation, at the end") directly, instead of through call order.
-4. **The e2e restore checks compare whole-millisecond timestamps.**
-   - `max(others.startTime) ≤ restoreAt ≤ last.startTime` cannot tell a same-millisecond inversion apart.
-   - This is acceptable: the L2 call log pins the order exactly (mutation table). The hold on p11 in `cuj1` also makes "no restore before p11 lands" structural.
-5. **Two definite-assignment `!`s in `engine.ts` (213, 275).** They are justified (see Type safety). No change until the minimum Chrome version reaches 119.
-6. **Gap 1 wording (system.md §15, design-download-engine.md "Error handling").**
-   - The design says a prompt-held file "does not hold back the last hand-off". That is true, but in the one realistic case, a deep-scan prompt on the ugoira zip, `frames.json` and the video depend on the zip being `done`. So no final hand-off can happen until the user acts in `chrome://downloads`.
-   - The release-checklist line is accurate ("the job waits and the button stays hidden"). The design sentence should state this explicitly, because pm decides gap 1 from it.
-7. **The design's test list says "the watcher is gone afterwards", but no test checks it** (that mutation survives). A leaked watcher has no observable effect beyond one closure per wait, per SW instance. Next cycle: drop the clause from the test list, or expose a watcher count through the test API. A test hook only for this would be over-engineering.
-
-## Fixed
-
-None (parallel-QA constraint). Every simple item is listed above for the next cycle.
-
-## Engineering-task verification (eng done-gate)
-
-No retry task came from `docs/eng-backlog.md`. It is still empty (`Next-ID: ENG-012`). Nothing was removed or filed: this review may write only this file.
-
-## Next cycle
-
-**Should fix** (test and doc work, no behaviour change; one ENG entry, P2, could carry all of it):
-- W1: add the held-hide "last two together" unit test above.
-- Info 3: add the fake's `animated` flag and the matching L2 assertion.
-- Info 7: reconcile the design's test list with what is tested.
-
-**Design-doc edits** (tl, next Phase 1):
-- design-download-engine.md, "Restart at `await:handoff.restoreUi`": add the boot-time note (Info 1).
-- design-download-engine.md "Error handling" and system.md §15 gap 1: make explicit that a prompt on the ugoira zip blocks every later file, so it hides the UI until the user acts (Info 6).
-
-**Fine as is:** the rule, the claim, the waits, the cap, the re-check, the live check, the finalize and boot safety nets, type safety, listener registration, the prod bundle, and the size.
+**Fine as is:** the finish-based wait (delta watch, search fallback, cap, cleanup), the `decided` settle, the re-check, the counter rules, the constant and its §13 record, type safety, listener registration, the prod bundle, the size, and the ENG-012 test pins.
