@@ -239,6 +239,15 @@ export function labelLog(page: Page): Promise<LabelSample[]> {
   );
 }
 
+/** Pages counted by the label log's `N / total` entries, in order. */
+export function counts(log: LabelSample[], total: number): number[] {
+  const re = new RegExp(`^(\\d+) / ${total}$`);
+  return log.flatMap(({ text }) => {
+    const match = re.exec(text);
+    return match ? [Number(match[1])] : [];
+  });
+}
+
 /** Whether keyboard focus is on the pill (inside the host's closed shadow root). */
 export function buttonHasFocus(page: Page): Promise<boolean> {
   return page.evaluate((rootGlobal) => {

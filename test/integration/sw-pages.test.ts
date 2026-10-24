@@ -437,8 +437,19 @@ describe('sw: retries (CUJ-5)', () => {
       },
     );
     const first = tab.views.find((v) => v.progress?.kind === 'pages');
-    expect([first?.progress, tab.ended()?.outcome]).toEqual([
+    const done = tab.views
+      .filter((v) => v.status === 'running' && v.progress?.kind === 'pages')
+      .map((v) => (v.progress?.kind === 'pages' ? v.progress.done : -1));
+    // The running views climb 9 … 11 / 12; the last retried page's landing ends the job.
+    expect([
+      first?.progress,
+      done.at(-1),
+      done.every((d, i) => i === 0 || d >= done[i - 1]!),
+      tab.ended()?.outcome,
+    ]).toEqual([
       { kind: 'pages', done: 9, total: 12 },
+      11,
+      true,
       { type: 'saved', folder: RETRY_FOLDER, pages: 12 },
     ]);
   });

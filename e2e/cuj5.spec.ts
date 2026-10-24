@@ -96,9 +96,12 @@ import {
   buttonHasFocus,
   buttonView,
   clickButton,
+  counts,
   exposeButton,
   hoverButton,
+  labelLog,
   waitForText,
+  watchLabels,
   type ButtonView,
 } from './harness/hfp-button';
 import type { Harness } from './harness/launch';
@@ -485,6 +488,7 @@ test.describe('CUJ-5: recover when a download can’t start or breaks', { tag: '
     // The pattern changes before the retry: the retry still writes into the job's folder.
     await writeSettings(harness, { folderPattern: 'elsewhere/{id}' });
     const hold = server.hold(pagesOf(EXAMPLE, [4, 9, 11]));
+    await watchLabels(page);
     const retriedAt = Date.now();
     await clickButton(page);
     const busy = await waitForText(page, '9 / 12');
@@ -497,6 +501,11 @@ test.describe('CUJ-5: recover when a download can’t start or breaks', { tag: '
     const done = await settle(page, 'Saved · 12P');
     expect(done.title).toBe(`Saved to Downloads/${FOLDER}`);
     await expectBadge(harness, '', IDLE_TITLE);
+    // The count continues 9 / 12 → 11 / 12, then Saved · 12P directly (R-006 rev. 3).
+    const log = await labelLog(page);
+    expect(counts(log, 12).filter((n) => n < 9 || n > 11)).toEqual([]);
+    expect(log.map(({ text }) => text)).not.toContain('12 / 12');
+    expect(log.at(-1)?.text).toBe('Saved · 12P');
 
     // Only the 3 failed originals were fetched and handed to Chrome again.
     const refetched = requestsAfter(server, pagesOf(EXAMPLE, ALL_PAGES), retriedAt).map(

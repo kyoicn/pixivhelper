@@ -10,7 +10,8 @@
 // | 4  Folder: metadata.json + p0…p11, sizes = Content-Length                  | 'folder'                |
 // | 5  metadata.json: 12 keys in order, literal non-ASCII, `\n` kept           | 'folder'                |
 // | 6  Never more than 5 of this artwork's files in flight                     | 'in flight'             |
-// | 7  `N / 12` only rises; 12 / 12 only after every original; metadata ≠ N    | 'counter and badge'     |
+// | 7  `N / 12` only rises, up to `11 / 12`, then `Saved` directly             | 'counter and badge'     |
+// |    (`12 / 12` never shown); metadata ≠ N                                   |                         |
 // | 8  Cancel face after leaving once; cancel stops, keeps files, idle again   | 'cancel'                |
 // | 9  `Saved · 12P`, white/blue border/check, tooltip with the folder         | 'saved'                 |
 // | 10 SPA away and back shows Saved; reload shows `Download · 12P`            | 'saved'; with a job     |
@@ -54,6 +55,7 @@ import {
   buttonRule,
   buttonView,
   clickButton,
+  counts,
   exposeButton,
   HOST_TAG,
   hostConnectedAt,
@@ -104,15 +106,6 @@ async function writeSettings(
     await chrome.storage.sync.set({ settings: record });
     await chrome.storage.local.set({ settings: record });
   }, settings);
-}
-
-/** Pages counted by the label log's `N / total` entries, in order. */
-function counts(log: { text: string }[], total: number): number[] {
-  const re = new RegExp(`^(\\d+) / ${total}$`);
-  return log.flatMap(({ text }) => {
-    const match = re.exec(text);
-    return match ? [Number(match[1])] : [];
-  });
 }
 
 /** Every item in chrome.downloads, oldest first, with Chrome's start time in ms. */
@@ -389,7 +382,7 @@ test.describe('CUJ-1: download an illustration or manga', { tag: '@cuj1' }, () =
     first.release();
     await waitForText(page, '11 / 12');
     await expectBadge(harness, '1', 'Helper for Pixiv — 1 file remaining');
-    // 12 / 12 needs the last original: it stays at 11 while page 11 is in flight.
+    // The count holds at 11 while page 11 is in flight; its landing shows Saved directly.
     await expect.poll(() => last.held).toBe(1);
     await page.waitForTimeout(500);
     expect((await buttonView(page)).text).toBe('11 / 12');
@@ -405,8 +398,11 @@ test.describe('CUJ-1: download an illustration or manga', { tag: '@cuj1' }, () =
     const seen = counts(log, 12);
     expect(seen[0]).toBe(0);
     expect(seen).toEqual([...seen].sort((a, b) => a - b));
-    expect(seen.every((n) => n <= 12)).toBe(true);
+    expect(log.map(({ text }) => text)).not.toContain('12 / 12');
+    expect(seen.at(-1)).toBe(11);
     expect(log.at(-1)?.text).toBe('Saved · 12P');
+    // Saved · 12P directly follows 11 / 12 (R-006 rev. 3).
+    expect(log.at(-2)?.text).toBe('11 / 12');
     // 0 / 12 within 100 ms of the click (PRD §4.7.5).
     const clickAt = await page.evaluate(
       () => (window as unknown as { __clickAt: number }).__clickAt,
