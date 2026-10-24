@@ -1,4 +1,4 @@
-// design-download-engine.md "Chrome's download UI (download-ui.ts, R-005)": the state/call table,
+// design-download-engine.md "Chrome's download UI (download-ui.ts, R-005, R-006)": the call table,
 // call ordering, error handling and the e2e test API, against a scripted setUiOptions.
 
 import { fileURLToPath } from 'node:url';
@@ -117,6 +117,27 @@ describe('downloadUi: call table', () => {
     void ui.hideForHandOff();
     await flush();
     expect(chrome.asked()).toEqual([true]);
+  });
+
+  // R-006: the last hand-off of a busy period whose first hide is still in flight.
+  it('hideForHandOff: then restore in the same tick reach Chrome in that order', async () => {
+    const chrome = scriptedChrome();
+    const ui = createDownloadUi(chrome.setUiOptions);
+    void ui.hideForHandOff();
+    void ui.restore();
+    await flush();
+    chrome.accept();
+    await flush();
+    expect(chrome.asked()).toEqual([false, true]);
+  });
+
+  it('hideForHandOff: a restore queued behind it waits for the hide to settle first', async () => {
+    const chrome = scriptedChrome();
+    const ui = createDownloadUi(chrome.setUiOptions);
+    void ui.hideForHandOff();
+    const restore = tracked(ui.restore());
+    await flush();
+    expect([chrome.asked(), restore.done]).toEqual([[false], false]);
   });
 
   it('restore: a second restore while the UI is back makes no call', async () => {

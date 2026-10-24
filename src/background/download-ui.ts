@@ -1,6 +1,8 @@
 // Chrome's download UI while jobs run (design-download-engine.md "Chrome's download UI
-// (download-ui.ts, R-005)"; PRD §4.1 #3, D12). From a busy period's first hand-off until the last
-// running job ends, Chrome's download UI is off, so no file plays the fly-to-toolbar animation.
+// (download-ui.ts, R-005, R-006)"; PRD §4.1 #3, D12). From a busy period's first hand-off until
+// just before its last (the last file of the last running job), Chrome's download UI is off, so
+// no file but that last one plays the fly-to-toolbar animation; a busy period that ends without
+// such a hand-off gets the UI back at its end.
 // Chrome keeps the setting per extension in the browser process, outlives this SW instance with it,
 // and offers no getter, so nothing is persisted: each instance only remembers what it asked for.
 
@@ -10,9 +12,12 @@ import { exposeTestApi } from '../shared/test-hooks';
 const log = createLogger('download-ui');
 
 export interface DownloadUi {
-  /** Before a file is handed to Chrome. Resolves once Chrome has applied the hide (or refused it); never rejects. */
+  /** Before every hand-off but the busy period's last. Resolves once Chrome has applied the hide (or refused it); never rejects. */
   hideForHandOff(): Promise<void>;
-  /** The last running job ended, or the SW started with none running. Resolves once Chrome has answered; never rejects. */
+  /**
+   * Before the busy period's last hand-off (R-006), when the last running job ends, or when the SW starts with none
+   * running. Resolves once Chrome has answered; never rejects. Makes no call when this instance last asked for `true`.
+   */
   restore(): Promise<void>;
 }
 

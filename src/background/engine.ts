@@ -3,7 +3,11 @@
 // await may be the SW's last, so state changes are persisted before they are acted on and
 // reconcile() repairs whatever a restart interrupted.
 
-import { MAX_PAGES_PER_WORK, OFFSCREEN_DOCUMENT_PATH } from '../shared/constants';
+import {
+  HANDOFF_TARGET_WAIT_MS,
+  MAX_PAGES_PER_WORK,
+  OFFSCREEN_DOCUMENT_PATH,
+} from '../shared/constants';
 import { createLogger } from '../shared/log';
 import type { JobCancelResponse, OffscreenToSwEvent, OffTaskSnapshot } from '../shared/messages';
 import { classifyOutcome } from '../shared/outcome';
@@ -28,7 +32,7 @@ import { createPusher } from './pusher';
 import { reconcileJob } from './reconcile';
 import { createRegistry, type Effect, type FileRef, type Registry } from './registry';
 import { applyResolution, resolve } from './resolver';
-import { cancel, commandFor, fileAt } from './scheduler';
+import { cancel, commandFor, fileAt, handOffKey, isLastHandOff } from './scheduler';
 import { apiFetchJson, pushView } from './tab-client';
 import type { JobRecord, StartRequest } from '../shared/job';
 import { toView } from './view';
@@ -53,8 +57,9 @@ export interface Engine {
   /** SW start, after hydrate(): repairs what a restart interrupted, then pumps every job. */
   reconcile(): Promise<void>;
   /**
-   * SW start, after hydrate(): with no job running, turns Chrome's download UI back on (R-005), in
-   * case an earlier instance died before its restore. Never rejects.
+   * SW start, after hydrate(): with no job running, turns Chrome's download UI back on (R-005,
+   * R-006), in case an earlier instance died before its busy period's last hand-off or its end.
+   * Never rejects.
    */
   restoreDownloadUiIfIdle(): Promise<void>;
 }
@@ -106,6 +111,14 @@ export function createEngine(downloadUi: DownloadUi = createDownloadUi()): Engin
    * still finds its file (its mutation queues behind the one storing the id).
    */
   const pendingDownloads = new Map<number, FileRef>();
+  /**
+   * Hand-offs past the last-hand-off decision, by handOffKey; each settles with its download id,
+   * or null (R-006). In memory only, like pendingDownloads: after a restart it is empty, and that
+   * is exact, since reconcile adopts or re-issues every interrupted hand-off.
+   */
+  const decided = new Map<string, Promise<number | null>>();
+  /** Called with every downloads.onChanged delta, before onDownloadChanged filters it (R-006). */
+  const deltaWatchers = new Set<(delta: chrome.downloads.DownloadDelta) => void>();
 
   async function runEffects(job: JobRecord, effects: Effect[]): Promise<void> {
     for (const effect of effects) {
@@ -190,8 +203,62 @@ export function createEngine(downloadUi: DownloadUi = createDownloadUi()): Engin
   }
 
   /**
-   * Hands a `saving` file's blob URL to Chrome and stores the download id. Chrome's download UI is
-   * hidden first (R-005), so not even the job's first file plays Chrome's animation.
+   * Resolves once Chrome has determined the target path of each download in `ids` (or the download
+   * left `in_progress`, or Chrome no longer knows it), or after HANDOFF_TARGET_WAIT_MS. Never
+   * rejects.
+   */
+  async function targetsKnown(ids: readonly number[]): Promise<void> {
+    const pending = new Set(ids);
+    if (pending.size === 0) return;
+    let release!: () => void;
+    const settled = new Promise<void>((resolve) => (release = resolve));
+    const watch = (delta: chrome.downloads.DownloadDelta): void => {
+      if (delta.filename?.current || (delta.state && delta.state.current !== 'in_progress')) {
+        pending.delete(delta.id);
+      }
+      if (pending.size === 0) release();
+    };
+    // Before the search, so no delta falls between the two.
+    deltaWatchers.add(watch);
+    const timer = setTimeout(release, HANDOFF_TARGET_WAIT_MS);
+    try {
+      const found = await Promise.all(
+        [...pending].map(async (id) => [id, (await chrome.downloads.search({ id }))[0]] as const),
+      );
+      for (const [id, item] of found) {
+        if (!item || item.filename !== '' || item.state !== 'in_progress') pending.delete(id);
+      }
+      if (pending.size > 0) await settled;
+    } catch (error) {
+      // Go on: at worst one extra animation.
+      log.warn('downloads.search failed', error);
+    } finally {
+      deltaWatchers.delete(watch);
+      clearTimeout(timer);
+    }
+  }
+
+  /** downloadIds of the `saving` files of running jobs, other than `self`. */
+  function otherSavingIds(self: FileRef): number[] {
+    return registry
+      .list()
+      .flatMap((job) =>
+        job.files.flatMap((file) =>
+          file.state === 'saving' &&
+          file.downloadId !== undefined &&
+          !(job.jobId === self.jobId && file.idx === self.idx)
+            ? [file.downloadId]
+            : [],
+        ),
+      );
+  }
+
+  /**
+   * Hands a `saving` file's blob URL to Chrome and stores the download id. Every hand-off but the
+   * busy period's last hides Chrome's download UI first (R-005), so not even the job's first file
+   * plays Chrome's animation. The last one turns the UI back on first instead (R-006), once Chrome
+   * has created and named every earlier file, so its own download brings the downloads button back
+   * with one animation.
    */
   async function handOff(job: JobRecord, idx: number): Promise<void> {
     const file = fileAt(job, idx);
@@ -199,31 +266,65 @@ export function createEngine(downloadUi: DownloadUi = createDownloadUi()): Engin
       return;
     }
     const { blobUrl } = file;
-    await downloadUi.hideForHandOff();
-    if (__TEST_HOOKS__) await __testHook('await:handoff.hideUi');
-    // Cancelled while the hide was in flight: the file never reaches Chrome, so it leaves no
-    // "Canceled" entry. The cancel itself fails the file before finalize drops the record.
-    const live = registry.get(job.jobId);
-    if (!live || fileAt(live, idx)?.state !== 'saving') return;
-    if (__TEST_HOOKS__) await __testHook('await:handoff.download');
-    let downloadId: number;
+    const self: FileRef = { jobId: job.jobId, idx };
+    const key = handOffKey(job.jobId, idx);
+    // No await between the snapshot, the decision and the claim: of two racing hand-offs, the
+    // later one sees the earlier as handed off, so exactly one is last.
+    const earlier = new Map(decided);
+    let last = isLastHandOff(registry.list(), self, earlier);
+    let markIssued!: (downloadId: number | null) => void;
+    decided.set(key, new Promise<number | null>((resolve) => (markIssued = resolve)));
     try {
-      downloadId = await chrome.downloads.download(downloadOptions(job, file));
-    } catch (error) {
-      await registry.mutate(job.jobId, (record) =>
-        onHandOffFailed(record, idx, blobUrl, errorMessage(error)),
-      );
-      return;
-    }
-    pendingDownloads.set(downloadId, { jobId: job.jobId, idx });
-    try {
-      const running = await registry.mutate(job.jobId, (record) =>
-        onDownloadStarted(record, idx, downloadId),
-      );
-      // The job was cancelled while Chrome started the download.
-      if (!running) await cancelDownloads([downloadId]);
+      if (last) {
+        // Chrome creates and names every earlier file while the UI is still off, so none of them
+        // animates after the enable.
+        const earlierIds = await Promise.all(earlier.values());
+        await targetsKnown([
+          ...earlierIds.filter((id): id is number => id !== null),
+          ...otherSavingIds(self),
+        ]);
+        // A job created, or a hand-off decided, during the waits makes this file not last.
+        last = isLastHandOff(registry.list(), self, earlier);
+      }
+      if (last) {
+        await downloadUi.restore();
+        if (__TEST_HOOKS__) await __testHook('await:handoff.restoreUi');
+      } else {
+        await downloadUi.hideForHandOff();
+        if (__TEST_HOOKS__) await __testHook('await:handoff.hideUi');
+      }
+      // Cancelled while the UI call was in flight: the file never reaches Chrome, so it leaves no
+      // "Canceled" entry. The cancel itself fails the file before finalize drops the record.
+      const live = registry.get(job.jobId);
+      if (!live || fileAt(live, idx)?.state !== 'saving') return;
+      if (__TEST_HOOKS__) await __testHook('await:handoff.download');
+      let downloadId: number;
+      try {
+        downloadId = await chrome.downloads.download(downloadOptions(job, file));
+      } catch (error) {
+        markIssued(null);
+        await registry.mutate(job.jobId, (record) =>
+          onHandOffFailed(record, idx, blobUrl, errorMessage(error)),
+        );
+        return;
+      }
+      markIssued(downloadId);
+      pendingDownloads.set(downloadId, { jobId: job.jobId, idx });
+      try {
+        const running = await registry.mutate(job.jobId, (record) =>
+          onDownloadStarted(record, idx, downloadId),
+        );
+        // The job was cancelled while Chrome started the download.
+        if (!running) await cancelDownloads([downloadId]);
+      } finally {
+        pendingDownloads.delete(downloadId);
+      }
     } finally {
-      pendingDownloads.delete(downloadId);
+      // markIssued is a no-op once settled and covers the early return. The entry goes only once
+      // the id is stored, the file failed or the hand-off gave up, so a `saving` file without a
+      // downloadId is always either in `decided` or still to be handed off.
+      markIssued(null);
+      decided.delete(key);
     }
   }
 
@@ -231,7 +332,9 @@ export function createEngine(downloadUi: DownloadUi = createDownloadUi()): Engin
    * Classifies the job, pushes its final view, then deletes its record (in that order, so a
    * restart in between finalizes again rather than losing the push), frees its offscreen tasks
    * and updates the badge. Once no job is left (a job still finalizing is still listed), Chrome's
-   * download UI comes back and the offscreen document closes after a grace.
+   * download UI is turned back on and the offscreen document closes after a grace. The restore is
+   * the safety net for a busy period that ended without a final hand-off (cancel, failure, needs
+   * login, Unavailable); after one, which already restored the UI, it makes no Chrome call (R-006).
    */
   async function finalize(job: JobRecord): Promise<void> {
     if (finalizing.has(job.jobId) || !registry.get(job.jobId)) return;
@@ -382,6 +485,7 @@ export function createEngine(downloadUi: DownloadUi = createDownloadUi()): Engin
     },
 
     async onDownloadChanged(delta) {
+      for (const watch of deltaWatchers) watch(delta);
       const state = delta.state?.current;
       if (state !== 'complete' && state !== 'interrupted') return;
       const ref = registry.findByDownloadId(delta.id) ?? pendingDownloads.get(delta.id);

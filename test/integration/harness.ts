@@ -207,9 +207,11 @@ export class ScriptedOffscreen {
     return this.commands.filter((command) => command.type === type);
   }
 
-  /** Emits the result of every running task now. */
-  finish(): void {
-    for (const task of this.tasks.values()) if (task.state === 'running') this.complete(task);
+  /** Emits the result of every running task now, or of those `match` picks. */
+  finish(match: (task: FakeTask) => boolean = () => true): void {
+    for (const task of this.tasks.values()) {
+      if (task.state === 'running' && match(task)) this.complete(task);
+    }
   }
 
   private handle(message: unknown): unknown {

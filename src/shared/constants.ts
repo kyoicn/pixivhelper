@@ -79,6 +79,8 @@ export const LIVE_PROGRESS_THROTTLE_MS = 5000;
 export const OFFSCREEN_CLOSE_GRACE_MS = 5000;
 /** Badge/title renders are coalesced with this trailing delay. */
 export const BADGE_COALESCE_MS = 50;
+/** Caps the wait for Chrome to name earlier in-progress files before the UI restore (R-006). */
+export const HANDOFF_TARGET_WAIT_MS = 500;
 
 // ── Toolbar badge ──
 export const BADGE_BACKGROUND_COLOR = '#1f1f1f';

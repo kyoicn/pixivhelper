@@ -6,7 +6,7 @@ import { MAX_IN_FLIGHT_PER_JOB } from '../shared/constants';
 import { buildMetadata, serializeJson } from '../shared/metadata';
 import type { Failure } from '../shared/types';
 import type { OffscreenCommand } from './offscreen-client';
-import type { Effect } from './registry';
+import type { Effect, FileRef } from './registry';
 import type { FileState, FileTask, JobRecord } from '../shared/job';
 
 const JSON_MIME = 'application/json';
@@ -18,6 +18,47 @@ const ABORTED: Failure = { kind: 'aborted', attempts: 0 };
 
 export function isTerminal(file: FileTask): boolean {
   return TERMINAL.has(file.state);
+}
+
+/** A hand-off's key in the engine's `decided` map ("The last hand-off (R-006)"). */
+export const handOffKey = (jobId: string, idx: number): string => `${jobId}#${idx}`;
+
+/** The file will still be handed to Chrome by a later handOff(), unless it fails first (R-006). */
+export function awaitsHandOff(file: FileTask, decided: boolean): boolean {
+  if (!file.save) return false;
+  switch (file.state) {
+    case 'queued':
+    case 'fetching':
+    case 'ready':
+      return true;
+    case 'saving':
+      return file.downloadId === undefined && !decided;
+    case 'done':
+    case 'failed':
+    case 'skipped':
+      return false;
+  }
+}
+
+/**
+ * R-006: `self`'s hand-off is the busy period's last: no running job is still resolving, and no
+ * other file of any running job will still be handed to Chrome. `decided` holds the handOffKeys
+ * of hand-offs that passed this decision before `self` did (a Set or the engine's Map both fit).
+ */
+export function isLastHandOff(
+  jobs: readonly JobRecord[],
+  self: FileRef,
+  decided: { has(key: string): boolean },
+): boolean {
+  return jobs.every(
+    (job) =>
+      !(job.phase === 'resolving' && job.stopReason === null && job.apiFailure === null) &&
+      job.files.every(
+        (file) =>
+          (job.jobId === self.jobId && file.idx === self.idx) ||
+          !awaitsHandOff(file, decided.has(handOffKey(job.jobId, file.idx))),
+      ),
+  );
 }
 
 export function fileAt(job: JobRecord, idx: number): FileTask | undefined {
