@@ -66,6 +66,11 @@ export const SAVED_VISIBLE_MS = 2000;
 export const SAVED_FADE_MS = 300;
 /** Button falls back to floating if no action row appears within this time of entering an artwork route. */
 export const FLOAT_FALLBACK_MS = 3000;
+/**
+ * The fallback timer fires this much before FLOAT_FALLBACK_MS, so placing and painting the pill
+ * still lands inside the PRD's 3 s (system.md D14).
+ */
+export const FLOAT_PLACEMENT_BUDGET_MS = 250;
 /** Double-click guard: a click on a busy button this soon after the job started is ignored. */
 export const CLICK_GUARD_MS = 500;
 /** Live-region progress announcements are throttled to one per interval. */

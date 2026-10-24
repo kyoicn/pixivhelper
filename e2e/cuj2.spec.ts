@@ -13,6 +13,8 @@
 //       (also step 1: a change in another tab shows within 1 s)
 // - … or WebM when H.264 can't be encoded; hint, Saved label and extension say WebM
 //     → "no H.264 …" (the probe result is seeded as avc: null in the caps cache)
+// - 176 px in English in idle, busy, Cancel-hover and Saved; the Ugoira output never changes it
+//   (R-004 S1) → "width: 176 px …", "idle: Download · WebM and Download · ZIP …"
 // - Busy label is an integer percent, never decreases, no 100% before the last file lands
 //     → every job test (expectPercentRule); ≥ 1 update/s during the encode → "long ugoira …"
 // - Badge `1` for the whole job, gone when it ends → "example …", "long ugoira …", "ZIP only …";
@@ -49,6 +51,8 @@ import { DEFAULT_SETTINGS, type StoredSettings } from '../src/shared/settings';
 import type { Settings, UgoiraOutput } from '../src/shared/types';
 import { ugoiraFrames, ugoiraZip } from './fixtures/assets';
 import { artworkUrl, requireWork, ugoiraZipUrl, type UgoiraWork } from './fixtures/works';
+import { restingView } from './harness/flows';
+import { clickButton, exposeButton, hoverButton, waitForText } from './harness/hfp-button';
 import type { Harness } from './harness/launch';
 import {
   ffprobe,
@@ -680,10 +684,10 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
     let pill = await readPill(page);
     expect(pill.text).toBe('Download · WebM');
     expect(pill.aria).toBe('Download this ugoira as WebM, with its frame zip and metadata');
-    // Every format's faces are width candidates, so a format change never resizes the pill. The
-    // English value is measured (176 px with the e2e fonts; PRD conflict, system.md §15 item 10).
+    // Every format's faces are width candidates, so a format change never resizes the pill; in
+    // English it is 176 px for every ugoira (PRD §4.7.2, CUJ-2 AC, since R-004 S1).
     const width = await pillWidth(page);
-    expect(width).toBeGreaterThanOrEqual(164);
+    expect(width).toBe(176);
 
     await setUgoiraOutput(harness, 'zip');
     await expect
@@ -698,6 +702,46 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
       .poll(async () => (await readPill(page)).text, { timeout: FOLLOW_MS })
       .toBe('Download · WebM');
     expect(await pillWidth(page)).toBe(width);
+  });
+
+  test('width: 176 px in idle, busy, Cancel-hover and Saved, never changing', async ({
+    harness,
+    server,
+  }) => {
+    const page = await openArtwork(harness, EXAMPLE);
+    const label = FORMAT_LABEL[defaultVideo(await probeResult(harness, EXAMPLE), EXAMPLE)];
+    await exposeButton(page);
+    await page.evaluate((host) => {
+      const el = document.querySelector(host);
+      const w = window as unknown as { __hfpWidths: number[] };
+      w.__hfpWidths = [];
+      if (el) {
+        new ResizeObserver(() => w.__hfpWidths.push(el.getBoundingClientRect().width)).observe(el);
+      }
+    }, HOST);
+    const idle = await restingView(page);
+    expect([idle.text, idle.width]).toEqual([`Download · ${label}`, 176]);
+
+    // The zip trickles until released, so the job stays busy.
+    const hold = server.hold(ugoiraZipUrl(EXAMPLE));
+    await clickButton(page);
+    await expect.poll(() => hold.held).toBe(1);
+    const busy = await restingView(page);
+    expect([busy.glyph, busy.width]).toEqual(['ring', 176]);
+
+    // The Cancel face shows once the pointer has left after the starting click.
+    await hoverButton(page, true);
+    expect((await waitForText(page, 'Cancel')).width).toBe(176);
+
+    hold.release();
+    await hoverButton(page, false);
+    const saved = await waitForText(page, `Saved · ${label}`, { timeout: JOB_TIMEOUT_MS });
+    expect(saved.width).toBe(176);
+
+    const widths = await page.evaluate(
+      () => (window as unknown as { __hfpWidths: number[] }).__hfpWidths,
+    );
+    expect([...new Set(widths)]).toEqual([176]);
   });
 
   test('example (136004512) as MP4: percent, badge 1, Saved · MP4, exact folder, identical zip and frames.json, plays in Chrome', async ({

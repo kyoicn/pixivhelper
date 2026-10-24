@@ -6,6 +6,7 @@ import {
   LOCALE_FLOOR_PX,
   type Measure,
   settleWidth,
+  UGOIRA_LOCALE_FLOOR_PX,
 } from '../../../src/content/button/width';
 import type { WorkInfo } from '../../../src/shared/types';
 import { stubChromeI18n } from '../../helpers/i18n-stub';
@@ -183,6 +184,30 @@ describe('computeWidth', () => {
   it('LOCALE_FLOOR_PX: only English has a floor', () => {
     expect(LOCALE_FLOOR_PX).toEqual({ en: 164, ja: 0, 'zh-CN': 0, 'zh-TW': 0 });
   });
+
+  it('UGOIRA_LOCALE_FLOOR_PX: only English has a floor, 176 px', () => {
+    expect(UGOIRA_LOCALE_FLOOR_PX).toEqual({ en: 176, ja: 0, 'zh-CN': 0, 'zh-TW': 0 });
+  });
+
+  it('computeWidth: an English ugoira whose faces measure narrower is 176 px', () => {
+    expect(computeWidth(UGOIRA, 'en', () => 150.5)).toBe(176);
+  });
+
+  it('computeWidth: an English ugoira takes a measured face wider than 176 px', () => {
+    const measure: Measure = (face) => (face.hint === 'WebM' ? 181.2 : 150);
+    expect(computeWidth(UGOIRA, 'en', measure)).toBe(182);
+  });
+
+  it('computeWidth: an unknown work keeps the 164 px floor, not the ugoira floor', () => {
+    expect(computeWidth(null, 'en', () => 120)).toBe(164);
+  });
+
+  it.each(['ja', 'zh-CN', 'zh-TW'] as const)(
+    'computeWidth: a %s ugoira uses the measured width',
+    (locale) => {
+      expect(computeWidth(UGOIRA, locale, () => 120.2)).toBe(121);
+    },
+  );
 });
 
 describe('settleWidth', () => {
@@ -224,6 +249,19 @@ describe('settleWidth', () => {
     const widened = settleWidth(first, computeWidth(UGOIRA, 'en', realMeasure), false);
     const afterClick = settleWidth(widened, 250, true);
     expect([first, widened, afterClick]).toEqual([164, 176, 176]);
+  });
+
+  it('settleWidth: an ugoira with narrow faces widens once from 164 to its 176 px floor', () => {
+    const narrow: Measure = () => 150;
+    const first = settleWidth(null, computeWidth(null, 'en', narrow), false);
+    const widened = settleWidth(first, computeWidth(UGOIRA, 'en', narrow), false);
+    expect([first, widened]).toEqual([164, 176]);
+  });
+
+  it('settleWidth: an ugoira with narrow faces clicked before its metadata stays 164 px', () => {
+    const narrow: Measure = () => 150;
+    const first = settleWidth(null, computeWidth(null, 'en', narrow), false);
+    expect(settleWidth(first, computeWidth(UGOIRA, 'en', narrow), true)).toBe(164);
   });
 
   it('settleWidth: an ugoira clicked before its metadata keeps the provisional 164 px', () => {

@@ -1,9 +1,11 @@
 // Placement of the one <hfp-download> host (design-artwork-button.md "Mounting (mount.ts)"): next
 // to pixiv's like control, re-inserted within a frame after pixiv re-renders the row, or floating
-// over the artwork when there is no row FLOAT_FALLBACK_MS after the route was entered. The host
-// keeps its shadow root and state when moved, so moving it never changes what the button shows.
+// over the artwork when there is no row by FLOAT_FALLBACK_MS after the route was entered. The
+// fallback timer fires FLOAT_PLACEMENT_BUDGET_MS early and places the pill synchronously, because
+// the PRD's 3 s run to the pill on screen (R-004 S4, system.md D14). The host keeps its shadow
+// root and state when moved, so moving it never changes what the button shows.
 
-import { FLOAT_FALLBACK_MS } from '../shared/constants';
+import { FLOAT_FALLBACK_MS, FLOAT_PLACEMENT_BUDGET_MS } from '../shared/constants';
 import { createLogger } from '../shared/log';
 import { PILL_HEIGHT_PX } from './button/styles';
 import { type ActionRowHit, findActionRow, findArtworkArea } from './pixiv-dom';
@@ -18,6 +20,8 @@ const FLOAT_INSET_PX = 16;
 /** Viewport mode (no artwork area either): inset from the viewport's bottom-right corner. */
 const VIEWPORT_INSET_PX = 24;
 const FLOAT_Z_INDEX = '2147483000';
+/** When the fallback timer fires: early enough that placing and painting fit in the 3 s. */
+const FALLBACK_TIMER_MS = FLOAT_FALLBACK_MS - FLOAT_PLACEMENT_BUDGET_MS;
 const FLOATING_PROPS = ['position', 'z-index', 'left', 'top', 'right', 'bottom'] as const;
 const SPACING_PROPS = ['margin-left', 'margin-right'] as const;
 
@@ -210,11 +214,12 @@ export function createMount(options: MountOptions): Mount {
       resetFallback();
       // Measured from entering the route and not cancelled by finding the row: a row that is
       // missing at any later point (a redesign, or a row pixiv removed) floats the host at once.
+      // The callback places without waiting for a frame, so the pill paints at the next one.
       fallbackTimer = setTimeout(() => {
         fallbackTimer = undefined;
         fallbackFired = true;
         ensurePlaced();
-      }, FLOAT_FALLBACK_MS);
+      }, FALLBACK_TIMER_MS);
       schedule();
     },
     hide,
