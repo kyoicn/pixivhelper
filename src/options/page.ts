@@ -19,6 +19,7 @@ import {
 import type { Settings, UgoiraOutput } from '../shared/types';
 import { bindChips } from './chips';
 import { createSavedIndicator, type SavedIndicator } from './saved';
+import { bindSingleLine } from './single-line';
 import { applyStrings, errorMessage, previewLine, stillUsingLine } from './strings';
 
 type Section = 'folder' | 'ugoira' | 'metadata';
@@ -74,6 +75,7 @@ export async function initOptionsPage(): Promise<void> {
     chrome.runtime.getManifest().version,
   );
   field.maxLength = PATTERN_MAX_CHARS;
+  bindSingleLine(field, PATTERN_MAX_CHARS);
 
   // The newest values this tab saved or received; every write starts from them.
   let current = pickSettings(await readSettings());

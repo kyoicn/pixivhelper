@@ -41,7 +41,10 @@ export const ICU_WHITE_SPACE: readonly number[] = [
 type TokenName = keyof TokenValues;
 const KNOWN_TOKENS: ReadonlySet<string> = new Set(['{artist}', '{id}', '{title}', '{userId}']);
 const KNOWN_TOKEN_RE = /\{(artist|id|title|userId)\}/g;
-const BRACED_RE = /\{[^{}]*\}/g;
+// Each '{' up to its '}', or, for a '{' left unclosed (R-004 S5), up to the next '{' or the end.
+// An unclosed fragment never ends in '}', so it is never a known token. A '}' outside every match
+// is literal.
+const BRACE_FRAGMENT_RE = /\{[^{}]*(?:\}|(?=\{)|$)/g;
 const ILLEGAL_LITERAL_RE = /[:*?"<>|]/;
 
 // safe_component in ref/pixiv-dl. The whitespace class is Python's str.isspace set, not JS \s.
@@ -103,8 +106,8 @@ export function validatePattern(p: string): PatternError | null {
   }
   if (p.includes('\\')) return { code: 'backslash' };
   if (p.split('/').some((seg) => seg.trim() === '..')) return { code: 'dotdot' };
-  for (const [token] of p.matchAll(BRACED_RE)) {
-    if (!KNOWN_TOKENS.has(token)) return { code: 'unknownToken', token };
+  for (const [fragment] of p.matchAll(BRACE_FRAGMENT_RE)) {
+    if (!KNOWN_TOKENS.has(fragment)) return { code: 'unknownToken', token: fragment };
   }
   if (ILLEGAL_LITERAL_RE.test(p.replace(KNOWN_TOKEN_RE, ''))) return { code: 'illegalChars' };
   if (p.length > PATTERN_MAX_CHARS) return { code: 'tooLong' };

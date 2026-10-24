@@ -243,20 +243,39 @@ h2 {
 
 .preview {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   margin-top: 16px;
   font-size: 13px;
+  line-height: 20px;
   color: var(--help);
 }
 
-/* Its parts are laid out as the preview line's own flex items, as in the mocks. */
+/* Centres the 16 px icon on the first 20 px line. */
+.preview svg {
+  margin-top: 2px;
+}
+
 .preview-text {
-  display: contents;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* "Still using:" and "Preview:" never break (R-004 S15); the space after each stays a break
+   opportunity. */
+.label {
+  white-space: nowrap;
+}
+
+/* Atomic, so the pattern moves to the next line whole and breaks only when longer than a line. */
+.pattern {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--text);
 }
 
 .path {
-  min-width: 0;
   overflow-wrap: anywhere;
   color: var(--text);
 }

@@ -228,6 +228,10 @@ Skeleton: every PRD acceptance criterion (docs/prd/prd-000-mvp.md), the check th
 | Preview `Downloads/pixiv/みずき-135882741/135882741_p0.jpg`                                                | text                                                                                  |
 | `pixiv/{artst}-{id}`: red border, exact message, "Still using" line; downloads keep the last valid pattern | ≤ 400 ms after typing; `chrome.storage` unchanged via `swEval`                        |
 | Each validation case shows its exact message                                                               | the 6 cases                                                                           |
+| S5: `pixiv/{user` and a pause: `Unknown token {user. …`, no `Saved`, reload shows the last valid pattern   | `pressSequentially`; `Saved` recorder; `chrome.storage` via `swEval`; `page.reload()` |
+| S5: a lone `}` is literal: `pixiv/a}b` is valid and saved                                                  | `Saved`; `chrome.storage`                                                             |
+| S15: error state in all 4 locales: `Still using:` on one line, the default pattern unbroken                | `test.use({ uiLocale })`; `.label` and `.pattern` each have one client rect           |
+| (edge) Paste with newlines drops them; validation runs as usual                                            | clipboard paste (QA's 3 lines, a trailing newline); `keyboard.insertText`             |
 | Autosave; `Saved` appears and fades after 2 s                                                              | timing                                                                                |
 | Reload shows the saved values                                                                              | `page.reload()`                                                                       |
 | A running download keeps its settings                                                                      | covered by CUJ-1 (pattern) and CUJ-2 (format) mid-job checks                          |

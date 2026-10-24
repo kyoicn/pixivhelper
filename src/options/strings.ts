@@ -66,13 +66,10 @@ export function errorMessage(error: PatternError): Copy {
   }
 }
 
-/**
- * `Preview: Downloads/<folder>/135882741_p0.jpg`. The space between the parts is a text node, so
- * the line reads as one sentence; the flex layout spaces the parts by its gap instead.
- */
+/** `Preview: Downloads/<folder>/135882741_p0.jpg`, as running text. */
 export function previewLine(folder: string): Copy {
   return [
-    h('span', null, t('opt_preview')),
+    h('span', { class: 'label' }, t('opt_preview')),
     ' ',
     mono(`${PREVIEW_ROOT}/${folder}/${PREVIEW_FILE}`, 'path'),
   ];
@@ -81,5 +78,14 @@ export function previewLine(folder: string): Copy {
 /** `Still using: <pattern> — your last valid pattern stays in effect until this one is fixed.` */
 export function stillUsingLine(pattern: string): Copy {
   const [before = '', after = ''] = splitOnPlaceholder('opt_still_using');
-  return [h('span', null, before), mono(pattern, 'path'), h('span', { class: 'muted' }, after)];
+  // The label never breaks (R-004 S15). Its trailing space stays outside it as a text node, so the
+  // line can still wrap between the label and the pattern.
+  const name = before.trimEnd();
+  const space = before.slice(name.length);
+  return [
+    h('span', { class: 'label' }, name),
+    ...(space === '' ? [] : [space]),
+    mono(pattern, 'pattern'),
+    h('span', { class: 'muted' }, after),
+  ];
 }

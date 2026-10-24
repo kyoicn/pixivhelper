@@ -132,6 +132,20 @@ function type(value: string): void {
   field().dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+/** The user selects the whole field and pastes `text`, as Chrome announces it before inserting. */
+function pasteOverAll(text: string): void {
+  field().focus();
+  field().setSelectionRange(0, field().value.length);
+  field().dispatchEvent(
+    new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'insertFromPaste',
+      data: text,
+    }),
+  );
+}
+
 /** Advances fake time by `ms`, then lets storage events and pending promises run. */
 async function advance(ms = 0): Promise<void> {
   await vi.advanceTimersByTimeAsync(ms);
@@ -484,6 +498,46 @@ describe('options page: folder pattern', () => {
     $('[data-token="{title}"]').click();
     await advance(SETTINGS_DEBOUNCE_MS);
     expect(stored()?.folderPattern).toBe('pixiv/{artist}-{id}{title}');
+  });
+
+  // R-004 S5: a pause mid-token never autosaves the fragment.
+  it('pattern: an unclosed { (pixiv/{user) names the fragment, stores nothing and shows no Saved', async () => {
+    type('pixiv/{user');
+    await advance(SETTINGS_DEBOUNCE_MS);
+    expect([
+      lineText('#pattern-error'),
+      storage.sync.set.mock.calls.length,
+      savedSections(),
+    ]).toEqual([
+      'Unknown token {user. Available tokens: {artist}, {id}, {title}, {userId}.',
+      0,
+      [],
+    ]);
+  });
+
+  it('pattern: a lone } is literal, so pixiv/a}b is saved', async () => {
+    type('pixiv/a}b');
+    await advance(SETTINGS_DEBOUNCE_MS);
+    expect([stored()?.folderPattern, savedSections()]).toEqual(['pixiv/a}b', ['folder']]);
+  });
+
+  it('pattern: a paste with line breaks is not saved before 400 ms have passed', async () => {
+    pasteOverAll('pixiv/\n{artist}/\r\n{title}\n');
+    await advance(SETTINGS_DEBOUNCE_MS - 1);
+    expect([field().value, storage.sync.set.mock.calls.length]).toEqual([
+      'pixiv/{artist}/{title}',
+      0,
+    ]);
+  });
+
+  it('pattern: a paste with line breaks is validated and saved without them after 400 ms', async () => {
+    pasteOverAll('pixiv/\n{artist}/\r\n{title}\n');
+    await advance(SETTINGS_DEBOUNCE_MS);
+    expect([stored()?.folderPattern, savedSections(), lineText('#preview')]).toEqual([
+      'pixiv/{artist}/{title}',
+      ['folder'],
+      'Preview: Downloads/pixiv/みずき/雨上がりの渋谷/135882741_p0.jpg',
+    ]);
   });
 });
 
