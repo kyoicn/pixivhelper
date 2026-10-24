@@ -1,6 +1,6 @@
 # Test Strategy & QA Harness
 
-> Last updated: 2026-10-23 16:31:01 (UTC-7)
+> Last updated: 2026-10-23 17:32:24 (UTC-7)
 > Serves: prd-000 — every CUJ's acceptance criteria (CUJ-1 … CUJ-5), including the R-004 and R-005 amendments; PRD Goal 2 (parity with `ref/pixiv-dl`)
 
 ## Overview
@@ -277,12 +277,11 @@ sequenceDiagram
 
 - **devDependencies:** `vitest@^5`, `happy-dom@^21`, `@playwright/test@^1.64`, `selfsigned@^5.5`, `typescript@~6.0.3`, `eslint@^10`, `typescript-eslint@^8.72`, `prettier@^3`, `@types/chrome@^0.3`, `esbuild@^0.28`.
 - **System tools:** `python3` ≥ 3.10 (golden), `ffprobe`/`ffmpeg` (optional; `@ffprobe` specs skip without them).
-- **ENG backlog:** ENG-001 … ENG-011 are done (scaffold, platform spike, golden generator, L3 harness, CI, packaging and the release checklist, prod bundle free of test hooks, layering, fake-server zip prebuild, content bundle size budget, encoder pass count). None is open. The release checklist (`docs/release-checklist.md`) gains the R-005 L5 items above with the R-005 task.
+- **ENG backlog:** ENG-001 … ENG-011 are done (scaffold, platform spike, golden generator, L3 harness, CI, packaging and the release checklist, prod bundle free of test hooks, layering, fake-server zip prebuild, content bundle size budget, encoder pass count). None is open. The release checklist (`docs/release-checklist.md`) carries the R-005 L5 items above (§2) and the `downloads.ui` justification (§5) since iteration 3.
 
 ## Open Questions & Risks
 
 - **`--host-resolver-rules` port mapping and `Browser.setDownloadBehavior: default` are verified by ENG-004.** Fallback for ports: bind the fake server to 443 via `authbind`/`setcap` on CI.
 - **macOS UI-locale switching** via `-AppleLanguages` is less reliable than Linux `--lang`. If it fails, 4-locale UI checks run on Linux only.
 - **H.264 in CI:** if the CfT Linux build has no usable H.264 encoder (the probe returns `avc: null`), MP4 assertions are skipped there and covered by L5. WebM is always covered.
-- **`e2e/README.md` CUJ-5 mapping** still says "next iteration"; `e2e/cuj5.spec.ts` (QA, iteration 1) owns those rows now and the README must point to it (QA recommendation 6).
 - **Chromium extension-request throttling** affects the e2e build: with the ×0.01 time scale, repeated 500/503 answers get later attempts refused locally on the first job. Since R-004 S3 the button's diagnosis no longer depends on it (the job-level rule), but attempt counts at the server still do, so specs that assert 4 server attempts keep using 502/504 (QA iteration 1). `--disable-extensions-http-throttling` is still not added: the sustained-503 e2e above exists to prove the diagnosis holds while Chromium throttles.
