@@ -1313,6 +1313,124 @@ test.describe('CUJ-1: QA gate additions (iteration 3, retry 1)', { tag: '@cuj1' 
   });
 });
 
+// Chrome's native-UI tree poller shared by the headed-only toolbar blocks below.
+interface Sample {
+  at: number;
+  /** Accessible name of a visible downloads toolbar button, or null. */
+  button: string | null;
+  bubbleOpen: boolean;
+  rows: string[];
+}
+
+/** Opens chrome://accessibility with the native tree on and starts the poller. */
+async function startTree(harness: Harness): Promise<Page> {
+  const tree = await harness.newPage();
+  await tree.goto('chrome://accessibility');
+  const native = tree.locator('#native');
+  // Turning it on reloads the page; headed Chromium may have it on already.
+  if (!(await native.isChecked())) {
+    await Promise.all([tree.waitForEvent('load'), native.check()]);
+  }
+  await tree.locator('[id^="browser_"]').first().waitFor();
+  await tree.evaluate(() => {
+    const scope = window as unknown as {
+      __qaSamples: Sample[];
+      __qaPolling: boolean;
+      chrome: { send(message: string, args: unknown[]): void };
+    };
+    const sessions = [...document.querySelectorAll('[id^="browser_"]')]
+      .map((row) => row.id)
+      .filter((id) => /^browser_\d+$/.test(id))
+      .map((id) => Number(id.slice('browser_'.length)));
+    const name = (line: string): string => / name=(.*?) name_from/.exec(line)?.[1] ?? '';
+    const visible = (line: string): boolean => !line.includes('INVISIBLE');
+    const read = (sessionId: number): Promise<string> =>
+      new Promise((resolve) => {
+        const row = document.getElementById(`browser_${sessionId}`);
+        if (!row) return resolve('');
+        const timer = setTimeout(() => {
+          observer.disconnect();
+          resolve('');
+        }, 2_000);
+        const observer = new MutationObserver(() => {
+          const pre = document.getElementById(`browser_${sessionId}-tree`);
+          if ((pre?.textContent ?? '').length > 100) {
+            observer.disconnect();
+            clearTimeout(timer);
+            resolve(pre!.innerText);
+          }
+        });
+        observer.observe(row, { childList: true, subtree: true });
+        scope.chrome.send('requestNativeUITree', [
+          {
+            sessionId,
+            requestType: 'showOrRefreshTree',
+            filters: { allow: '*', allowEmpty: '', deny: '' },
+          },
+        ]);
+      });
+    scope.__qaSamples = [];
+    scope.__qaPolling = true;
+    void (async () => {
+      while (scope.__qaPolling) {
+        const at = Date.now();
+        const lines = (await Promise.all(sessions.map(read))).join('\n').split('\n');
+        const button = lines.find(
+          (line) =>
+            /class_name=(DownloadToolbarButtonView|PinnedActionToolbarButton)\b/.test(line) &&
+            /download/i.test(name(line)) &&
+            visible(line),
+        );
+        scope.__qaSamples.push({
+          at,
+          button: button === undefined ? null : name(button),
+          bubbleOpen: lines.some(
+            (line) =>
+              /class_name=DownloadBubble(Contents|Partial|Primary)View\b/.test(line) &&
+              visible(line),
+          ),
+          rows: lines
+            .filter((line) => line.includes('class_name=DownloadBubbleTransparentButton'))
+            .map((line) => name(line).split(' ')[0] ?? ''),
+        });
+      }
+    })();
+  });
+  return tree;
+}
+
+function samples(tree: Page): Promise<Sample[]> {
+  return tree.evaluate(() => (window as unknown as { __qaSamples: Sample[] }).__qaSamples);
+}
+
+const shown = (sample: Sample): boolean => sample.button !== null || sample.bubbleOpen;
+
+/** Times at which the button or bubble went from hidden to shown, at or after `since`. */
+function appearances(list: readonly Sample[], since: number): number[] {
+  return list.flatMap((sample, index) =>
+    sample.at >= since && shown(sample) && !(index > 0 && shown(list[index - 1]!))
+      ? [sample.at]
+      : [],
+  );
+}
+
+/** A download from a page; resolves with the samples taken in the 1.5 s after it landed. */
+async function controlDownload(harness: Harness, tree: Page, file: string): Promise<Sample[]> {
+  const other = await harness.newPage();
+  await other.goto('https://www.pixiv.net/users/40285173');
+  const startedAt = Date.now();
+  await other.evaluate((name) => {
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob(['control']));
+    link.download = name;
+    document.body.append(link);
+    link.click();
+  }, file);
+  await harness.downloads.waitForFile(file);
+  await other.waitForTimeout(1_500);
+  return (await samples(tree)).filter((sample) => sample.at >= startedAt);
+}
+
 // Added by the QA gate (iteration 3, retry 1): Chrome's toolbar under R-006, read from Chrome's
 // native-UI accessibility tree polled every few milliseconds inside chrome://accessibility (the
 // page's own 'requestNativeUITree' message), so an appearance of the downloads button between two
@@ -1329,123 +1447,6 @@ test.describe(
   'CUJ-1: QA gate additions (iteration 3, retry 1), Chrome toolbar',
   { tag: '@cuj1' },
   () => {
-    interface Sample {
-      at: number;
-      /** Accessible name of a visible downloads toolbar button, or null. */
-      button: string | null;
-      bubbleOpen: boolean;
-      rows: string[];
-    }
-
-    /** Opens chrome://accessibility with the native tree on and starts the poller. */
-    async function startTree(harness: Harness): Promise<Page> {
-      const tree = await harness.newPage();
-      await tree.goto('chrome://accessibility');
-      const native = tree.locator('#native');
-      // Turning it on reloads the page; headed Chromium may have it on already.
-      if (!(await native.isChecked())) {
-        await Promise.all([tree.waitForEvent('load'), native.check()]);
-      }
-      await tree.locator('[id^="browser_"]').first().waitFor();
-      await tree.evaluate(() => {
-        const scope = window as unknown as {
-          __qaSamples: Sample[];
-          __qaPolling: boolean;
-          chrome: { send(message: string, args: unknown[]): void };
-        };
-        const sessions = [...document.querySelectorAll('[id^="browser_"]')]
-          .map((row) => row.id)
-          .filter((id) => /^browser_\d+$/.test(id))
-          .map((id) => Number(id.slice('browser_'.length)));
-        const name = (line: string): string => / name=(.*?) name_from/.exec(line)?.[1] ?? '';
-        const visible = (line: string): boolean => !line.includes('INVISIBLE');
-        const read = (sessionId: number): Promise<string> =>
-          new Promise((resolve) => {
-            const row = document.getElementById(`browser_${sessionId}`);
-            if (!row) return resolve('');
-            const timer = setTimeout(() => {
-              observer.disconnect();
-              resolve('');
-            }, 2_000);
-            const observer = new MutationObserver(() => {
-              const pre = document.getElementById(`browser_${sessionId}-tree`);
-              if ((pre?.textContent ?? '').length > 100) {
-                observer.disconnect();
-                clearTimeout(timer);
-                resolve(pre!.innerText);
-              }
-            });
-            observer.observe(row, { childList: true, subtree: true });
-            scope.chrome.send('requestNativeUITree', [
-              {
-                sessionId,
-                requestType: 'showOrRefreshTree',
-                filters: { allow: '*', allowEmpty: '', deny: '' },
-              },
-            ]);
-          });
-        scope.__qaSamples = [];
-        scope.__qaPolling = true;
-        void (async () => {
-          while (scope.__qaPolling) {
-            const at = Date.now();
-            const lines = (await Promise.all(sessions.map(read))).join('\n').split('\n');
-            const button = lines.find(
-              (line) =>
-                /class_name=(DownloadToolbarButtonView|PinnedActionToolbarButton)\b/.test(line) &&
-                /download/i.test(name(line)) &&
-                visible(line),
-            );
-            scope.__qaSamples.push({
-              at,
-              button: button === undefined ? null : name(button),
-              bubbleOpen: lines.some(
-                (line) =>
-                  /class_name=DownloadBubble(Contents|Partial|Primary)View\b/.test(line) &&
-                  visible(line),
-              ),
-              rows: lines
-                .filter((line) => line.includes('class_name=DownloadBubbleTransparentButton'))
-                .map((line) => name(line).split(' ')[0] ?? ''),
-            });
-          }
-        })();
-      });
-      return tree;
-    }
-
-    function samples(tree: Page): Promise<Sample[]> {
-      return tree.evaluate(() => (window as unknown as { __qaSamples: Sample[] }).__qaSamples);
-    }
-
-    const shown = (sample: Sample): boolean => sample.button !== null || sample.bubbleOpen;
-
-    /** Times at which the button or bubble went from hidden to shown, at or after `since`. */
-    function appearances(list: readonly Sample[], since: number): number[] {
-      return list.flatMap((sample, index) =>
-        sample.at >= since && shown(sample) && !(index > 0 && shown(list[index - 1]!))
-          ? [sample.at]
-          : [],
-      );
-    }
-
-    /** A download from a page; resolves with the samples taken in the 1.5 s after it landed. */
-    async function controlDownload(harness: Harness, tree: Page, file: string): Promise<Sample[]> {
-      const other = await harness.newPage();
-      await other.goto('https://www.pixiv.net/users/40285173');
-      const startedAt = Date.now();
-      await other.evaluate((name) => {
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(new Blob(['control']));
-        link.download = name;
-        document.body.append(link);
-        link.click();
-      }, file);
-      await harness.downloads.waitForFile(file);
-      await other.waitForTimeout(1_500);
-      return (await samples(tree)).filter((sample) => sample.at >= startedAt);
-    }
-
     test('toolbar: one animation: no downloads button until p11 is handed to Chrome, then it returns once, with a bubble listing metadata.json and the 12 originals', async ({
       harness,
       server,
@@ -1527,3 +1528,247 @@ test.describe(
     });
   },
 );
+
+// Added by the QA gate (iteration 4): R-006 rev. 3 (quick-fix c2c9de0). The busy period's last
+// hand-off now waits until every other in-progress file has FINISHED, not merely been named, so no
+// earlier completion can open Chrome's bubble before the last file exists (the iteration-3 LOW).
+// | PRD                                                                            | Test                   |
+// | ------------------------------------------------------------------------------ | ---------------------- |
+// | AC "… exactly one animation accompanies the last file, after which the bubble  | 'download UI: last     |
+// |   lists metadata.json and the 12 originals" (R-006), with the last files       |   files land together, |
+// |   landing together (no page held back)                                         |   finished'            |
+// | AC "N / 12 … up to 11 / 12; the last original is handed to Chrome only after   | same test              |
+// |   every other file has finished, so its landing turns the button to Saved      |                        |
+// |   directly and 12 / 12 is never shown"; step 6 "Within 300 ms … Saved"         |                        |
+/**
+ * Wraps chrome.downloads.setUiOptions in the running worker to record when each call is ISSUED
+ * (the test API's `at` is when Chrome answered, after the enable has taken effect). The engine
+ * looks the API up at call time, so it goes through the wrapper; the real API still runs. Also
+ * records when the worker heard each download complete (a listener added after the engine's, so
+ * it runs in the same event dispatch, before any later task such as the restore's answer).
+ */
+async function recordUiIssues(harness: Harness): Promise<void> {
+  await harness.swEval(() => {
+    const scope = self as unknown as {
+      __qaUiIssued?: Array<{ enabled: boolean; at: number }>;
+      __qaHeardComplete?: Record<number, number>;
+    };
+    if (scope.__qaUiIssued) return;
+    const issued: Array<{ enabled: boolean; at: number }> = [];
+    scope.__qaUiIssued = issued;
+    const heard: Record<number, number> = {};
+    scope.__qaHeardComplete = heard;
+    chrome.downloads.onChanged.addListener(({ id, state }) => {
+      if (state?.current === 'complete') heard[id] ??= Date.now();
+    });
+    const downloads = chrome.downloads as unknown as {
+      setUiOptions(options: chrome.downloads.UiOptions): Promise<void>;
+    };
+    const real = downloads.setUiOptions.bind(downloads);
+    downloads.setUiOptions = (options) => {
+      issued.push({ enabled: options.enabled, at: Date.now() });
+      return real(options);
+    };
+  });
+}
+
+/** When the worker heard each download complete, by download id (recordUiIssues()). */
+async function heardComplete(harness: Harness): Promise<Record<number, number>> {
+  return harness.swEval(
+    () =>
+      (self as unknown as { __qaHeardComplete?: Record<number, number> }).__qaHeardComplete ?? {},
+  );
+}
+
+/** When the last setUiOptions({ enabled: true }) recorded by recordUiIssues() was issued. */
+async function restoreIssuedAt(harness: Harness): Promise<number> {
+  const issued = await harness.swEval(
+    () =>
+      (self as unknown as { __qaUiIssued?: Array<{ enabled: boolean; at: number }> })
+        .__qaUiIssued ?? [],
+  );
+  return issued.filter(({ enabled }) => enabled).at(-1)?.at ?? Number.NaN;
+}
+
+test.describe('CUJ-1: QA gate additions (iteration 4)', { tag: '@cuj1' }, () => {
+  test('download UI: last files land together, finished: every earlier file has finished in Chrome before the UI comes back; the last file starts after it and its landing shows Saved · 12P within 300 ms, never 12 / 12', async ({
+    harness,
+  }) => {
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    await watchLabels(page);
+    const base = (await downloadUiAfterBoot(harness)).calls.length;
+    await recordUiIssues(harness);
+    await clickButton(page);
+    await waitForText(page, 'Saved · 12P');
+    const after = await downloadUiRestored(harness);
+    expect(uiCalls(after.calls, base)).toEqual([
+      { enabled: false, ok: true },
+      { enabled: true, ok: true },
+    ]);
+    const restoreAt = after.calls[base + 1]?.at ?? Number.NaN;
+    const issuedAt = await restoreIssuedAt(harness);
+    expect(issuedAt).toBeLessThanOrEqual(restoreAt);
+    const all = (
+      await harness.swEval(async () =>
+        (await chrome.downloads.search({})).map(({ id, filename, state, startTime, endTime }) => ({
+          id,
+          name: filename.split(/[\\/]/).pop() ?? '',
+          state,
+          startedAt: Date.parse(startTime),
+          endedAt: endTime === undefined ? Number.NaN : Date.parse(endTime),
+        })),
+      )
+    ).sort((a, b) => a.id - b.id);
+    expect(all).toHaveLength(13);
+    expect(all.filter((item) => item.state !== 'complete').map((item) => item.name)).toEqual([]);
+    const last = all.at(-1)!;
+    // chrome.downloads and the SW's Date.now() share the clock, in whole milliseconds. Chrome
+    // stamps endTime before the worker hears of the completion, so <= the restore's issue time.
+    expect(
+      all
+        .slice(0, -1)
+        .filter((item) => !(item.endedAt <= issuedAt))
+        .map((item) => item.name),
+      'files still in progress when the UI restore was issued',
+    ).toEqual([]);
+    const heard = await heardComplete(harness);
+    expect(
+      all
+        .slice(0, -1)
+        .filter((item) => !((heard[item.id] ?? Infinity) <= restoreAt))
+        .map((item) => item.name),
+      'files the worker heard complete only after Chrome answered the restore',
+    ).toEqual([]);
+    expect(restoreAt).toBeLessThanOrEqual(last.startedAt);
+
+    const origin = await page.evaluate(() => performance.timeOrigin);
+    const log = await labelLog(page);
+    const texts = log.map(({ text }) => text);
+    expect(texts).not.toContain('12 / 12');
+    expect(Math.max(...counts(log, 12))).toBeLessThanOrEqual(11);
+    expect(texts.at(-1)).toBe('Saved · 12P');
+    expect(texts.at(-2)).toMatch(/^\d+ \/ 12$/);
+    const savedAt = origin + (log.at(-1)?.at ?? Number.NaN);
+    // The page clock (timeOrigin + now) and the browser's can differ by a millisecond or two.
+    expect(savedAt).toBeGreaterThanOrEqual(last.endedAt - 5);
+    expect(
+      savedAt - last.endedAt,
+      'ms from the last file landing to Saved · 12P',
+    ).toBeLessThanOrEqual(300);
+  });
+});
+
+// Added by the QA gate (iteration 4): Chrome's toolbar under R-006 rev. 3, headed only (skips
+// headless with a reason, like the retry-1 block).
+// | PRD                                                                            | Test                   |
+// | ------------------------------------------------------------------------------ | ---------------------- |
+// | AC "… exactly one animation accompanies the last file, after which the bubble  | 'toolbar: last files   |
+// |   lists metadata.json and the 12 originals" (R-006), no page held back: the    |   land together'       |
+// |   iteration-3 LOW's repro (the bubble missed the last file in 5 of 8 runs)     |                        |
+// | CUJ-4 edge "Two concurrent jobs therefore show one animation in total … Once   | 'toolbar: two jobs'    |
+// |   the button returns, its bubble lists the files of both jobs" (R-006)         |   (@cuj4)              |
+test.describe('CUJ-1: QA gate additions (iteration 4), Chrome toolbar', { tag: '@cuj1' }, () => {
+  test('toolbar: last files land together: one animation, and the bubble that opens lists metadata.json and the 12 originals, the last file included', async ({
+    harness,
+  }) => {
+    const tree = await startTree(harness);
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    const base = (await downloadUiAfterBoot(harness)).calls.length;
+    const clickedAt = Date.now();
+    await clickButton(page);
+    await waitForText(page, 'Saved · 12P');
+    const after = await downloadUiRestored(harness);
+    await page.waitForTimeout(2_000);
+    const list = (await samples(tree)).filter((sample) => sample.at >= clickedAt);
+    if (!list.some(shown)) {
+      const control = await controlDownload(harness, tree, 'control-download.txt');
+      test.skip(
+        !control.some(shown),
+        'this Chromium shows no download UI at all (headless): run with HFP_HEADLESS=0',
+      );
+    }
+    const restoreAt = after.calls[base + 1]?.at ?? Number.NaN;
+    expect(
+      list.filter((sample) => shown(sample) && sample.at < restoreAt - 20),
+      'button or bubble before the UI came back',
+    ).toEqual([]);
+    expect(appearances(list, clickedAt), 'times Chrome’s downloads button came back').toHaveLength(
+      1,
+    );
+    expect(list.at(-1)?.button, 'Chrome’s downloads button after Saved · 12P').not.toBeNull();
+    expect(
+      list.some((sample) => sample.bubbleOpen),
+      'the bubble opened with the animation',
+    ).toBe(true);
+    const rows = new Set(list.flatMap((sample) => sample.rows));
+    expect(
+      ['metadata.json', ...ALL_PAGES.map((p) => fileName(EXAMPLE, p))].filter((n) => !rows.has(n)),
+      'files missing from the bubble',
+    ).toEqual([]);
+  });
+
+  test(
+    'toolbar: two jobs: B ends first with no animation; one animation in total, with A’s last file, and the bubble lists the files of both jobs',
+    {
+      tag: '@cuj4',
+    },
+    async ({ harness, server }) => {
+      const tabB = requireWork('136120877') as IllustWork;
+      const tree = await startTree(harness);
+      const holdA = server.hold(pagesOf(EXAMPLE, range(4, 11)));
+      const holdB = server.hold(pagesOf(tabB, range(3, 7)));
+      const pageA = await openArtwork(harness, EXAMPLE.id);
+      await waitForText(pageA, 'Download · 12P');
+      const base = (await downloadUiAfterBoot(harness)).calls.length;
+      const clickedAt = Date.now();
+      await clickButton(pageA);
+      await waitForText(pageA, '4 / 12');
+      const pageB = await openArtwork(harness, tabB.id);
+      await waitForText(pageB, 'Download · 8P');
+      await clickButton(pageB);
+      await waitForText(pageB, '3 / 8');
+      holdB.release();
+      await waitForText(pageB, 'Saved · 8P');
+      await pageB.waitForTimeout(1_000);
+      const bEndedAt = Date.now();
+      holdA.release();
+      await waitForText(pageA, 'Saved · 12P');
+      const after = await downloadUiRestored(harness);
+      await pageA.waitForTimeout(2_000);
+      const list = (await samples(tree)).filter((sample) => sample.at >= clickedAt);
+      if (!list.some(shown)) {
+        const control = await controlDownload(harness, tree, 'control-download.txt');
+        test.skip(
+          !control.some(shown),
+          'this Chromium shows no download UI at all (headless): run with HFP_HEADLESS=0',
+        );
+      }
+      expect(uiCalls(after.calls, base)).toEqual([
+        { enabled: false, ok: true },
+        { enabled: true, ok: true },
+      ]);
+      const restoreAt = after.calls[base + 1]?.at ?? Number.NaN;
+      expect(restoreAt).toBeGreaterThan(bEndedAt);
+      expect(
+        list.filter((sample) => shown(sample) && sample.at < restoreAt - 20),
+        'button or bubble before the UI came back (B’s end included)',
+      ).toEqual([]);
+      expect(
+        appearances(list, clickedAt),
+        'times Chrome’s downloads button came back',
+      ).toHaveLength(1);
+      expect(list.at(-1)?.button, 'Chrome’s downloads button after both jobs').not.toBeNull();
+      const rows = new Set(list.flatMap((sample) => sample.rows));
+      expect(
+        [
+          'metadata.json',
+          ...ALL_PAGES.map((p) => fileName(EXAMPLE, p)),
+          ...range(0, 7).map((p) => fileName(tabB, p)),
+        ].filter((n) => !rows.has(n)),
+        'files missing from the bubble',
+      ).toEqual([]);
+    },
+  );
+});

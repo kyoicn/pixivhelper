@@ -555,3 +555,141 @@ test.describe('CUJ-4: QA gate additions (iteration 3)', { tag: '@cuj4' }, () => 
     hold.release();
   });
 });
+
+// Added by the QA gate (iteration 4): R-006 rev. 3 (quick-fix c2c9de0) across two jobs.
+// | PRD                                                                            | Test                      |
+// | ------------------------------------------------------------------------------ | ------------------------- |
+// | Edge "Two concurrent jobs therefore show one animation in total, with the last | 'download UI: two jobs,   |
+// |   file either job hands to Chrome … Once the button returns, its bubble lists  |   B ends first / A ends   |
+// |   the files of both jobs" (R-006): every other file of both jobs has finished  |   first: finished'        |
+// |   before the restore, so no completion can open the bubble before the last    |                           |
+// |   file exists; only the last job's last file starts after it                   |                           |
+/**
+ * Wraps chrome.downloads.setUiOptions in the running worker to record when each call is ISSUED
+ * (the test API's `at` is when Chrome answered, after the enable has taken effect). The engine
+ * looks the API up at call time, so it goes through the wrapper; the real API still runs. Also
+ * records when the worker heard each download complete (a listener added after the engine's, so
+ * it runs in the same event dispatch, before any later task such as the restore's answer).
+ */
+async function recordUiIssues(harness: Harness): Promise<void> {
+  await harness.swEval(() => {
+    const scope = self as unknown as {
+      __qaUiIssued?: Array<{ enabled: boolean; at: number }>;
+      __qaHeardComplete?: Record<number, number>;
+    };
+    if (scope.__qaUiIssued) return;
+    const issued: Array<{ enabled: boolean; at: number }> = [];
+    scope.__qaUiIssued = issued;
+    const heard: Record<number, number> = {};
+    scope.__qaHeardComplete = heard;
+    chrome.downloads.onChanged.addListener(({ id, state }) => {
+      if (state?.current === 'complete') heard[id] ??= Date.now();
+    });
+    const downloads = chrome.downloads as unknown as {
+      setUiOptions(options: chrome.downloads.UiOptions): Promise<void>;
+    };
+    const real = downloads.setUiOptions.bind(downloads);
+    downloads.setUiOptions = (options) => {
+      issued.push({ enabled: options.enabled, at: Date.now() });
+      return real(options);
+    };
+  });
+}
+
+/** When the worker heard each download complete, by download id (recordUiIssues()). */
+async function heardComplete(harness: Harness): Promise<Record<number, number>> {
+  return harness.swEval(
+    () =>
+      (self as unknown as { __qaHeardComplete?: Record<number, number> }).__qaHeardComplete ?? {},
+  );
+}
+
+/** When the last setUiOptions({ enabled: true }) recorded by recordUiIssues() was issued. */
+async function restoreIssuedAt(harness: Harness): Promise<number> {
+  const issued = await harness.swEval(
+    () =>
+      (self as unknown as { __qaUiIssued?: Array<{ enabled: boolean; at: number }> })
+        .__qaUiIssued ?? [],
+  );
+  return issued.filter(({ enabled }) => enabled).at(-1)?.at ?? Number.NaN;
+}
+
+test.describe('CUJ-4: QA gate additions (iteration 4)', { tag: '@cuj4' }, () => {
+  for (const order of ['B ends first', 'A ends first'] as const) {
+    test(`download UI: two jobs, ${order}, finished: every other file of both jobs has finished before the UI comes back; only the last job’s last file starts after it`, async ({
+      harness,
+      server,
+    }) => {
+      const holdA = server.hold(pagesOf(EXAMPLE, range(4, 11)));
+      const holdB = server.hold(pagesOf(TAB_B, range(3, 7)));
+      const tabA = await openArtwork(harness, EXAMPLE.id);
+      await waitForText(tabA, 'Download · 12P');
+      const base = (await downloadUiAfterBoot(harness)).calls.length;
+      await recordUiIssues(harness);
+      await clickButton(tabA);
+      await waitForText(tabA, '4 / 12');
+      const tabB = await openArtwork(harness, TAB_B.id);
+      await waitForText(tabB, 'Download · 8P');
+      await clickButton(tabB);
+      await waitForText(tabB, '3 / 8');
+      const bFirst = order === 'B ends first';
+      const [first, firstTab, firstSaved] = bFirst
+        ? ([holdB, tabB, 'Saved · 8P'] as const)
+        : ([holdA, tabA, 'Saved · 12P'] as const);
+      const [second, secondTab, secondSaved, lastWork] = bFirst
+        ? ([holdA, tabA, 'Saved · 12P', EXAMPLE] as const)
+        : ([holdB, tabB, 'Saved · 8P', TAB_B] as const);
+
+      first.release();
+      await waitForText(firstTab, firstSaved);
+      await firstTab.waitForTimeout(500);
+      expect(uiCalls((await downloadUi(harness)).calls, base)).toEqual([
+        { enabled: false, ok: true },
+      ]);
+      second.release();
+      await waitForText(secondTab, secondSaved);
+      const after = await downloadUiRestored(harness);
+      expect(uiCalls(after.calls, base)).toEqual([
+        { enabled: false, ok: true },
+        { enabled: true, ok: true },
+      ]);
+      const restoreAt = after.calls[base + 1]?.at ?? Number.NaN;
+      const issuedAt = await restoreIssuedAt(harness);
+      expect(issuedAt).toBeLessThanOrEqual(restoreAt);
+      const all = (
+        await harness.swEval(async () =>
+          (await chrome.downloads.search({})).map(
+            ({ id, filename, state, startTime, endTime }) => ({
+              id,
+              name: filename.split(/[\\/]/).pop() ?? '',
+              state,
+              startedAt: Date.parse(startTime),
+              endedAt: endTime === undefined ? Number.NaN : Date.parse(endTime),
+            }),
+          ),
+        )
+      ).sort((a, b) => a.id - b.id);
+      expect(all).toHaveLength(13 + 9);
+      expect(all.filter((item) => item.state !== 'complete').map((item) => item.name)).toEqual([]);
+      const last = all.at(-1)!;
+      expect(last.name.startsWith(`${lastWork.id}_p`), `last file ${last.name}`).toBe(true);
+      // Chrome stamps endTime before the worker hears of the completion (same clock, whole ms).
+      expect(
+        all
+          .slice(0, -1)
+          .filter((item) => !(item.endedAt <= issuedAt))
+          .map((item) => item.name),
+        'files still in progress when the UI restore was issued',
+      ).toEqual([]);
+      const heard = await heardComplete(harness);
+      expect(
+        all
+          .slice(0, -1)
+          .filter((item) => !((heard[item.id] ?? Infinity) <= restoreAt))
+          .map((item) => item.name),
+        'files the worker heard complete only after Chrome answered the restore',
+      ).toEqual([]);
+      expect(restoreAt).toBeLessThanOrEqual(last.startedAt);
+    });
+  }
+});
