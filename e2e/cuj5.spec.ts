@@ -937,16 +937,42 @@ test.describe('CUJ-5: recover when a download can’t start or breaks', { tag: '
 
   // ── Part C: page-redesign fallback ──
 
+  /** PRD CUJ-5 step 11 (R-004 S4): the pill is on screen within 3 s of the anchor. */
+  const FLOAT_WITHIN_MS = 3_000;
+
+  /**
+   * Page function: stamps `__pillPaintedAt` (performance.now()) in the first animation frame after
+   * an <hfp-download> connects, the "pill appearing" end of the 3 s. Self-contained, because it
+   * runs as an init script or through page.evaluate().
+   */
+  function stampPillPaint(): void {
+    const w = window as unknown as { __pillPaintedAt?: number };
+    const observer = new MutationObserver(() => {
+      if (!document.querySelector('hfp-download')) return;
+      observer.disconnect();
+      requestAnimationFrame(() => {
+        w.__pillPaintedAt = performance.now();
+      });
+    });
+    observer.observe(document, { childList: true, subtree: true });
+  }
+
+  /** Waits for the stamp of stampPillPaint() and returns it. */
+  async function pillPaintedAt(page: Page): Promise<number> {
+    const handle = await page.waitForFunction(
+      () => (window as unknown as { __pillPaintedAt?: number }).__pillPaintedAt,
+      undefined,
+      { timeout: 6_000 },
+    );
+    return (await handle.jsonValue()) as number;
+  }
+
   test('floating fallback: row removed before a direct load → floating pill at the artwork’s bottom-right within 3 s; downloads; moves into the row when it appears', async ({
     harness,
   }) => {
     const page = await harness.newPage();
     await page.addInitScript(() => {
-      const w = window as unknown as {
-        __figureAt?: number;
-        __hostAt?: number;
-        __fakeValue?: unknown;
-      };
+      const w = window as unknown as { __fakeValue?: unknown };
       // pixiv "redesign": the action row never renders in this document.
       Object.defineProperty(window, '__fake', {
         configurable: true,
@@ -956,27 +982,20 @@ test.describe('CUJ-5: recover when a download can’t start or breaks', { tag: '
           w.__fakeValue = value;
         },
       });
-      const observer = new MutationObserver(() => {
-        if (w.__figureAt === undefined && document.querySelector('figure.work-figure')) {
-          w.__figureAt = performance.now();
-        }
-        if (w.__hostAt === undefined && document.querySelector('hfp-download')) {
-          w.__hostAt = performance.now();
-        }
-      });
-      observer.observe(document, { childList: true, subtree: true });
     });
+    await page.addInitScript(stampPillPaint);
     await page.goto(artworkUrl(EXAMPLE.id));
-    await exposeButton(page, { timeout: 6_000 });
-    const timing = await page.evaluate(() => {
-      const w = window as unknown as { __figureAt?: number; __hostAt?: number };
-      return { figureAt: w.__figureAt ?? null, hostAt: w.__hostAt ?? null };
-    });
-    expect(timing.figureAt).not.toBeNull();
-    expect(timing.hostAt).not.toBeNull();
-    const delay = (timing.hostAt ?? 0) - (timing.figureAt ?? 0);
+    const paintedAt = await pillPaintedAt(page);
+    // The page has loaded once its HTML is parsed (the content script starts right after).
+    const loadedAt = await page.evaluate(
+      () =>
+        (performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming)
+          .domInteractive,
+    );
+    const delay = paintedAt - loadedAt;
     test.info().annotations.push({ type: 'floating delay ms', description: delay.toFixed(0) });
-    expect(delay).toBeLessThanOrEqual(3_000 + 100);
+    expect(delay).toBeLessThanOrEqual(FLOAT_WITHIN_MS);
+    await exposeButton(page);
 
     const idle = await waitForText(page, 'Download · 12P');
     expect(idle.mode).toBe('floating');
@@ -1023,12 +1042,24 @@ test.describe('CUJ-5: recover when a download can’t start or breaks', { tag: '
     await page.waitForTimeout(500);
     expect(await page.evaluate(() => document.querySelectorAll('hfp-download').length)).toBe(0);
     await page.evaluate(() => (window as unknown as FakeWindow).__fake.removeRow());
-    const navigatedAt = Date.now();
+    await page.evaluate(stampPillPaint);
+    // The in-app navigation starts with the click on pixiv's link (capture phase, before pixiv's).
+    await page.evaluate(() => {
+      const w = window as unknown as { __clickAt?: number };
+      document.addEventListener('click', () => (w.__clickAt ??= performance.now()), true);
+    });
     await page.click(`a[data-spa][href="/artworks/${EXAMPLE.id}"]`);
-    await exposeButton(page, { timeout: 6_000 });
-    const elapsed = Date.now() - navigatedAt;
-    test.info().annotations.push({ type: 'floating after SPA ms', description: String(elapsed) });
-    expect(elapsed).toBeLessThanOrEqual(3_000 + 300);
+    const paintedAt = await pillPaintedAt(page);
+    const clickAt = await page.evaluate(
+      () => (window as unknown as { __clickAt?: number }).__clickAt ?? Number.NaN,
+    );
+    const elapsed = paintedAt - clickAt;
+    test.info().annotations.push({
+      type: 'floating after SPA ms',
+      description: elapsed.toFixed(0),
+    });
+    expect(elapsed).toBeLessThanOrEqual(FLOAT_WITHIN_MS);
+    await exposeButton(page);
     expect((await waitForText(page, 'Download · 12P')).mode).toBe('floating');
 
     await page.evaluate(() => (window as unknown as FakeWindow).__fake.setTheme('dark'));

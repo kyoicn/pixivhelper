@@ -11,7 +11,7 @@ import {
   wwwPage,
 } from '../../../e2e/server/page';
 import { createMount, HOST_TAG, type Mount, type MountMode } from '../../../src/content/mount';
-import { FLOAT_FALLBACK_MS } from '../../../src/shared/constants';
+import { FLOAT_FALLBACK_MS, FLOAT_PLACEMENT_BUDGET_MS } from '../../../src/shared/constants';
 
 const ID = '135882741';
 const WORK: CatalogEntry = {
@@ -31,6 +31,8 @@ const WORK: CatalogEntry = {
 /** The artwork figure's box: right edge 804, bottom edge 450. */
 const AREA = new DOMRect(100, 50, 704, 400);
 const HOST_WIDTH = 164;
+/** The fallback timer fires the placement budget before the PRD's 3 s (system.md D14). */
+const FALLBACK_TIMER_MS = FLOAT_FALLBACK_MS - FLOAT_PLACEMENT_BUDGET_MS;
 
 let host: HTMLElement;
 let mount: Mount;
@@ -208,11 +210,36 @@ describe('mount: action row', () => {
 });
 
 describe('mount: floating fallback', () => {
-  it('mount: not floating before FLOAT_FALLBACK_MS', async () => {
+  it('mount: the fallback timer fires at 2750 ms, the 250 ms placement budget before 3 s', () => {
+    expect([FALLBACK_TIMER_MS, FLOAT_FALLBACK_MS]).toEqual([2750, 3000]);
+  });
+
+  it('mount: not floating 1 ms before the fallback timer (2749 ms)', async () => {
     fake().removeRow();
     mount.show();
-    await vi.advanceTimersByTimeAsync(FLOAT_FALLBACK_MS - 1);
+    await vi.advanceTimersByTimeAsync(FALLBACK_TIMER_MS - 1);
     expect(host.isConnected).toBe(false);
+  });
+
+  it('mount: at 2750 ms the host is in body and positioned before any animation frame runs', async () => {
+    fake().removeRow();
+    mount.show();
+    await vi.advanceTimersByTimeAsync(FALLBACK_TIMER_MS - 1);
+    const frames = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 0);
+    let placed: unknown[];
+    try {
+      await vi.advanceTimersByTimeAsync(1);
+      placed = [
+        host.parentElement,
+        host.getAttribute('data-mode'),
+        host.style.left,
+        host.style.top,
+      ];
+    } finally {
+      frames.mockRestore();
+    }
+    // left = 804 − 16 − 164, top = 450 − 16 − 40
+    expect(placed).toEqual([document.body, 'floating', '624px', '394px']);
   });
 
   it('mount: floats over the artwork FLOAT_FALLBACK_MS after show() without a row', async () => {
@@ -334,11 +361,21 @@ describe('mount: floating fallback', () => {
   it('mount: show() restarts the fallback timer (SPA navigation)', async () => {
     fake().removeRow();
     mount.show();
-    await vi.advanceTimersByTimeAsync(FLOAT_FALLBACK_MS - 100);
+    await vi.advanceTimersByTimeAsync(FALLBACK_TIMER_MS - 100);
     mount.hide();
     mount.show();
-    await vi.advanceTimersByTimeAsync(FLOAT_FALLBACK_MS - 100);
+    await vi.advanceTimersByTimeAsync(FALLBACK_TIMER_MS - 1);
     expect(host.isConnected).toBe(false);
+  });
+
+  it('mount: after hide() and show() the host floats 2750 ms after the new show()', async () => {
+    fake().removeRow();
+    mount.show();
+    await vi.advanceTimersByTimeAsync(FALLBACK_TIMER_MS - 100);
+    mount.hide();
+    mount.show();
+    await vi.advanceTimersByTimeAsync(FALLBACK_TIMER_MS);
+    expect(host.getAttribute('data-mode')).toBe('floating');
   });
 });
 
