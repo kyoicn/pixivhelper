@@ -1,7 +1,8 @@
 // SW restart at every instrumented await point (design-test-harness.md "Restart simulation"; PRD
 // CUJ-4 "Service-worker restart mid-job"). A dry run lists the await points a job passes; each test
 // then kills the SW at one of them, re-imports sw.ts against the same fake state and drives the
-// job to its end.
+// job to its end. Chrome's download UI (R-005) must stay consistent too: every file is handed to
+// Chrome while the UI is hidden, and the UI is back on at the end.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { JobRecord } from '../../src/shared/job';
@@ -82,6 +83,9 @@ interface RunResult {
   /** Badge text right after the restarted SW's `ready`, and what it should be then. */
   badgeAfterReady: string | null;
   expectedBadge: string | null;
+  /** Chrome's download UI at the end, and the files handed to Chrome while it was on. */
+  uiEnabled: boolean;
+  downloadsWhileShown: string[];
 }
 
 function jobRecord(fake: ChromeFake): JobRecord | undefined {
@@ -98,6 +102,17 @@ function expectedBadge(fake: ChromeFake, scenario: Scenario): string {
   if (job.phase === 'resolving') return String(job.expectedFiles);
   const count = scenario.badgeCount(job, savedFiles(fake));
   return count === 0 ? '' : String(count);
+}
+
+/** download() calls made while Chrome's UI was on (a fresh profile starts with it on). */
+function downloadsWhileShown(fake: ChromeFake): string[] {
+  const calls: string[] = [];
+  let enabled = true;
+  for (const call of fake.downloads.callLog) {
+    if (call.op === 'ui') enabled = call.enabled;
+    else if (enabled) calls.push(call.filename);
+  }
+  return calls;
 }
 
 /** Runs the scenario's job, killing the SW at await point `killAt` (none when null). */
@@ -149,6 +164,8 @@ async function run(
     outcome: tab.ended()?.outcome ?? undefined,
     badgeAfterReady,
     expectedBadge: expected,
+    uiEnabled: fake.downloads.uiEnabled,
+    downloadsWhileShown: downloadsWhileShown(fake),
   };
 }
 
@@ -176,6 +193,7 @@ describe('sw: restart dry runs', () => {
   it('sw: a pages job passes the registry, resolver and hand-off await points', () => {
     expect([...new Set(pagesDry.hits)].sort()).toEqual([
       'await:handoff.download',
+      'await:handoff.hideUi',
       'await:registry.create',
       'await:registry.effects',
       'await:registry.persist',
@@ -187,6 +205,7 @@ describe('sw: restart dry runs', () => {
   it('sw: an ugoira job also passes the ugoira_meta and caps await points', () => {
     expect([...new Set(ugoiraDry.hits)].sort()).toEqual([
       'await:handoff.download',
+      'await:handoff.hideUi',
       'await:registry.create',
       'await:registry.effects',
       'await:registry.persist',
@@ -208,6 +227,8 @@ function expectation(scenario: Scenario, result: RunResult, killedAt: string): R
       outcome: undefined,
       badgeAfterReady: '',
       expectedBadge: result.expectedBadge,
+      uiEnabled: true,
+      downloadsWhileShown: [],
     };
   }
   return {
@@ -218,12 +239,14 @@ function expectation(scenario: Scenario, result: RunResult, killedAt: string): R
     outcome: scenario.outcome,
     badgeAfterReady: result.expectedBadge,
     expectedBadge: result.expectedBadge,
+    uiEnabled: true,
+    downloadsWhileShown: [],
   };
 }
 
 describe('sw: a pages job survives a restart at every await point', () => {
   it.each(pagesDry.hits.map((name, at) => ({ at, name })))(
-    'sw: restart at await #$at ($name): no duplicate, no lost file, badge right after ready',
+    'sw: restart at await #$at ($name): no duplicate, no lost file, badge right after ready, UI hidden for every hand-off and back at the end',
     async ({ at, name }) => {
       const result = await run(fake, PAGES, at);
       expect(result).toEqual(expectation(PAGES, result, name));
@@ -233,7 +256,7 @@ describe('sw: a pages job survives a restart at every await point', () => {
 
 describe('sw: an ugoira job survives a restart at every await point', () => {
   it.each(ugoiraDry.hits.map((name, at) => ({ at, name })))(
-    'sw: restart at await #$at ($name): no duplicate, no lost file, badge right after ready',
+    'sw: restart at await #$at ($name): no duplicate, no lost file, badge right after ready, UI hidden for every hand-off and back at the end',
     async ({ at, name }) => {
       const result = await run(fake, UGOIRA, at);
       expect(result).toEqual(expectation(UGOIRA, result, name));

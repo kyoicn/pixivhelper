@@ -8,12 +8,13 @@ const manifest = JSON.parse(readFileSync(new URL('manifest.json', SRC), 'utf8'))
 >;
 
 describe('src/manifest.json', () => {
-  it('manifest: requests exactly the four approved permissions', () => {
+  it('manifest: requests exactly the five approved permissions', () => {
     expect(manifest.permissions).toEqual([
       'downloads',
       'storage',
       'offscreen',
       'declarativeNetRequestWithHostAccess',
+      'downloads.ui',
     ]);
   });
 
@@ -61,7 +62,13 @@ describe('src/manifest.json', () => {
           all_frames: false,
         },
       ],
-      permissions: ['downloads', 'storage', 'offscreen', 'declarativeNetRequestWithHostAccess'],
+      permissions: [
+        'downloads',
+        'storage',
+        'offscreen',
+        'declarativeNetRequestWithHostAccess',
+        'downloads.ui',
+      ],
       host_permissions: ['https://www.pixiv.net/*', 'https://i.pximg.net/*'],
     });
   });

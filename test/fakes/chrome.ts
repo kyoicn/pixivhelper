@@ -35,6 +35,13 @@ export const SYNC_QUOTA_ERRORS = {
   writesPerMinute: 'MAX_WRITE_OPERATIONS_PER_MINUTE quota exceeded',
 } as const;
 export const INVALID_FILENAME_ERROR = 'Invalid filename';
+/** chrome.downloads.setUiOptions without the "downloads.ui" permission, as Chromium 156 words it. */
+export const UI_PERMISSION_ERROR = 'downloads.setUiOptions requires the "downloads.ui" permission';
+/**
+ * chrome.downloads.setUiOptions({ enabled: true }) while another extension keeps the UI off
+ * (Chromium downloads_api.cc; the e2e harness loads one extension, so this one is not observed).
+ */
+export const UI_DISABLED_ERROR = 'Another extension has disabled the download UI';
 
 type Sender = chrome.runtime.MessageSender;
 type ColorArray = chrome.extensionTypes.ColorArray;
@@ -358,6 +365,8 @@ export class FakeStorage {
 
 type DownloadItem = chrome.downloads.DownloadItem;
 type InterruptReason = `${chrome.downloads.InterruptReason}`;
+/** An entry of FakeDownloads.callLog. */
+export type DownloadsCall = { op: 'ui'; enabled: boolean } | { op: 'download'; filename: string };
 
 /** Query keys that are not plain equality filters on a DownloadItem field. */
 const NON_FIELD_QUERY_KEYS = new Set([
@@ -388,11 +397,25 @@ function uniquified(path: string, taken: (path: string) => boolean): string {
 
 export class FakeDownloads {
   readonly onChanged = new FakeEvent<[delta: chrome.downloads.DownloadDelta]>();
+  /** Chrome's download UI (bubble, toolbar button, per-file animation); on until an extension turns it off. */
+  uiEnabled = true;
+  /**
+   * setUiOptions and download() in order, for ordering assertions, since Chrome has no getter for
+   * the UI state (R-005): a `ui` entry once Chrome has applied a setUiOptions call (it resolves
+   * right after), a `download` entry the moment download() is called. A `ui` entry before a
+   * `download` entry therefore means the setting was in effect when the download was asked for.
+   */
+  readonly callLog: DownloadsCall[] = [];
   #items = new Map<number, DownloadItem>();
   #nextId = 1;
   #downloadErrors: string[] = [];
+  #uiErrors: string[] = [];
+
+  /** `uiPermission`: whether the manifest grants "downloads.ui", without which setUiOptions rejects. */
+  constructor(private readonly uiPermission: boolean) {}
 
   readonly download = vi.fn(async (options: chrome.downloads.DownloadOptions): Promise<number> => {
+    this.callLog.push({ op: 'download', filename: options.filename ?? '' });
     await tick();
     const error = this.#downloadErrors.shift();
     if (error !== undefined) throw new Error(error);
@@ -450,9 +473,28 @@ export class FakeDownloads {
     if (item.state === 'in_progress') this.interrupt(downloadId, 'USER_CANCELED');
   });
 
+  readonly setUiOptions = vi.fn(async (options: chrome.downloads.UiOptions): Promise<void> => {
+    await tick();
+    if (!this.uiPermission) throw new Error(UI_PERMISSION_ERROR);
+    const error = this.#uiErrors.shift();
+    if (error !== undefined) throw new Error(error);
+    this.uiEnabled = options.enabled;
+    this.callLog.push({ op: 'ui', enabled: options.enabled });
+  });
+
   /** Makes the next `times` download() calls reject with `message` (Chrome's "Invalid filename"). */
   failNextDownload(message: string = INVALID_FILENAME_ERROR, times = 1): void {
     for (let i = 0; i < times; i++) this.#downloadErrors.push(message);
+  }
+
+  /** Makes the next `times` setUiOptions() calls reject with `message`, changing nothing. */
+  failNextSetUiOptions(message: string = UI_DISABLED_ERROR, times = 1): void {
+    for (let i = 0; i < times; i++) this.#uiErrors.push(message);
+  }
+
+  /** The `ui` entries of the call log: every setting Chrome applied, oldest first. */
+  uiCalls(): boolean[] {
+    return this.callLog.flatMap((call) => (call.op === 'ui' ? [call.enabled] : []));
   }
 
   /** Every download so far, oldest first. */
@@ -501,6 +543,9 @@ export class FakeDownloads {
     this.#items.clear();
     this.#nextId = 1;
     this.#downloadErrors = [];
+    this.#uiErrors = [];
+    this.uiEnabled = true;
+    this.callLog.length = 0;
     this.onChanged.clear();
   }
 
@@ -866,6 +911,7 @@ function createApi(fake: ChromeFake, getMessage: GetMessage) {
       download: downloads.download,
       search: downloads.search,
       cancel: downloads.cancel,
+      setUiOptions: downloads.setUiOptions,
       onChanged: downloads.onChanged,
     },
     action: {
@@ -918,7 +964,7 @@ export type FakeChromeApi = ReturnType<typeof createApi>;
 
 export class ChromeFake {
   readonly storage = new FakeStorage();
-  readonly downloads = new FakeDownloads();
+  readonly downloads = new FakeDownloads(MANIFEST.permissions?.includes('downloads.ui') ?? false);
   readonly action: FakeAction;
   readonly tabs: FakeTabs = new FakeTabs(this);
   readonly offscreen: FakeOffscreen = new FakeOffscreen(this);
@@ -1016,8 +1062,8 @@ export class ChromeFake {
 
   /**
    * Simulates Chrome stopping the service worker: drops every listener registered on the global
-   * chrome object and keeps all other state (storage, downloads, badge, tabs, offscreen document,
-   * DNR rules). Follow with `vi.resetModules()` and a re-import of sw.ts.
+   * chrome object and keeps all other state (storage, downloads and the download UI setting, badge,
+   * tabs, offscreen document, DNR rules). Follow with `vi.resetModules()` and a re-import of sw.ts.
    */
   restartWorker(): void {
     this.workerOnMessage.clear();

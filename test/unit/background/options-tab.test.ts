@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type ActionTestApi, openOrFocusOptions } from '../../../src/background/options-tab';
+import { exposeTestApi } from '../../../src/shared/test-hooks';
 import { EXTENSION_ORIGIN, installChromeFake, type ChromeFake } from '../../fakes/chrome';
 
 const OPTIONS_URL = `${EXTENSION_ORIGIN}/options.html`;
@@ -147,6 +148,38 @@ describe('__hfpTest (e2e toolbar trigger)', () => {
   it('__hfpTest.clickAction: rejects for a tab that does not exist', async () => {
     stubTabsGet();
     await expect(testApi().clickAction(99)).rejects.toThrow('No tab with id: 99.');
+  });
+});
+
+describe('exposeTestApi (shared __hfpTest)', () => {
+  const holder = globalThis as { __hfpTest?: Record<string, unknown> };
+
+  it('exposeTestApi: merges a new member beside clickAction', () => {
+    const downloadUi = (): null => null;
+    exposeTestApi({ downloadUi });
+    expect([typeof holder.__hfpTest?.clickAction, holder.__hfpTest?.downloadUi]).toEqual([
+      'function',
+      downloadUi,
+    ]);
+  });
+
+  it('exposeTestApi: replaces a member of the same name', () => {
+    const first = (): number => 1;
+    const second = (): number => 2;
+    exposeTestApi({ probe: first });
+    exposeTestApi({ probe: second });
+    expect(holder.__hfpTest?.probe).toBe(second);
+  });
+
+  it('exposeTestApi: options-tab keeps the members installed before it', async () => {
+    const downloadUi = (): null => null;
+    holder.__hfpTest = { downloadUi };
+    vi.resetModules();
+    await import('../../../src/background/options-tab');
+    expect([holder.__hfpTest?.downloadUi, typeof holder.__hfpTest?.clickAction]).toEqual([
+      downloadUi,
+      'function',
+    ]);
   });
 });
 

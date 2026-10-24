@@ -141,6 +141,33 @@ describe('sw: cancel (CUJ-1 step 5, CUJ-4 step 4)', () => {
     expect(fake.api.downloads.cancel.mock.calls.map(([id]) => id)).toContain(firstId);
   });
 
+  it('sw: a cancel while Chrome applies the hide hands no file to Chrome (R-005)', async () => {
+    new ScriptedOffscreen(fake);
+    await bootSw();
+    const setUiOptions = fake.api.downloads.setUiOptions;
+    const apply = setUiOptions.getMockImplementation();
+    if (!apply) throw new Error('no setUiOptions implementation');
+    const gate = deferred();
+    setUiOptions.mockImplementationOnce(async (options) => {
+      await gate.promise;
+      return apply(options);
+    });
+    const tab = new ContentTab(fake, ARTWORK_URL, api());
+    const jobId = await start(tab);
+    await until(() => setUiOptions.mock.calls.length === 2, 'the hide');
+    // The final view is pushed at once; the answer follows finalize's restore, queued behind the hide.
+    const answered = tab.send({ type: 'job/cancel', jobId });
+    await until(() => tab.ended(jobId) !== undefined, 'the cancelled view');
+    gate.resolve();
+    await settle(answered);
+    await advance(100);
+    expect([
+      fake.api.downloads.download.mock.calls.length,
+      fake.downloads.uiCalls(),
+      fake.downloads.uiEnabled,
+    ]).toEqual([0, [true, false, true], true]);
+  });
+
   it('sw: cancel while resolving ends the job before any file starts', async () => {
     const offscreen = new ScriptedOffscreen(fake);
     await bootSw();

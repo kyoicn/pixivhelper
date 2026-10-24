@@ -22,7 +22,9 @@ function onActionClicked(tab: chrome.tabs.Tab): void {
 
 /**
  * Referer rule, badge colors, job records, then the badge (correct within 1 s of a restart, PRD
- * §4.8), then reconciliation and a pump of every job, and the badge again for what that changed.
+ * §4.8), then Chrome's download UI back on if no job runs (R-005; before reconciliation, so a job
+ * reconcile finishes restores through finalize like any other), then reconciliation and a pump of
+ * every job, and the badge again for what that changed.
  */
 async function boot(): Promise<void> {
   try {
@@ -35,6 +37,7 @@ async function boot(): Promise<void> {
   await chrome.action.setBadgeTextColor({ color: BADGE_TEXT_COLOR });
   await engine.hydrate();
   await engine.badge.render();
+  await engine.restoreDownloadUiIfIdle();
   await engine.reconcile();
   await engine.badge.render();
 }
