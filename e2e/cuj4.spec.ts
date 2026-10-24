@@ -501,3 +501,38 @@ test.describe(
     });
   },
 );
+
+// Added by the QA gate (iteration 3): R-005 across a worker restart, with no e2e check yet.
+// | PRD                                                                            | Test                      |
+// | ------------------------------------------------------------------------------ | ------------------------- |
+// | CUJ-1 edge "Background worker terminated mid-job" (R-005): the UI is never     | 'download UI: service     |
+// |   left hidden with no job running — also when the new worker instance never    |   worker stopped, then    |
+// |   hid it itself and the job ends by a cancel                                   |   cancelled'              |
+test.describe('CUJ-4: QA gate additions (iteration 3)', { tag: '@cuj4' }, () => {
+  test('download UI: service worker stopped mid-job, then cancelled: the new instance turns the UI back on without having hidden it', async ({
+    harness,
+    server,
+  }) => {
+    const hold = server.hold(pagesOf(EXAMPLE, range(5, 11)));
+    const tab = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(tab, 'Download · 12P');
+    await clickButton(tab);
+    const startedAt = Date.now();
+    await waitForText(tab, '5 / 12');
+    await expect.poll(() => hold.held).toBe(5);
+    expect((await downloadUi(harness)).requested).toBe(false);
+
+    await harness.stopServiceWorker();
+    expect(await harness.isServiceWorkerRunning()).toBe(false);
+    await expectBadge(harness, '7', oneTitle(7));
+    await tab.waitForTimeout(500);
+    expect(await downloadUi(harness)).toEqual({ requested: null, calls: [] });
+
+    await cancelWithMouse(tab, startedAt);
+    await waitForText(tab, 'Download · 12P');
+    await expectBadge(harness, '', IDLE_TITLE);
+    const after = await downloadUiRestored(harness);
+    expect([after.requested, uiCalls(after.calls)]).toEqual([true, [{ enabled: true, ok: true }]]);
+    hold.release();
+  });
+});

@@ -1475,3 +1475,100 @@ test.describe('CUJ-3: QA gate additions (iteration 2)', { tag: '@cuj3' }, () => 
     expect(await textOf(ui.errorText)).toBe(UNKNOWN_ARTST);
   });
 });
+
+// Added by the QA gate (iteration 3): CUJ-3 checks with no e2e yet.
+// | PRD                                                                            | Test                  |
+// | ------------------------------------------------------------------------------ | --------------------- |
+// | Edge "Paste containing newlines … drops newlines" — the same single-line field | 'edge: drop' (2)      |
+// |   for dropped text, at the drop point (design-options-page.md Open Questions,  |                       |
+// |   "drop placement is verified once by QA")                                     |                       |
+// | Step 5 rule 5 (R-004 S5): a `{` is unclosed when another `{` comes before any  | 'validation: a { with |
+// |   `}`; the message names the fragment from that `{` up to that point           |   another { first'    |
+test.describe('CUJ-3: QA gate additions (iteration 3)', { tag: '@cuj3' }, () => {
+  const TWO_LINES = '{artist}\n/{title}\n';
+  const DROPPED = 'pixiv/{artist}/{title}-{id}';
+
+  /** The point just after `pixiv/` in the field, relative to the field and to the viewport. */
+  async function afterPixivSlash(page: Page) {
+    return page.locator('#pattern').evaluate((el) => {
+      const field = el as HTMLInputElement;
+      const css = getComputedStyle(field);
+      const context = document.createElement('canvas').getContext('2d');
+      if (!context) throw new Error('no 2d context');
+      context.font = `${css.fontSize} ${css.fontFamily}`;
+      const rect = field.getBoundingClientRect();
+      const x =
+        parseFloat(css.borderLeftWidth) +
+        parseFloat(css.paddingLeft) +
+        context.measureText('pixiv/').width +
+        1;
+      return { x, y: rect.height / 2, clientX: rect.left + x, clientY: rect.top + rect.height / 2 };
+    });
+  }
+
+  test('edge: drop: two lines dragged inside the page onto the field land on one line at the drop point and save', async ({
+    harness,
+  }) => {
+    const page = await openOptions(harness);
+    const ui = controls(page);
+    await ui.field.fill('pixiv/-{id}');
+    await expect.poll(async () => (await stored(harness)).sync?.folderPattern).toBe('pixiv/-{id}');
+    await page.evaluate((text) => {
+      const source = document.createElement('div');
+      source.id = 'qa-drag-source';
+      source.draggable = true;
+      source.textContent = 'drag source';
+      source.style.cssText = 'position:fixed;left:16px;bottom:16px;padding:8px;background:#fff';
+      source.addEventListener('dragstart', (event) =>
+        event.dataTransfer?.setData('text/plain', text),
+      );
+      document.body.append(source);
+    }, TWO_LINES);
+    const at = await afterPixivSlash(page);
+    await page
+      .locator('#qa-drag-source')
+      .dragTo(ui.field, { targetPosition: { x: at.x, y: at.y } });
+    await expect(ui.field).toHaveValue(DROPPED);
+    await expect(ui.saved('folder')).toHaveText('Saved');
+    await expect.poll(async () => (await stored(harness)).sync?.folderPattern).toBe(DROPPED);
+    expect(await textOf(ui.preview)).toBe(
+      'Preview: Downloads/pixiv/みずき/雨上がりの渋谷-135882741/135882741_p0.jpg',
+    );
+  });
+
+  test('edge: drop: two lines dropped from outside the page land on one line at the drop point and save', async ({
+    harness,
+  }) => {
+    const page = await openOptions(harness);
+    const ui = controls(page);
+    await ui.field.fill('pixiv/-{id}');
+    await expect.poll(async () => (await stored(harness)).sync?.folderPattern).toBe('pixiv/-{id}');
+    const at = await afterPixivSlash(page);
+    const cdp = await page.context().newCDPSession(page);
+    const data = {
+      items: [{ mimeType: 'text/plain', data: TWO_LINES.replace('\n', '\r\n') }],
+      dragOperationsMask: 1,
+    };
+    for (const type of ['dragEnter', 'dragOver', 'drop'] as const) {
+      await cdp.send('Input.dispatchDragEvent', { type, x: at.clientX, y: at.clientY, data });
+    }
+    await cdp.detach();
+    await expect(ui.field).toHaveValue(DROPPED);
+    await expect.poll(async () => (await stored(harness)).sync?.folderPattern).toBe(DROPPED);
+  });
+
+  test('validation: a { with another { first is unclosed: pixiv/{art{id} names {art and saves nothing', async ({
+    harness,
+  }) => {
+    const page = await openOptions(harness);
+    const ui = controls(page);
+    await ui.field.fill('pixiv/{art{id}');
+    await expect(ui.errorBox).toBeVisible();
+    expect(await textOf(ui.errorText)).toBe(
+      'Unknown token {art. Available tokens: {artist}, {id}, {title}, {userId}.',
+    );
+    await page.waitForTimeout(DEBOUNCE_MS + LATE_MS);
+    await expect(ui.saved('folder')).toHaveText('');
+    expect((await stored(harness)).sync?.folderPattern ?? DEFAULT_PATTERN).toBe(DEFAULT_PATTERN);
+  });
+});

@@ -63,6 +63,7 @@ import {
   waitForText,
   watchLabels,
 } from './harness/hfp-button';
+import type { Page } from '@playwright/test';
 import type { Harness } from './harness/launch';
 import { expect, test } from './harness/test';
 import { ROW_MARK, type FakeWindow } from './server/page';
@@ -986,5 +987,212 @@ test.describe("CUJ-1: Chrome's download UI while the job runs (R-005)", { tag: '
       { enabled: false, ok: true },
       { enabled: true, ok: true },
     ]);
+  });
+});
+
+// Added by the QA gate (iteration 3): R-005 and R-004 S6 checks with no e2e yet.
+// | PRD                                                                            | Test                   |
+// | ------------------------------------------------------------------------------ | ---------------------- |
+// | Step 5 (R-004 S6, R-005): cancelled files never reach Chrome, so neither       | 'download UI: cancel   |
+// |   chrome://downloads nor the bubble shows "Canceled" entries; the UI comes     |   ordering'            |
+// |   back after the cancel and no file of the job reaches Chrome after it         |                        |
+// | Edge "A download the user starts themselves while a job runs" (R-005): it      | 'download UI: the      |
+// |   completes and appears in chrome://downloads while the UI stays hidden; the   |   user's own download' |
+// |   window ends as soon as the job ends                                          |                        |
+test.describe('CUJ-1: QA gate additions (iteration 3)', { tag: '@cuj1' }, () => {
+  test('download UI: cancel ordering: no Canceled entry in chrome.downloads, the UI back on, and nothing handed to Chrome after the restore', async ({
+    harness,
+    server,
+  }) => {
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    const base = (await downloadUiAfterBoot(harness)).calls.length;
+    const hold = server.hold(pagesOf(EXAMPLE, range(5, 11)));
+    await clickButton(page);
+    const clickedAt = Date.now();
+    await waitForText(page, '5 / 12');
+    await expect.poll(() => hold.held).toBe(5);
+    await hoverButton(page, false);
+    await hoverButton(page, true);
+    await waitForText(page, 'Cancel');
+    await page.waitForTimeout(Math.max(0, clickedAt + CLICK_GUARD_MS - Date.now()));
+    await clickButton(page);
+    await hoverButton(page, false);
+    await waitForText(page, 'Download · 12P');
+    const after = await downloadUiRestored(harness);
+    expect(uiCalls(after.calls, base)).toEqual([
+      { enabled: false, ok: true },
+      { enabled: true, ok: true },
+    ]);
+    // The held originals finish on the wire after the cancel; none of them may reach Chrome.
+    hold.release();
+    await page.waitForTimeout(1_000);
+    const items = await harness.swEval(async () =>
+      (await chrome.downloads.search({})).map(({ filename, state, error, startTime }) => ({
+        name: filename.split(/[\\/]/).pop(),
+        state,
+        error: error ?? null,
+        startTime,
+      })),
+    );
+    expect(items.filter((item) => item.state !== 'complete')).toEqual([]);
+    expect(items.map((item) => item.name).sort()).toEqual(
+      ['metadata.json', ...range(0, 4).map((p) => fileName(EXAMPLE, p))].sort(),
+    );
+    const restoredAt = after.calls.at(-1)?.at ?? 0;
+    expect(items.filter((item) => Date.parse(item.startTime) > restoredAt)).toEqual([]);
+    expect(await downloadedPaths(harness)).toEqual(expectedFiles(FOLDER, range(0, 4), true));
+  });
+
+  test("download UI: the user's own download while a job runs completes and is listed; the UI stays hidden until the job ends", async ({
+    harness,
+    server,
+  }) => {
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    const base = (await downloadUiAfterBoot(harness)).calls.length;
+    const hold = server.hold(pagesOf(EXAMPLE, range(6, 11)));
+    await clickButton(page);
+    await waitForText(page, '6 / 12');
+
+    const other = await harness.newPage();
+    await other.goto('https://www.pixiv.net/users/40285173');
+    await other.evaluate(() => {
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(new Blob(['the user’s own file\n'], { type: 'text/plain' }));
+      link.download = 'users-own-download.txt';
+      document.body.append(link);
+      link.click();
+    });
+    await harness.downloads.waitForFile('users-own-download.txt');
+    const own = await harness.swEval(async () =>
+      (await chrome.downloads.search({ filenameRegex: 'users-own-download' })).map((item) => ({
+        state: item.state,
+        byExtension: item.byExtensionId ?? null,
+      })),
+    );
+    expect(own).toEqual([{ state: 'complete', byExtension: null }]);
+    // Still hidden: the user's download neither ends nor extends the job's window.
+    const during = await downloadUi(harness);
+    expect([during.requested, uiCalls(during.calls, base)]).toEqual([
+      false,
+      [{ enabled: false, ok: true }],
+    ]);
+
+    hold.release();
+    await waitForText(page, 'Saved · 12P');
+    const after = await downloadUiRestored(harness);
+    expect(uiCalls(after.calls, base)).toEqual([
+      { enabled: false, ok: true },
+      { enabled: true, ok: true },
+    ]);
+    expect(await downloadedPaths(harness)).toEqual(
+      [...expectedFiles(FOLDER, ALL_PAGES, true), 'users-own-download.txt'].sort(),
+    );
+  });
+});
+
+// Added by the QA gate (iteration 3): what Chrome's toolbar really shows (R-005), read from Chrome's
+// own native-UI accessibility tree (chrome://accessibility → "Chrome Native UI"), since Playwright
+// cannot capture the toolbar. Headless Chromium has no download UI at all, so both tests run only in
+// headed Chromium (`HFP_HEADLESS=0`, the local default) and skip with a reason otherwise: after the
+// job each test makes one control download from a page and skips if even that shows no button.
+// | PRD                                                                            | Test                   |
+// | ------------------------------------------------------------------------------ | ---------------------- |
+// | AC "During a 12-page download Chrome's download bubble does not appear or      | 'toolbar: hidden'      |
+// |   animate, for any of the job's files including the first"                     |                        |
+// | AC "… after the job ends it is available again and lists metadata.json and the | 'toolbar: back after   |
+// |   12 originals"; step 6 "Chrome's downloads button is back in its toolbar"     |   Saved'               |
+test.describe('CUJ-1: QA gate additions (iteration 3), Chrome toolbar', { tag: '@cuj1' }, () => {
+  interface Toolbar {
+    /** Accessible name of Chrome's visible downloads toolbar button, or null when there is none. */
+    button: string | null;
+    bubbleOpen: boolean;
+    bubbleRows: string[];
+  }
+
+  async function openNativeTree(harness: Harness): Promise<Page> {
+    const page = await harness.newPage();
+    await page.goto('chrome://accessibility');
+    await page.locator('#native').check();
+    return page;
+  }
+
+  async function toolbar(tree: Page): Promise<Toolbar> {
+    await tree.locator('button[id^="browser_"][id$="-showOrRefreshTree"]').first().click();
+    await tree.waitForTimeout(1_000);
+    const lines = (await tree.evaluate(() => document.body.innerText)).split('\n');
+    const name = (line: string): string => / name=(.*?) name_from/.exec(line)?.[1] ?? '';
+    const visible = (line: string): boolean => !line.includes('INVISIBLE');
+    const button = lines.find(
+      (line) =>
+        /class_name=(DownloadToolbarButtonView|PinnedActionToolbarButton)\b/.test(line) &&
+        /download/i.test(name(line)) &&
+        visible(line),
+    );
+    return {
+      button: button === undefined ? null : name(button),
+      bubbleOpen: lines.some(
+        (line) =>
+          /class_name=DownloadBubble(Contents|Partial|Primary)View\b/.test(line) && visible(line),
+      ),
+      bubbleRows: lines
+        .filter((line) => line.includes('class_name=DownloadBubbleTransparentButton'))
+        .map((line) => name(line).split(' ')[0] ?? ''),
+    };
+  }
+
+  /** Skips the test when even a download the page starts shows no downloads button. */
+  async function skipWithoutDownloadUi(harness: Harness, tree: Page): Promise<Toolbar> {
+    const other = await harness.newPage();
+    await other.goto('https://www.pixiv.net/users/40285173');
+    await other.evaluate(() => {
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(new Blob(['control']));
+      link.download = 'control-download.txt';
+      document.body.append(link);
+      link.click();
+    });
+    await harness.downloads.waitForFile('control-download.txt');
+    await other.waitForTimeout(1_000);
+    const control = await toolbar(tree);
+    test.skip(
+      control.button === null,
+      'this Chromium shows no download UI at all (headless): run with HFP_HEADLESS=0',
+    );
+    return control;
+  }
+
+  test('toolbar: hidden: no downloads button and no bubble while a 12-page job runs', async ({
+    harness,
+    server,
+  }) => {
+    const tree = await openNativeTree(harness);
+    const hold = server.hold(pagesOf(EXAMPLE, range(6, 11)));
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    await clickButton(page);
+    await waitForText(page, '6 / 12');
+    const during = await toolbar(tree);
+    hold.release();
+    await waitForText(page, 'Saved · 12P');
+    await downloadUiRestored(harness);
+    await skipWithoutDownloadUi(harness, tree);
+    expect(during).toEqual({ button: null, bubbleOpen: false, bubbleRows: [] });
+  });
+
+  test('toolbar: back after Saved: Chrome’s downloads button is in the toolbar again once the job has ended', async ({
+    harness,
+  }) => {
+    const tree = await openNativeTree(harness);
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    await clickButton(page);
+    await waitForText(page, 'Saved · 12P');
+    await downloadUiRestored(harness);
+    await page.waitForTimeout(3_000);
+    const after = await toolbar(tree);
+    if (after.button === null) await skipWithoutDownloadUi(harness, tree);
+    expect(after.button, 'Chrome’s downloads button after Saved · 12P').not.toBeNull();
   });
 });

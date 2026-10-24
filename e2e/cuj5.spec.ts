@@ -79,6 +79,9 @@ import {
   badgeText,
   CLICK_GUARD_MS,
   downloadedPaths,
+  downloadUi,
+  downloadUiAfterBoot,
+  downloadUiRestored,
   expectBadge,
   fileName,
   IDLE_TITLE,
@@ -87,6 +90,7 @@ import {
   range,
   restingView,
   TRANSITION_MS,
+  uiCalls,
 } from './harness/flows';
 import {
   buttonHasFocus,
@@ -1253,4 +1257,161 @@ test.describe('CUJ-5: QA gate additions (iteration 2)', { tag: '@cuj5' }, () => 
       await expectBadge(harness, '', IDLE_TITLE);
     });
   }
+});
+
+// Added by the QA gate (iteration 3): R-005 at the ends CUJ-5 names, with no e2e check yet.
+// | PRD                                                                            | Test                    |
+// | ------------------------------------------------------------------------------ | ----------------------- |
+// | Step 4 (R-005): the UI comes back whenever the last running job ends, for any  | 'download UI: 403 mid-  |
+// |   reason (Saved, cancelled, failed, needs login after a mid-job 403, or        |   job', 'partial',      |
+// |   Unavailable)                                                                 |   'encode failure'      |
+// | §4.1 #3 (R-005): the hidden window "never starts before the job's first file   | 'download UI: nothing   |
+// |   is handed to Chrome" — a job that ends before any file reaches Chrome never  |   handed to Chrome'     |
+// |   hides it (Unavailable, refused, no connection, needs login before metadata)  |                         |
+test.describe('CUJ-5: QA gate additions (iteration 3)', { tag: '@cuj5' }, () => {
+  test('download UI: 403 mid-job: Log in to download, and Chrome’s UI back on', async ({
+    harness,
+    server,
+  }) => {
+    harness.allowConsoleErrors(...FAULT_LOGS);
+    server.fault({ match: `/${fileName(EXAMPLE, 5)}`, responses: { status: 403 } });
+    const hold = server.hold(pagesOf(EXAMPLE, range(6, 11)));
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    const base = (await downloadUiAfterBoot(harness)).calls.length;
+    await clickButton(page);
+    await server.waitForRequest(pagesOf(EXAMPLE, [5]));
+    await expect.poll(async () => (await downloadUi(harness)).requested).toBe(false);
+    hold.release();
+    const view = await settle(page, 'Log in to download');
+    expect(view.title).toBe(TIP_LOGIN);
+    const after = await downloadUiRestored(harness);
+    expect(uiCalls(after.calls, base)).toEqual([
+      { enabled: false, ok: true },
+      { enabled: true, ok: true },
+    ]);
+  });
+
+  test('download UI: partial: Retry · 3 failed turns it back on; the retry hides it again and restores it after Saved · 12P', async ({
+    harness,
+    server,
+  }) => {
+    failPages(harness, server, EXAMPLE, [4, 9, 11]);
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    const base = (await downloadUiAfterBoot(harness)).calls.length;
+    await clickButton(page);
+    await settle(page, 'Retry · 3 failed');
+    const failed = await downloadUiRestored(harness);
+    expect(uiCalls(failed.calls, base)).toEqual([
+      { enabled: false, ok: true },
+      { enabled: true, ok: true },
+    ]);
+    const hold = server.hold(pagesOf(EXAMPLE, [4, 9, 11]));
+    const retriedAt = Date.now();
+    await clickButton(page);
+    await waitForText(page, '9 / 12');
+    await expect.poll(() => hold.held).toBe(3);
+    // The retry writes no metadata.json, so nothing reaches Chrome until a page has been fetched,
+    // and the hidden window never starts before that (§4.1 #3).
+    expect((await downloadUi(harness)).requested).toBe(true);
+    hold.release();
+    await settle(page, 'Saved · 12P');
+    await expect.poll(async () => (await downloadUi(harness)).calls.length).toBe(base + 4);
+    const after = await downloadUiRestored(harness);
+    expect(uiCalls(after.calls, base)).toEqual([
+      { enabled: false, ok: true },
+      { enabled: true, ok: true },
+      { enabled: false, ok: true },
+      { enabled: true, ok: true },
+    ]);
+    const retried = await harness.swEval(
+      async (since) =>
+        (await chrome.downloads.search({ startedAfter: new Date(since).toISOString() })).map(
+          ({ startTime, endTime }) => ({
+            startedAt: Date.parse(startTime),
+            endedAt: endTime === undefined ? Number.NaN : Date.parse(endTime),
+          }),
+        ),
+      retriedAt,
+    );
+    expect(retried).toHaveLength(3);
+    const [, , hide, restore] = after.calls.slice(base);
+    expect(Math.min(...retried.map((item) => item.startedAt))).toBeGreaterThanOrEqual(
+      hide?.at ?? Number.POSITIVE_INFINITY,
+    );
+    expect(Math.max(...retried.map((item) => item.endedAt))).toBeLessThanOrEqual(
+      restore?.at ?? Number.NEGATIVE_INFINITY,
+    );
+  });
+
+  test('download UI: encode failure: Retry · MP4 with Chrome’s UI back on', async ({ harness }) => {
+    harness.allowConsoleErrors(...FAULT_LOGS);
+    const page = await openArtwork(harness, CORRUPT.id);
+    await waitForText(page, /^Download · (MP4|WebM)$/);
+    const base = (await downloadUiAfterBoot(harness)).calls.length;
+    await clickButton(page);
+    await settle(page, /^Retry · (MP4|WebM)$/, 30_000);
+    const after = await downloadUiRestored(harness);
+    expect(uiCalls(after.calls, base)).toEqual([
+      { enabled: false, ok: true },
+      { enabled: true, ok: true },
+    ]);
+  });
+
+  test('download UI: nothing handed to Chrome: Unavailable, refused, no connection and a needs-login click before the metadata never hide it', async ({
+    harness,
+    server,
+  }) => {
+    harness.allowConsoleErrors(...FAULT_LOGS);
+    const base = (await downloadUiAfterBoot(harness)).calls.length;
+    const noCalls = async (): Promise<void> => {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const report = await downloadUi(harness);
+      expect([report.requested, uiCalls(report.calls, base)]).toEqual([true, []]);
+    };
+
+    // Unavailable: deleted after the page loaded.
+    const deleted = await openArtwork(harness, SINGLE.id);
+    await waitForText(deleted, 'Download');
+    server.patchWork(SINGLE.id, { deleted: true });
+    await clickButton(deleted);
+    await settle(deleted, 'Unavailable');
+    await noCalls();
+    await deleted.close();
+
+    // A needs-login click made before the render-time metadata arrived (R-003).
+    const hold = server.hold((r) => r.path === `/ajax/illust/${WALLED.id}`);
+    const walled = await openArtwork(harness, WALLED.id);
+    await waitForText(walled, 'Download');
+    await expect.poll(() => hold.held).toBeGreaterThanOrEqual(1);
+    await clickButton(walled);
+    hold.release();
+    await settle(walled, 'Log in to download');
+    await noCalls();
+    await walled.close();
+
+    // No connection: pixiv answers nothing in this click.
+    const offline = await openArtwork(harness, TAB_B.id);
+    await waitForText(offline, 'Download · 8P');
+    server.fault({
+      match: /^https:\/\/(www\.pixiv\.net\/ajax|i\.pximg\.net)\//,
+      responses: { reset: true },
+    });
+    await clickButton(offline);
+    expect((await settle(offline, 'Retry', 30_000)).title).toBe(TIP_OFFLINE);
+    await noCalls();
+    server.clearFaults();
+    await offline.close();
+
+    // Refused: logged in with R-18 display off.
+    await harness.context.addCookies([SESSION_COOKIE]);
+    server.patchWork(R18.id, { r18Hidden: true });
+    const refused = await openArtwork(harness, R18.id);
+    await waitForText(refused, 'Download · 68P');
+    await clickButton(refused);
+    expect((await settle(refused, 'Retry')).title).toBe(TIP_REFUSED);
+    await noCalls();
+    expect(await downloadedPaths(harness)).toEqual([]);
+  });
 });

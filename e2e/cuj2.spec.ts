@@ -51,7 +51,13 @@ import { DEFAULT_SETTINGS, type StoredSettings } from '../src/shared/settings';
 import type { Settings, UgoiraOutput } from '../src/shared/types';
 import { ugoiraFrames, ugoiraZip } from './fixtures/assets';
 import { artworkUrl, requireWork, ugoiraZipUrl, type UgoiraWork } from './fixtures/works';
-import { restingView } from './harness/flows';
+import {
+  downloadUi,
+  downloadUiAfterBoot,
+  downloadUiRestored,
+  restingView,
+  uiCalls,
+} from './harness/flows';
 import { clickButton, exposeButton, hoverButton, waitForText } from './harness/hfp-button';
 import type { Harness } from './harness/launch';
 import {
@@ -1113,5 +1119,87 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
       await expectVideo(harness, EXAMPLE, 'webm', { width: 600, height: 600 });
       await expectQuality(harness, EXAMPLE, 'webm');
     });
+  });
+});
+
+// Added by the QA gate (iteration 3): R-005 on an ugoira job, with no e2e check yet.
+// | PRD                                                                            | Test                   |
+// | ------------------------------------------------------------------------------ | ---------------------- |
+// | Step 3 (R-005): Chrome shows no downloads button and no animation; its UI      | 'download UI: ugoira'  |
+// |   stays hidden from the job's first saved file until the job ends              |                        |
+// | Step 4 / CUJ-1 step 5 (R-005): a cancel during the zip fetch turns it back on  | 'download UI: cancel   |
+// |                                                                                |   during the zip'      |
+test.describe('CUJ-2: QA gate additions (iteration 3)', { tag: '@cuj2' }, () => {
+  test('download UI: ugoira: hidden from metadata.json through the zip fetch, back on only after the video landed', async ({
+    harness,
+    server,
+  }) => {
+    const page = await openArtwork(harness, EXAMPLE);
+    await exposeButton(page);
+    const base = (await downloadUiAfterBoot(harness)).calls.length;
+    const hold = server.hold(ugoiraZipUrl(EXAMPLE));
+    await clickButton(page);
+    await expect.poll(() => hold.held).toBe(1);
+    await harness.downloads.waitForFile(`${folderOf(EXAMPLE)}/metadata.json`);
+    const during = await downloadUi(harness);
+    expect([during.requested, uiCalls(during.calls, base)]).toEqual([
+      false,
+      [{ enabled: false, ok: true }],
+    ]);
+
+    hold.release();
+    const saved = await waitForText(page, /^Saved · (MP4|WebM)$/, { timeout: JOB_TIMEOUT_MS });
+    const after = await downloadUiRestored(harness);
+    expect(uiCalls(after.calls, base)).toEqual([
+      { enabled: false, ok: true },
+      { enabled: true, ok: true },
+    ]);
+    const items = await harness.swEval(async () =>
+      (await chrome.downloads.search({})).map(({ filename, state, startTime, endTime }) => ({
+        name: filename.split(/[\\/]/).pop() ?? '',
+        state,
+        startedAt: Date.parse(startTime),
+        endedAt: endTime === undefined ? Number.NaN : Date.parse(endTime),
+      })),
+    );
+    const video = saved.text.endsWith('MP4') ? '136004512.mp4' : '136004512.webm';
+    expect(items.map((item) => item.name).sort()).toEqual(
+      ['136004512_ugoira.zip', 'frames.json', 'metadata.json', video].sort(),
+    );
+    expect(items.every((item) => item.state === 'complete')).toBe(true);
+    const hideAt = after.calls[base]?.at ?? Number.POSITIVE_INFINITY;
+    const restoreAt = after.calls.at(-1)?.at ?? Number.NEGATIVE_INFINITY;
+    expect(Math.min(...items.map((item) => item.startedAt))).toBeGreaterThanOrEqual(hideAt);
+    // chrome.downloads times are whole milliseconds, like Date.now() in the SW.
+    expect(Math.max(...items.map((item) => item.endedAt))).toBeLessThanOrEqual(restoreAt);
+  });
+
+  test('download UI: cancel during the zip fetch: back to idle with Chrome’s UI back on; only metadata.json stays', async ({
+    harness,
+    server,
+  }) => {
+    const page = await openArtwork(harness, EXAMPLE);
+    await exposeButton(page);
+    const idle = await restingView(page);
+    const base = (await downloadUiAfterBoot(harness)).calls.length;
+    const hold = server.hold(ugoiraZipUrl(EXAMPLE));
+    await clickButton(page);
+    const clickedAt = Date.now();
+    await expect.poll(() => hold.held).toBe(1);
+    await hoverButton(page, false);
+    await hoverButton(page, true);
+    await waitForText(page, 'Cancel');
+    await page.waitForTimeout(Math.max(0, clickedAt + CLICK_GUARD_MS - Date.now()));
+    await clickButton(page);
+    await hoverButton(page, false);
+    await waitForText(page, idle.text);
+    const after = await downloadUiRestored(harness);
+    expect(uiCalls(after.calls, base)).toEqual([
+      { enabled: false, ok: true },
+      { enabled: true, ok: true },
+    ]);
+    hold.release();
+    await page.waitForTimeout(500);
+    expect(await filePaths(harness)).toEqual([`${folderOf(EXAMPLE)}/metadata.json`]);
   });
 });
