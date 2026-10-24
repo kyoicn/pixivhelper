@@ -202,6 +202,118 @@ describe('chrome fake: downloads', () => {
   });
 });
 
+describe('chrome fake: deferred naming (R-006)', () => {
+  const save = (filename: string): Promise<number> =>
+    chrome.downloads.download({
+      url: BLOB_URL,
+      filename,
+      conflictAction: 'uniquify',
+      saveAs: false,
+    });
+
+  async function filenameOf(id: number): Promise<string | undefined> {
+    return (await chrome.downloads.search({ id }))[0]?.filename;
+  }
+
+  function watchDeltas(): chrome.downloads.DownloadDelta[] {
+    const deltas: chrome.downloads.DownloadDelta[] = [];
+    chrome.downloads.onChanged.addListener((delta) => deltas.push(delta));
+    return deltas;
+  }
+
+  it('deferNaming: off by default, an item is named at creation', async () => {
+    const id = await save('a/1.jpg');
+    expect(await filenameOf(id)).toBe(`${DOWNLOADS_DIR}/a/1.jpg`);
+  });
+
+  it('deferNaming: on, an item starts with an empty filename', async () => {
+    fake.downloads.deferNaming(true);
+    const id = await save('a/1.jpg');
+    expect(await filenameOf(id)).toBe('');
+  });
+
+  it('deferNaming: on, an item starts in progress', async () => {
+    fake.downloads.deferNaming(true);
+    const id = await save('a/1.jpg');
+    expect(fake.downloads.inProgress().map((item) => item.id)).toEqual([id]);
+  });
+
+  it('name: sets the reserved filename', async () => {
+    fake.downloads.deferNaming(true);
+    const id = await save('a/1.jpg');
+    fake.downloads.name(id);
+    expect(await filenameOf(id)).toBe(`${DOWNLOADS_DIR}/a/1.jpg`);
+  });
+
+  it('name: fires a filename delta from empty', async () => {
+    fake.downloads.deferNaming(true);
+    const deltas = watchDeltas();
+    const id = await save('a/1.jpg');
+    fake.downloads.name(id);
+    expect(deltas).toEqual([
+      { id, filename: { previous: '', current: `${DOWNLOADS_DIR}/a/1.jpg` } },
+    ]);
+  });
+
+  it('name: an item named already throws', async () => {
+    const id = await save('a/1.jpg');
+    expect(() => fake.downloads.name(id)).toThrow(`no unnamed download (id ${id})`);
+  });
+
+  it('deferNaming: an unnamed item still reserves its target for uniquify', async () => {
+    fake.downloads.deferNaming(true);
+    const first = await save('a/metadata.json');
+    const second = await save('a/metadata.json');
+    fake.downloads.name(second);
+    fake.downloads.name(first);
+    expect([await filenameOf(first), await filenameOf(second)]).toEqual([
+      `${DOWNLOADS_DIR}/a/metadata.json`,
+      `${DOWNLOADS_DIR}/a/metadata (1).json`,
+    ]);
+  });
+
+  it('complete: names an unnamed item first, its filename delta before the state delta', async () => {
+    fake.downloads.deferNaming(true);
+    const deltas = watchDeltas();
+    const id = await save('a/1.jpg');
+    fake.downloads.complete(id);
+    expect(deltas.map((delta) => Object.keys(delta).filter((key) => key !== 'id'))).toEqual([
+      ['filename'],
+      ['state', 'endTime'],
+    ]);
+  });
+
+  it('interrupt: names an unnamed item first, its filename delta before the state delta', async () => {
+    fake.downloads.deferNaming(true);
+    const deltas = watchDeltas();
+    const id = await save('a/1.jpg');
+    fake.downloads.interrupt(id, 'FILE_FAILED');
+    expect(deltas.map((delta) => Object.keys(delta).filter((key) => key !== 'id'))).toEqual([
+      ['filename'],
+      ['state', 'error'],
+    ]);
+  });
+
+  it('complete: a named item fires only its state delta', async () => {
+    fake.downloads.deferNaming(true);
+    const deltas = watchDeltas();
+    const id = await save('a/1.jpg');
+    fake.downloads.name(id);
+    deltas.length = 0;
+    fake.downloads.complete(id);
+    expect(deltas.map((delta) => Object.keys(delta).filter((key) => key !== 'id'))).toEqual([
+      ['state', 'endTime'],
+    ]);
+  });
+
+  it('reset: turns deferred naming back off', async () => {
+    fake.downloads.deferNaming(true);
+    fake.reset();
+    const id = await save('a/1.jpg');
+    expect(await filenameOf(id)).toBe(`${DOWNLOADS_DIR}/a/1.jpg`);
+  });
+});
+
 describe('chrome fake: download UI (setUiOptions, R-005)', () => {
   const save = (filename: string): Promise<number> =>
     chrome.downloads.download({ url: BLOB_URL, filename });

@@ -410,6 +410,9 @@ export class FakeDownloads {
   #nextId = 1;
   #downloadErrors: string[] = [];
   #uiErrors: string[] = [];
+  #deferNaming = false;
+  /** Targets of items created while naming was deferred, by id, until name() sets them. */
+  #reserved = new Map<number, string>();
 
   /** `uiPermission`: whether the manifest grants "downloads.ui", without which setUiOptions rejects. */
   constructor(private readonly uiPermission: boolean) {}
@@ -423,16 +426,19 @@ export class FakeDownloads {
     if (!isSafeDownloadPath(relative)) throw new Error(INVALID_FILENAME_ERROR);
     const onDisk = (path: string): boolean =>
       [...this.#items.values()].some(
-        (item) => item.state !== 'interrupted' && item.filename === `${DOWNLOADS_DIR}/${path}`,
+        (item) =>
+          item.state !== 'interrupted' &&
+          (item.filename || this.#reserved.get(item.id)) === `${DOWNLOADS_DIR}/${path}`,
       );
     const target = options.conflictAction === 'uniquify' ? uniquified(relative, onDisk) : relative;
     const id = this.#nextId++;
+    if (this.#deferNaming) this.#reserved.set(id, `${DOWNLOADS_DIR}/${target}`);
     this.#items.set(id, {
       id,
       url: options.url,
       finalUrl: options.url,
       referrer: '',
-      filename: `${DOWNLOADS_DIR}/${target}`,
+      filename: this.#deferNaming ? '' : `${DOWNLOADS_DIR}/${target}`,
       mime: '',
       state: 'in_progress',
       danger: 'safe',
@@ -492,6 +498,27 @@ export class FakeDownloads {
     for (let i = 0; i < times; i++) this.#uiErrors.push(message);
   }
 
+  /**
+   * While on, download() creates its item with `filename: ''` and only reserves the target (so a
+   * second download of the same path still gets ` (1)`), like Chrome determining a download's
+   * target path a few milliseconds after creating it (R-006). name(id) then sets it. Off by
+   * default: items are named at creation.
+   */
+  deferNaming(on: boolean): void {
+    this.#deferNaming = on;
+  }
+
+  /** Chrome determined download `id`'s target path: sets the reserved filename, fires onChanged. */
+  name(id: number): DownloadItem {
+    const item = this.#items.get(id);
+    const current = this.#reserved.get(id);
+    if (!item || current === undefined) throw new Error(`no unnamed download (id ${id})`);
+    this.#reserved.delete(id);
+    item.filename = current;
+    this.onChanged.dispatch({ id, filename: { previous: '', current } });
+    return serialize(item);
+  }
+
   /** The `ui` entries of the call log: every setting Chrome applied, oldest first. */
   uiCalls(): boolean[] {
     return this.callLog.flatMap((call) => (call.op === 'ui' ? [call.enabled] : []));
@@ -507,9 +534,13 @@ export class FakeDownloads {
     return this.items().filter((item) => item.state === 'in_progress');
   }
 
-  /** Completes download `id` (default: the oldest in progress) and fires onChanged. */
+  /**
+   * Completes download `id` (default: the oldest in progress) and fires onChanged; an item not
+   * named yet is named first, with its own `filename` delta.
+   */
   complete(id?: number): DownloadItem {
     const item = this.pending(id);
+    if (this.#reserved.has(item.id)) this.name(item.id);
     item.state = 'complete';
     item.endTime = new Date().toISOString();
     this.onChanged.dispatch({
@@ -520,9 +551,13 @@ export class FakeDownloads {
     return serialize(item);
   }
 
-  /** Interrupts download `id` (default: the oldest in progress) with `reason`; fires onChanged. */
+  /**
+   * Interrupts download `id` (default: the oldest in progress) with `reason`; fires onChanged. An
+   * item not named yet is named first, with its own `filename` delta.
+   */
   interrupt(id: number | undefined, reason: InterruptReason): DownloadItem {
     const item = this.pending(id);
+    if (this.#reserved.has(item.id)) this.name(item.id);
     item.state = 'interrupted';
     item.error = reason;
     item.exists = false;
@@ -544,6 +579,8 @@ export class FakeDownloads {
     this.#nextId = 1;
     this.#downloadErrors = [];
     this.#uiErrors = [];
+    this.#deferNaming = false;
+    this.#reserved.clear();
     this.uiEnabled = true;
     this.callLog.length = 0;
     this.onChanged.clear();
