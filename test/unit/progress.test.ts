@@ -148,9 +148,9 @@ describe('ugoiraPercent', () => {
     expect(ugoiraPercent(ugoiraJob(saving, { zipTotal: 1000, encDone: 10 }))).toBe(99);
   });
 
-  it('ugoiraPercent: 100 once every file has landed', () => {
+  it('ugoiraPercent: stays at 99 once every file has landed (the end comes from the ended view, never from a 100% busy frame)', () => {
     const all = { metadata: 'done', zip: 'done', framesJson: 'done', video: 'done' } as const;
-    expect(ugoiraPercent(ugoiraJob(all, { zipTotal: 1000, encDone: 10 }))).toBe(100);
+    expect(ugoiraPercent(ugoiraJob(all, { zipTotal: 1000, encDone: 10 }))).toBe(99);
   });
 
   it('ugoiraPercent: never drops below the last emitted percent', () => {
@@ -163,7 +163,7 @@ describe('ugoiraPercent', () => {
     expect(ugoiraPercent(ugoiraJob(ZIP_PHASE, { zipLoaded: 4096, zipTotal: null }))).toBe(0);
   });
 
-  it('ugoiraPercent: is monotonic and below 100 until the end, across a whole job', () => {
+  it('ugoiraPercent: is monotonic and below 100 throughout, across a whole job', () => {
     const run = ugoiraJob();
     const u = run.ugoira as UgoiraState;
     const byIdx = (idx: number) => run.files[idx] as FileTask;
@@ -201,7 +201,7 @@ describe('ugoiraPercent', () => {
       monotonic: seen.every((p, i) => i === 0 || p >= (seen[i - 1] as number)),
       maxBeforeEnd: Math.max(...beforeEnd),
       last: seen.at(-1),
-    }).toEqual({ monotonic: true, maxBeforeEnd: 99, last: 100 });
+    }).toEqual({ monotonic: true, maxBeforeEnd: 99, last: 99 });
   });
 });
 

@@ -137,17 +137,16 @@ describe('sw: ugoira job (CUJ-2)', () => {
     expect(tab.ended()?.outcome).toEqual({ type: 'saved', folder: FOLDER, format: 'mp4' });
   });
 
-  it('sw: pushes a percent that never decreases and reaches 100 only at the end', async () => {
+  it('sw: pushes a percent that never decreases and never reaches 100, not even in the view pushed after the last file lands', async () => {
     const { tab } = await runJob();
     const percents = tab.views.flatMap((v) =>
       v.progress?.kind === 'percent' ? [v.progress.percent] : [],
     );
-    const running = percents.slice(0, -1);
     expect([
       percents.every((p, i) => i === 0 || p >= (percents[i - 1] ?? p)),
-      Math.max(...running) <= 99,
-      percents.at(-1),
-    ]).toEqual([true, true, 100]);
+      Math.max(...percents),
+      tab.ended()?.status,
+    ]).toEqual([true, 99, 'ended']);
   });
 
   it('sw: falls back to WebM when H.264 cannot be encoded', async () => {

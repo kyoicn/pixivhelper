@@ -37,11 +37,12 @@ function rawPercent(job: JobRecord): number {
 
 /**
  * Whole-job ugoira percent: zip bytes map to 0–40 (0–100 for ZIP only), encoded frames to
- * 40–100. Never below the last emitted `ugoira.percent`, and 100 only once every file has landed.
- * Store the result back in `ugoira.percent` to keep later values monotonic.
+ * 40–99. Never below the last emitted `ugoira.percent`, and never 100: the last file's landing
+ * ends the job, and the view pushed between that landing and the end is still a busy one, so
+ * `100%` would show for a frame (PRD §4.7.5). Store the result back in `ugoira.percent` to keep
+ * later values monotonic.
  */
 export function ugoiraPercent(job: JobRecord): number {
-  if (job.files.length > 0 && job.files.every(landed)) return FULL;
   return Math.max(job.ugoira?.percent ?? 0, Math.min(rawPercent(job), RUNNING_CAP));
 }
 
