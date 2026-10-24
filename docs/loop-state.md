@@ -1,40 +1,40 @@
 # Dev Loop State
 
-Last updated: 2026-10-23 21:17:48 (UTC-7)
-Iteration: 3
+Last updated: 2026-10-23 23:58:55 (UTC-7)
+Iteration: 4
 Status: continue
 
 ## Last Cycle Summary
-- Tasks executed: 5 (4 in one parallel group + 1 retry-pass fix), all merged, 0 failed, no conflicts
-- CUJs passed QA: 3 of 5 (0 unimplemented) — CUJ-2, CUJ-3, CUJ-5 PASS; CUJ-1, CUJ-4 FAIL with one shared LOW
-- Tests passing: 3065 unit/integration (67 files) + 143 e2e (4 headed-only skipped headless; headed toolbar 4/4) + 4/4 live ×2
+- Tasks executed: 1 (ENG-012 test pins), merged, 0 failed; plus the between-cycles quick-fix c2c9de0 (bubble-misses-last-file LOW)
+- CUJs passed QA: 3 of 5 (0 unimplemented) — CUJ-2, CUJ-3, CUJ-5 PASS; CUJ-1, CUJ-4 FAIL with LOW-only findings
+- Tests passing: 3066 unit/integration (67 files) + 146 e2e (6 headed-only skipped headless; headed toolbar 6/6) + 4/4 live ×2
 - Tests failing: 0
-- QA inner loops used: 1 (MEDIUM "Chrome's downloads button never returns" → owner ruling R-006 → fix → re-verified RESOLVED)
-- CUJs completed this cycle (PM Satisfied): CUJ-2, CUJ-3, CUJ-5
-- CUJs remaining: 2 (CUJ-1, CUJ-4 — PM Caveats on one LOW)
-- ENG entries completed this cycle: none (backlog was empty; Next-ID ENG-012)
-- ENG entries open: 0 (0 blocking)
+- QA inner loops used: 0
+- CUJs completed this cycle (PM Satisfied): CUJ-2, CUJ-3, CUJ-5 (unchanged)
+- CUJs remaining: 2 (CUJ-1, CUJ-4 — PM Caveats for the offscreen creation race only)
+- ENG entries completed this cycle: ENG-012
+- ENG entries open: 1 (0 blocking) — ENG-013 P2 test-only (othersSettled search-fallback + cross-job unit tests)
 - Routed issues: taken none / closed none / still open 0
-- Owner sweep: R-004 and R-005 applied pre-cycle; R-006 filed, answered (B) and applied mid-cycle; queue empty (Next-ID R-007)
-- Shipped: job-level outage rule (S3); hide Chrome's download UI during jobs with one animation at the last file (R-005/R-006, permission downloads.ui); options paste newlines dropped, unclosed "{" invalid, "Still using:" one line (S5/S15); floating fallback 2763–2778 ms (S4); English ugoira 176 px (S1)
+- Owner sweep: queue was empty at setup; pm filed R-007 (spec-sync batch of 6) at review — open, no default
 
 ## QA Gate
 - Verdict: FAIL (LOW only → proceeded)
 - Fabrications found: 0 (none)
-- Bugs by severity: CRITICAL 0 / HIGH 0 / MEDIUM 0 / LOW 1
-  - [LOW][BUG] CUJ-1/CUJ-4: when a job's last files land together, an earlier file finishing 0–7 ms after the UI restore opens Chrome's bubble before the last file exists; the bubble then lists all files but the last (5/8 store-zip runs on the fake, 0/6 live). Button, single animation, files, chrome://downloads unaffected. src/background/engine.ts targetsKnown (~210–240) and the last-hand-off path (~278–288)
-- Resolved this cycle: iteration-2 LOWs (paste newlines, outage residual, floating timing, 176 px) and the iteration-3 MEDIUM
+- Bugs by severity: CRITICAL 0 / HIGH 0 / MEDIUM 0 / LOW 2
+  - [LOW][BUG] CUJ-1/CUJ-4: offscreen-document creation race when two jobs start within ~10 ms (second job's metadata.json + first pages fail with 0 attempts; "4 attempts" tooltip misleading; after Retry the folder lacks metadata.json with no report). 14/16 at 5–11 ms gap, 0/36 at ≥50 ms on the fake; live reachability unmeasured (API latency, not click gap, sets the race). src/background/offscreen-client.ts ensureOffscreen()/send(), engine.ts ~180–200. Pre-existing.
+  - [LOW][BUG] CUJ-1: pages counter shows N / N in the DOM for 0–2 ms before Saved in two-job and 200-page cases (painted once in 20 two-job runs; never in single 12-page jobs). PM: not a caveat; the AC wording should change (R-007 item 1), no code change.
+- Resolved this cycle: iteration-3 LOW (bubble missing the last file) — 44/44 busy periods ordered correctly across e2e, dev, store-zip and live builds
 - Not run: logged-in live paths (no pixiv account) — docs/release-checklist.md §3
 
 ## Blocker (if status = blocked)
 none
 
 ## Next Focus
-Planner priority order (from docs/pm-review.md iteration 3):
-1. [tl → coder] Fix the LOW: the last hand-off waits (capped ≤ 2 s) until earlier in-flight files have LEFT in_progress (finished/interrupted/unknown), not merely been named — rename targetsKnown → othersSettled; update design-download-engine.md "The last hand-off" step 3 + alternatives table; unit/integration tests incl. the fake recording "a file finished while the UI was on before the last file existed" (must never happen). Done when QA's race probe (SCEN=race12-nohold REPS=8, dev + store zip) and two-job ×4 list the last file every time, still one animation, Saved ≤ 100 ms later on the fake. Exit rule: anything left only at the cap → amend AC 14 instead of looping.
-2. [coder, same change set] code-review W1: add the held-hide "last two together" unit test (docs/code-review.md addendum); drop the untested "watcher is gone" line from the design's test list.
-3. [pm spec-sync] (a) §4.1 #3 "needed login after a mid-job 403" → "after a 403 with no other file still on its way to Chrome" + CUJ-5 step 9 sentence; (b) options contrast: links light #0b6fc2, selected segment #0b6fc2 + white in both modes, fix the index "Contrast" claim, update the three cuj-3 mocks (options.css follows); (c) record the Chrome prompt on the ugoira zip as a known v1 limitation in CUJ-2 edges with the pre-decided response.
-4. [tl] design-doc notes: boot-time note at "Restart at await:handoff.restoreUi"; a prompt on the ugoira zip blocks later files of that job; close §15 gap 2 after 3b.
-5. [qa] the priority-1 probes + full headed R-006 matrix; restore→last-file and click→Saved timing; CUJ-3 colours both themes; CUJ-5 step 9 for 403 and 403-last; hand-reopened bubble if an OS click is possible.
-6. [owner, not a loop gate] release-checklist §2 R-006 item (HTTP-cache re-download burst, Windows ESB ugoira check), §3 logged-in checks, make the repo public (R-001).
-Owner decisions never park here; the queue is empty.
+Planner priority order (from docs/pm-review.md iteration 4):
+1. [tl → coder] Fix the offscreen creation race in src/background/offscreen-client.ts: ensureOffscreen() returns the in-flight creating promise before calling getContexts; send() treats "Receiving end does not exist" as not-ready-yet with a bounded wait (≤ 1 s) and resend (also covers a job starting during the 5 s grace close); record in design-offscreen-worker.md "Lifecycle"; L2 tests for two jobs starting during creation and a command during close, with a mutation check. Exit: twoTabsProbe.ts at CLICK_GAP=0, same and different artworks, e2e build and store zip, ≥ 8 runs each → both jobs Saved with metadata.json; R-006 regressions green.
+2. [owner → pm → coder] R-007 spec-sync batch (6 items; see docs/pm-review.md "Spec-sync batch (R-007)"): counter wording; the 200-page edge line; mid-job 403 wording; settings contrast (#0b6fc2 links + selected segment, three cuj-3 mocks, options.css); ugoira-zip prompt as a known v1 limitation; Retry after pages + metadata.json both failed must re-write metadata.json (outcome.ts, model.ts startRequest, resolver.ts resolveRetryPages).
+3. [coder, parallel with 1] ENG-013 (P2, test-only).
+4. [tl] design-download-engine.md "When N / N can still show" → QA's measured mechanism + the metadata-only retry's 12 / 12; close §15 gaps 1–3 after R-007.
+5. [qa] race probe at CLICK_GAP=0 both builds ≥ 8 runs + 0–800 ms sweep; grace-close edge (second job ~5 s after a busy period, ±50 ms); regression: headed R-006 matrix, race12-nohold ×8 on the store zip, click→Saved 133–163 ms; after R-007 items 4/6: CUJ-3 colours both themes, CUJ-5 with injected metadata.json + page failures.
+6. [owner, not a loop gate] docs/release-checklist.md §2 (R-006 item, Windows ESB ugoira check, new: two artworks in two tabs ×5 on live pixiv → both folders hold metadata.json), §3 logged-in checks, §6 make the repo public (R-001).
+Owner decisions never park here: R-007 is in docs/owner-queue.md.

@@ -1,12 +1,12 @@
 # Project Status
 
 > Auto-generated project status summary.
-> Last updated: 2026-10-23 21:09:00 (UTC-7)
+> Last updated: 2026-10-23 23:50:00 (UTC-7)
 
 ## Overview
 **Helper for Pixiv** (public name per R-002) is a Chrome extension (Manifest V3, desktop Chrome 116+) that adds one Download button to every pixiv artwork page. One click saves the artwork into its own folder under Chrome's Downloads folder: originals, a `metadata.json`, and for ugoira the frame zip, `frames.json` and a video encoded in the browser. It replaces the personal terminal script `ref/pixiv-dl`.
 
-Current phase: **dev-cycle iteration 3, retry 1, Phase 5 (status refresh after the QA re-verification).** Iteration 3 (25 commits since `e2ab417`, 75 files, +6195/-1132) applied the R-004 spec-sync batch (S1-S15) and added R-005 (hide Chrome's download UI during jobs, permission `downloads.ui`) and R-006 (Chrome's downloads button returns with the job's last file). It built the job-level outage rule, the download-UI toggle, options paste handling, and the floating timer plus the 176 px ugoira pill. The QA gate (retry 1, run `iter3-19-38-54`, `main` at `68c35d7`) is **FAIL with 1 LOW**: CUJ-2, CUJ-3, CUJ-5 PASS; CUJ-1 and CUJ-4 FAIL on the same LOW. The iteration-3 MEDIUM (Chrome's downloads button does not come back) and all four iteration-2 LOWs are resolved. The iteration-3 PM review (`docs/pm-review.md`) rates CUJ-2, CUJ-3, CUJ-5 Satisfied and CUJ-1, CUJ-4 Caveats, with 0 Not done.
+Current phase: **dev-cycle iteration 4, Phase 5 (status refresh after the QA gate).** Iteration 4 started from the iteration-3 LOW "bubble misses the last file", fixed between cycles by quick-fix `c2c9de0` (the last hand-off now waits for earlier files to finish, D12 rev. 3), then added ENG-012 test pins and a comment fix. The QA gate (run `iter4-22-53-54`) is **FAIL with 2 LOW**: CUJ-2, CUJ-3, CUJ-5 PASS; CUJ-1 fails on both LOWs and CUJ-4 on LOW #1. The iteration-3 LOW is RESOLVED. The iteration-4 PM review (`docs/pm-review.md`) rates CUJ-2, CUJ-3, CUJ-5 Satisfied and CUJ-1, CUJ-4 Caveats (held for the offscreen creation race only), with 0 Not done.
 
 ## Tech Stack
 
@@ -34,14 +34,14 @@ Four runtime contexts, designed in `docs/design/system.md` plus six chapter docs
 
 ## CUJ Status
 
-Impl reflects code on `main`; QA is from `docs/qa-report.md` (iteration 3 retry 1, run `iter3-19-38-54`, gate FAIL); PM is from `docs/pm-review.md` (iteration 3): CUJ-2, CUJ-3, CUJ-5 Satisfied; CUJ-1, CUJ-4 Caveats; 0 Not done.
+Impl reflects code on `main`; QA is from `docs/qa-report.md` (iteration 4, run `iter4-22-53-54`, gate FAIL); PM is from `docs/pm-review.md` (iteration 4): CUJ-2, CUJ-3, CUJ-5 Satisfied; CUJ-1, CUJ-4 Caveats (held for the offscreen creation race only); 0 Not done.
 
 | CUJ | PRD | Priority | Impl | QA | PM |
 |-----|-----|----------|------|----|----|
-| CUJ-1: Download an illustration or manga from the artwork page | prd-000 | P0 | in progress (LOW: bubble misses the last file) | FAIL (LOW) | Caveats |
+| CUJ-1: Download an illustration or manga from the artwork page | prd-000 | P0 | in progress (2 LOWs) | FAIL (LOW #1, LOW #2) | Caveats |
 | CUJ-2: Download an ugoira | prd-000 | P0 | merged | PASS | Satisfied |
 | CUJ-3: Configure the extension from the toolbar icon | prd-000 | P0 | merged | PASS | Satisfied |
-| CUJ-4: Follow several downloads at once from the toolbar badge | prd-000 | P1 | in progress (same LOW) | FAIL (LOW) | Caveats |
+| CUJ-4: Follow several downloads at once from the toolbar badge | prd-000 | P1 | in progress (LOW #1) | FAIL (LOW #1) | Caveats |
 | CUJ-5: Recover when a download can't start or breaks | prd-000 | P0 | merged | PASS | Satisfied |
 
 **Column values:**
@@ -49,13 +49,14 @@ Impl reflects code on `main`; QA is from `docs/qa-report.md` (iteration 3 retry 
 - `QA`: `PASS` | `FAIL` | `BLOCKED` | `NOT_RUN` | `WAIVED` | `UNIMPLEMENTED` | `—`
 - `PM`: `Satisfied` | `Caveats` | `Not done` | `—`
 
-A CUJ is **fully done** when Impl=`merged`, QA=`PASS`, AND PM=`Satisfied`. No CUJ is fully done yet: CUJ-2, CUJ-3, CUJ-5 await the iteration-3 PM verdict; CUJ-1 and CUJ-4 carry the LOW below.
+A CUJ is **fully done** when Impl=`merged`, QA=`PASS`, AND PM=`Satisfied`. CUJ-2, CUJ-3 and CUJ-5 are fully done; CUJ-1 and CUJ-4 carry the LOWs below.
 
 QA findings per CUJ:
-- CUJ-1 (AC 14) and CUJ-4 (edge "its bubble lists the files of both jobs"): when a job's last files land together, Chrome's bubble can open just before the final hand-off and list every file except the last (e.g. `metadata.json` and p0-p10 without p11). `src/background/engine.ts:210-240` (`targetsKnown`) and `:278-288` (last-hand-off path) wait for earlier files to be named, not completed. Frequency: store zip on fake pixiv 5 of 8 runs; e2e build 3 of 6; two concurrent jobs 3 of 4; never when the last file lands alone (8 of 8) and never on live pixiv (6 of 6). The single animation, the returned button, files on disk and `chrome://downloads` are correct.
-- CUJ-2: PASS (step 5: one animation with the video; bubble lists all 4 files, fake x2 and live x2). The 176 px pill is now spec (R-004 S10).
-- CUJ-3: PASS (full walk and @cuj3 e2e green; pasted line breaks are dropped, an unclosed `{` is invalid).
-- CUJ-5: PASS (step 4 silent end matches the amended step and `cuj-5-retry.html`; sustained outage reads per click from whether pixiv answered; floating fallback within 3 s).
+- CUJ-1: FAIL on LOW #1 (offscreen-creation race, below) and LOW #2 (counter residual, below). The iteration-3 LOW (AC 14 bubble misses the last file) is resolved by `c2c9de0`.
+- CUJ-2: PASS.
+- CUJ-3: PASS.
+- CUJ-4: FAIL on LOW #1 only (two jobs started within ~10 ms).
+- CUJ-5: PASS.
 
 Dependencies (PRD): CUJ-2 needs CUJ-1 and CUJ-3; CUJ-4 needs CUJ-1; CUJ-5 needs CUJ-1 and CUJ-2.
 
@@ -78,7 +79,7 @@ Click in the content script, then `start` message to the SW. The engine snapshot
 │   ├── offscreen/    command router, fetch-bytes, ugoira/ encoder
 │   ├── options/      settings page
 │   └── shared/       types, messages, retry, outcome, pattern, metadata, i18n
-├── test/             unit/, integration/, fakes/, fixtures/, golden/, helpers/ (3065 vitest tests)
+├── test/             unit/, integration/, fakes/, fixtures/, golden/, helpers/ (3066 vitest tests)
 ├── e2e/              harness/, server/ (fake pixiv), fixtures/, qa/, live/, cuj1-5 specs
 ├── scripts/          build.mjs, gen-golden.py, render-icons.mjs, owner-lint.sh, size.mjs, zip.mjs, spike/ (ENG-002 findings)
 ├── .github/workflows/ci.yml
@@ -93,34 +94,37 @@ Click in the content script, then `start` message to the SW. The engine snapshot
 No `CLAUDE.md` in the project root.
 
 ## Recent Activity
-Iteration 3: 25 commits since `e2ab417` (75 files, +6195/-1132), in this order:
-- **Spec and plan:** `053621c` R-004 spec-sync S1-S15 applied to prd-000 and mocks, `c7b0595` R-005 (hide Chrome's download UI), `91749c2` iteration-3 plan (layering-free).
-- **Four parallel fixes (merged `82cc3da`, `7ae0d0b`, `3cef87b`):** job-level outage rule `b9c371c` and its 7-click e2e `39ba255` (CUJ-5, S3); download-UI toggle `3c86407` (R-005, `downloads.ui`, `src/background/download-ui.ts`) with e2e `7b7fa4b` and release checklist `886bd88`; options paste/S5/S15 `b97c94b`; floating fallback inside 3 s `8560828` and the 176 px ugoira pill `17b5570`.
-- **TL review:** `fbe4066` (recording kept out of the shipped `download-ui` module), `7f5960c` (design docs), `e066f27` code review (0 critical, 0 warnings, 3 info).
-- **QA gate additions:** `0d28f3f` 14 e2e cases including headed-only toolbar checks.
-- **Retry 1 (R-006):** `d31880b` spec, `02b4ecf` plan (D12 rev 2), `ed7a579` fake `deferNaming`, `6c184ac` engine restores Chrome's UI before the last hand-off, `0a2da83` e2e pins the restore point, `68c35d7` release checklist, `d8a45a0` code-review addendum (0 critical, 1 warning, 7 info).
-- **Uncommitted in working tree:** `docs/qa-report.md`, `docs/loop-state.md`, `e2e/cuj1.spec.ts`.
+Iteration 4 (`git log a8dd551..HEAD`, 5 commits):
+- `c2c9de0` quick-fix: wait for earlier files to finish before restoring Chrome's download UI (D12 rev. 3: `othersSettled()` in `src/background/engine.ts`, `HANDOFF_SETTLE_WAIT_MS = 2000`, fake `settledWhileShown`, held-hide unit test). Resolves the iteration-3 LOW and code-review W1 of iteration 3.
+- `a2e8897` docs(cycle): iteration 4 plan.
+- `a9d9212` test(e2e): pin the N-1 / N counter ACs and align AC mappings (ENG-012); `0ce05cd` constants comment says finished, not named (ENG-012).
+- `913a95f` docs(review): iteration 4 code review (0 critical, 1 warning, 6 info); ENG-012 removed as done, ENG-013 filed.
+- **Uncommitted in working tree:** `docs/loop-state.md`, `docs/qa-report.md`, `e2e/README.md`, `e2e/cuj1.spec.ts`, `e2e/cuj4.spec.ts`.
 
-Test status at QA: `npm run check` green; vitest 3065/3065 (67 files); e2e headless (gate command) 143 passed / 4 skipped (the 4 headed-only Chrome toolbar tests); headed toolbar 4/4; live smoke 4/4 twice (~24 s); 0 flaky. Content bundle 35.3 KB minified / 13.1 KB gzip (budget 40 / 15). Total 3216 tests.
+Test status at QA: vitest 3066 tests; e2e 146 passed / 6 headed-only skipped; headed 6/6; live smoke 4/4 twice.
 
 ## Owner Queue
-Owner queue: empty — nothing is waiting on the owner
+Owner queue: 1 open (R-007, spec-sync batch of 6, since 2026-10-24) → docs/owner-queue.md
 
 ## Known Issues & TODOs
-QA (`docs/qa-report.md`, 0 critical / 0 high / 0 medium / 1 low):
-1. `[LOW][BUG]` CUJ-1 AC 14 and CUJ-4 edge: Chrome's bubble omits the last file when the last files land together (`src/background/engine.ts:210-240` `targetsKnown`, `:278-288` last-hand-off path; fix direction: wait for earlier files to complete, not only to be named, before restoring).
+QA (`docs/qa-report.md`, iteration 4: 0 critical / 0 high / 0 medium / 2 low):
+1. `[LOW][BUG]` CUJ-1 and CUJ-4, offscreen-document creation race: when two jobs start within ~10 ms, the second job's `metadata.json` and first pages fail with 0 attempts; the tooltip "Retry · N failed" is misleading, and `metadata.json` is silently missing after the retry. `src/background/offscreen-client.ts:26-45,76-87` and `src/background/engine.ts:180-200`. Reproduced 14/16 at 5-11 ms gap, 0/36 at >= 50 ms.
+2. `[LOW][BUG]` CUJ-1: the pages counter shows `N / N` in the DOM for 0-2 ms before `Saved` (two-job and 200-page cases). `src/background/engine.ts:123-131,149-150`, `src/background/pusher.ts:38-42`.
 
-Resolved this iteration: Chrome's downloads button not returning after a job (MEDIUM, R-006); pasted line breaks; "No connection" during a sustained outage (now per click); floating fallback at 3011-3023 ms; 176 px ugoira conflict (spec per R-004).
+Resolved this iteration: the iteration-3 LOW "bubble misses the last file" (CUJ-1 AC 14, CUJ-4 edge), fixed by `c2c9de0`.
 
 Not verified (NOT_RUN, QA has no pixiv account; `docs/release-checklist.md` section 3): CUJ-5 AC 2 and AC 4 after a real login, CUJ-5 AC 9 live, CUJ-1 AC 16 on pixiv's live dark theme, the logged-in action-row DOM, the R-003 stale-page probe. L5 only: VLC / QuickTime / Windows playback; the R-005/R-006 branded-Chrome checklist item; the Windows Safe Browsing prompt while the UI is hidden.
 
-Open pm spec gaps (system.md section 15, from tl):
-- gap 1: Chrome may show a decision prompt (e.g. for the ugoira zip) while its download UI is hidden (R-005).
+Open pm spec-sync items:
+- `docs/design/system.md` section 15 gap 1: Chrome may show a decision prompt (e.g. for the ugoira zip) while its download UI is hidden (R-005).
 - gap 2: options footer links at 2.91:1 contrast.
-- PRD §4.1 #3 wording: "needed login after a mid-job 403" reads as always silent, but a 403 with other originals in flight ends with a final hand-off and one animation (QA judged PASS against the rule's definition).
+- gap 3: PRD section 4.1 #3 wording, "needed login after a mid-job 403" reads as always silent, but a 403 with other originals in flight ends with a final hand-off and one animation.
+- Spec conflict: `docs/prd/prd-000-mvp.md` ~line 317, CUJ-1 edge still says "0 / 200 ... 200 / 200", while the shipped and pinned behavior is the N-1 / N counter.
+- Counter-residual wording (LOW #2): the spec needs to say whether `N / N` may flash before `Saved`.
 
-Code review (`docs/code-review.md`, iteration 3 + retry-1 addendum): 1 warning, W1 (test strength): neither "last two together" unit test fails when the claim `decided.set` is moved after the UI call; fix by adding the held-hide "last two together" unit test. 7 info items; earlier info: `isFailure` accepts `answered: true` on any kind, one `setUiOptions` call per idle SW wake, `finalize` awaits `restore()` before `scheduleClose()`.
+Code review (`docs/code-review.md`, iteration 4): 0 critical, 1 warning, 6 info. W1 is filed as ENG-013; the earlier W1 (decide+claim not pinned) is closed by `c2c9de0`'s held-hide test.
 
 Other: Chrome "Ask where to save each file" may force a Save dialog per file (v1 limitation); pixiv DOM changes can break the action-row selector (floating fallback mitigates); R-001 requires `kyoicn/pixivhelper` to be public before Web Store submission; run `docs/release-checklist.md` (macOS and Windows branded Chrome) before submission; `scripts/spike/FINDINGS.md` should still be folded into system.md section 8.2.
 
-Eng backlog: 0 open (Next-ID ENG-012) (+0 filed / -0 closed since the previous status.md; the backlog stayed empty through iteration 3).
+Eng backlog: 1 open (ENG-013, P2, test-only: pin the `othersSettled()` `downloads.search` fallback and cross-job ids in unit tests; Next-ID ENG-014) (+1 filed / -1 closed since the previous status.md: ENG-012 filed and closed within iteration 4, ENG-013 filed from the code review).
+
