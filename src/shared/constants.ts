@@ -79,7 +79,7 @@ export const LIVE_PROGRESS_THROTTLE_MS = 5000;
 export const OFFSCREEN_CLOSE_GRACE_MS = 5000;
 /** Badge/title renders are coalesced with this trailing delay. */
 export const BADGE_COALESCE_MS = 50;
-/** Caps the wait for Chrome to name earlier in-progress files before the UI restore (R-006). */
+/** Caps the wait for earlier in-progress files to finish before the UI restore (R-006 rev. 3). */
 export const HANDOFF_SETTLE_WAIT_MS = 2000;
 
 // ── Toolbar badge ──
