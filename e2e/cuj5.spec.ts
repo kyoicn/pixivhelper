@@ -1262,9 +1262,9 @@ test.describe('CUJ-5: QA gate additions (iteration 2)', { tag: '@cuj5' }, () => 
 // Added by the QA gate (iteration 3): R-005 at the ends CUJ-5 names, with no e2e check yet.
 // | PRD                                                                            | Test                    |
 // | ------------------------------------------------------------------------------ | ----------------------- |
-// | Step 4 (R-005): the UI comes back whenever the last running job ends, for any  | 'download UI: 403 mid-  |
-// |   reason (Saved, cancelled, failed, needs login after a mid-job 403, or        |   job', 'partial',      |
-// |   Unavailable)                                                                 |   'encode failure'      |
+// | Step 4 (R-005, R-006): the UI comes back whenever the last running job ends,   | 'download UI: 403 mid-  |
+// |   for any reason (Saved, cancelled, failed, needs login after a mid-job 403,   |   job', 'partial',      |
+// |   or Unavailable); with a final hand-off it is back on just before that file   |   'encode failure'      |
 // | §4.1 #3 (R-005): the hidden window "never starts before the job's first file   | 'download UI: nothing   |
 // |   is handed to Chrome" — a job that ends before any file reaches Chrome never  |   handed to Chrome'     |
 // |   hides it (Unavailable, refused, no connection, needs login before metadata)  |                         |
@@ -1340,9 +1340,12 @@ test.describe('CUJ-5: QA gate additions (iteration 3)', { tag: '@cuj5' }, () => 
     expect(Math.min(...retried.map((item) => item.startedAt))).toBeGreaterThanOrEqual(
       hide?.at ?? Number.POSITIVE_INFINITY,
     );
-    expect(Math.max(...retried.map((item) => item.endedAt))).toBeLessThanOrEqual(
-      restore?.at ?? Number.NEGATIVE_INFINITY,
-    );
+    // The retry's restore comes after Chrome created the two retried pages that started first,
+    // and before the last one (R-006).
+    const started = retried.map((item) => item.startedAt).sort((a, b) => a - b);
+    const restoreAt = restore?.at ?? Number.NaN;
+    expect(started[1]).toBeLessThanOrEqual(restoreAt);
+    expect(restoreAt).toBeLessThanOrEqual(started[2] ?? Number.NEGATIVE_INFINITY);
   });
 
   test('download UI: encode failure: Retry · MP4 with Chrome’s UI back on', async ({ harness }) => {

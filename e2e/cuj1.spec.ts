@@ -115,6 +115,16 @@ function counts(log: { text: string }[], total: number): number[] {
   });
 }
 
+/** Every item in chrome.downloads, oldest first, with Chrome's start time in ms. */
+async function startedItems(harness: Harness): Promise<Array<{ filename: string; at: number }>> {
+  const items = await harness.swEval(async () =>
+    (await chrome.downloads.search({})).map(({ filename, startTime }) => ({ filename, startTime })),
+  );
+  return items
+    .map(({ filename, startTime }) => ({ filename, at: Date.parse(startTime) }))
+    .sort((a, b) => a.at - b.at);
+}
+
 test.describe('CUJ-1: download an illustration or manga', { tag: '@cuj1' }, () => {
   test('placement: one button immediately left of Like within 500 ms; idle labels', async ({
     harness,
@@ -892,44 +902,40 @@ test.describe('CUJ-1: QA gate additions (iteration 2)', { tag: '@cuj1' }, () => 
   });
 });
 
-// Chrome's download UI while the job runs (R-005, iteration 3).
+// Chrome's download UI while the job runs (R-005, iteration 3; restore point per R-006).
 // | PRD                                                                          | Test                     |
 // | ---------------------------------------------------------------------------- | ------------------------ |
 // | AC "During a 12-page download Chrome's download bubble does not appear or    | 'download UI: 12 pages'  |
-// |   animate, for any of the job's files including the first; after the job     |                          |
-// |   ends it is available again" (§4.1 #3)                                      |                          |
-// | Step 5 / edge "Chrome's own download UI": back after a cancel or a failure   | 'download UI: cancelled',|
-// |                                                                              | 'download UI: failed'    |
+// |   animate for the first 12 files; exactly one animation accompanies the last |                          |
+// |   file" (§4.1 #3, R-006): the UI is off before metadata.json reaches Chrome  |                          |
+// |   and back on just before the last original does                             |                          |
+// | Step 5 / edge "Chrome's own download UI": a job that ends without a final    | 'download UI: cancelled',|
+// |   hand-off (a cancel, a failure) turns the UI back on as it ends (R-006)     | 'download UI: failed'    |
 // Playwright cannot see Chrome's toolbar or bubble: the tests read what the SW asked Chrome for and
 // what the real Chrome answered (`self.__hfpTest.downloadUi()`). The visual effect is an L5 check
-// (docs/release-checklist.md).
-test.describe("CUJ-1: Chrome's download UI while the job runs (R-005)", { tag: '@cuj1' }, () => {
-  test('download UI: 12 pages: hidden before metadata.json reaches Chrome, back after Saved · 12P', async ({
+// (docs/release-checklist.md) and the headed-only 'Chrome toolbar' tests below.
+test.describe("CUJ-1: Chrome's download UI (R-005, R-006)", { tag: '@cuj1' }, () => {
+  test('download UI: 12 pages: hidden before metadata.json reaches Chrome, back on just before p11 is handed to Chrome', async ({
     harness,
     server,
   }) => {
     const page = await openArtwork(harness, EXAMPLE.id);
     await waitForText(page, 'Download · 12P');
     const base = (await downloadUiAfterBoot(harness)).calls.length;
-    const hold = server.hold(pagesOf(EXAMPLE, ALL_PAGES));
+    const hold = server.hold(pagesOf(EXAMPLE, [11]));
     await clickButton(page);
-    await harness.downloads.waitForFile(`${FOLDER}/metadata.json`);
-    await expect.poll(() => hold.held).toBe(5);
+    for (const file of expectedFiles(FOLDER, range(0, 10), true)) {
+      await harness.downloads.waitForFile(file);
+    }
+    await expect.poll(() => hold.held).toBe(1);
 
     const during = await downloadUi(harness);
     expect(during.requested).toBe(false);
     expect(uiCalls(during.calls, base)).toEqual([{ enabled: false, ok: true }]);
-    const items = await harness.swEval(async () =>
-      (await chrome.downloads.search({})).map(({ filename, startTime }) => ({
-        filename,
-        startTime,
-      })),
-    );
-    const started = items
-      .map(({ filename, startTime }) => ({ filename, at: Date.parse(startTime) }))
-      .sort((a, b) => a.at - b.at);
-    expect(started[0]?.filename.endsWith(`${path.sep}metadata.json`)).toBe(true);
-    expect(during.calls[base]?.at).toBeLessThanOrEqual(started[0]?.at ?? -Infinity);
+    const others = await startedItems(harness);
+    expect(others).toHaveLength(12);
+    expect(others[0]?.filename.endsWith(`${path.sep}metadata.json`)).toBe(true);
+    expect(during.calls[base]?.at).toBeLessThanOrEqual(others[0]?.at ?? -Infinity);
 
     hold.release();
     await waitForText(page, 'Saved · 12P');
@@ -939,6 +945,15 @@ test.describe("CUJ-1: Chrome's download UI while the job runs (R-005)", { tag: '
       { enabled: false, ok: true },
       { enabled: true, ok: true },
     ]);
+    const items = await startedItems(harness);
+    const last = `${path.sep}${fileName(EXAMPLE, 11)}`;
+    const p11 = items.find((item) => item.filename.endsWith(last));
+    const restoreAt = after.calls[base + 1]?.at ?? Number.NaN;
+    // chrome.downloads times are whole milliseconds, like Date.now() in the SW.
+    expect(
+      Math.max(...items.filter((item) => item !== p11).map((item) => item.at)),
+    ).toBeLessThanOrEqual(restoreAt);
+    expect(restoreAt).toBeLessThanOrEqual(p11?.at ?? Number.NEGATIVE_INFINITY);
     expect(await downloadedPaths(harness)).toEqual(expectedFiles(FOLDER, ALL_PAGES, true));
   });
 
@@ -998,7 +1013,7 @@ test.describe("CUJ-1: Chrome's download UI while the job runs (R-005)", { tag: '
 // |   back after the cancel and no file of the job reaches Chrome after it         |                        |
 // | Edge "A download the user starts themselves while a job runs" (R-005): it      | 'download UI: the      |
 // |   completes and appears in chrome://downloads while the UI stays hidden; the   |   user's own download' |
-// |   window ends as soon as the job ends                                          |                        |
+// |   window ends just before the final hand-off (R-006)                           |                        |
 test.describe('CUJ-1: QA gate additions (iteration 3)', { tag: '@cuj1' }, () => {
   test('download UI: cancel ordering: no Canceled entry in chrome.downloads, the UI back on, and nothing handed to Chrome after the restore', async ({
     harness,
@@ -1092,17 +1107,19 @@ test.describe('CUJ-1: QA gate additions (iteration 3)', { tag: '@cuj1' }, () => 
   });
 });
 
-// Added by the QA gate (iteration 3): what Chrome's toolbar really shows (R-005), read from Chrome's
-// own native-UI accessibility tree (chrome://accessibility → "Chrome Native UI"), since Playwright
-// cannot capture the toolbar. Headless Chromium has no download UI at all, so both tests run only in
-// headed Chromium (`HFP_HEADLESS=0`, the local default) and skip with a reason otherwise: after the
-// job each test makes one control download from a page and skips if even that shows no button.
+// Added by the QA gate (iteration 3): what Chrome's toolbar really shows (R-005, R-006), read from
+// Chrome's own native-UI accessibility tree (chrome://accessibility → "Chrome Native UI"), since
+// Playwright cannot capture the toolbar. Headless Chromium has no download UI at all, so both tests
+// run only in headed Chromium (`HFP_HEADLESS=0`, the local default) and skip with a reason
+// otherwise: after the job each test makes one control download from a page and skips if even that
+// shows no button.
 // | PRD                                                                            | Test                   |
 // | ------------------------------------------------------------------------------ | ---------------------- |
 // | AC "During a 12-page download Chrome's download bubble does not appear or      | 'toolbar: hidden'      |
-// |   animate, for any of the job's files including the first"                     |                        |
-// | AC "… after the job ends it is available again and lists metadata.json and the | 'toolbar: back after   |
-// |   12 originals"; step 6 "Chrome's downloads button is back in its toolbar"     |   Saved'               |
+// |   animate for the first 12 files" (R-006)                                      |                        |
+// | AC "… exactly one animation accompanies the last file, after which the         | 'toolbar: back after   |
+// |   bubble lists metadata.json and the 12 originals" (R-006); step 6 "Chrome's   |   Saved'               |
+// |   downloads button is back in its toolbar"                                     |                        |
 test.describe('CUJ-1: QA gate additions (iteration 3), Chrome toolbar', { tag: '@cuj1' }, () => {
   interface Toolbar {
     /** Accessible name of Chrome's visible downloads toolbar button, or null when there is none. */

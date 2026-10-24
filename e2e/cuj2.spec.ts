@@ -1125,12 +1125,13 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
 // Added by the QA gate (iteration 3): R-005 on an ugoira job, with no e2e check yet.
 // | PRD                                                                            | Test                   |
 // | ------------------------------------------------------------------------------ | ---------------------- |
-// | Step 3 (R-005): Chrome shows no downloads button and no animation; its UI      | 'download UI: ugoira'  |
-// |   stays hidden from the job's first saved file until the job ends              |                        |
+// | Steps 3, 5 (R-005, R-006): Chrome shows no downloads button and no animation;  | 'download UI: ugoira'  |
+// |   its UI stays hidden from the job's first saved file until just before the    |                        |
+// |   video, the job's last file, is handed to Chrome                              |                        |
 // | Step 4 / CUJ-1 step 5 (R-005): a cancel during the zip fetch turns it back on  | 'download UI: cancel   |
 // |                                                                                |   during the zip'      |
 test.describe('CUJ-2: QA gate additions (iteration 3)', { tag: '@cuj2' }, () => {
-  test('download UI: ugoira: hidden from metadata.json through the zip fetch, back on only after the video landed', async ({
+  test('download UI: ugoira: hidden from metadata.json through the zip fetch, back on just before the video is handed to Chrome', async ({
     harness,
     server,
   }) => {
@@ -1168,10 +1169,15 @@ test.describe('CUJ-2: QA gate additions (iteration 3)', { tag: '@cuj2' }, () => 
     );
     expect(items.every((item) => item.state === 'complete')).toBe(true);
     const hideAt = after.calls[base]?.at ?? Number.POSITIVE_INFINITY;
-    const restoreAt = after.calls.at(-1)?.at ?? Number.NEGATIVE_INFINITY;
+    const restoreAt = after.calls.at(-1)?.at ?? Number.NaN;
     expect(Math.min(...items.map((item) => item.startedAt))).toBeGreaterThanOrEqual(hideAt);
-    // chrome.downloads times are whole milliseconds, like Date.now() in the SW.
-    expect(Math.max(...items.map((item) => item.endedAt))).toBeLessThanOrEqual(restoreAt);
+    // chrome.downloads times are whole milliseconds, like Date.now() in the SW. The restore comes
+    // after Chrome created metadata.json, the zip and frames.json, and before the video (R-006).
+    const earlier = items.filter((item) => item.name !== video);
+    expect(Math.max(...earlier.map((item) => item.startedAt))).toBeLessThanOrEqual(restoreAt);
+    expect(restoreAt).toBeLessThanOrEqual(
+      items.find((item) => item.name === video)?.startedAt ?? Number.NEGATIVE_INFINITY,
+    );
   });
 
   test('download UI: cancel during the zip fetch: back to idle with Chrome’s UI back on; only metadata.json stays', async ({

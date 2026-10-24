@@ -398,20 +398,23 @@ test.describe('CUJ-4: QA gate additions', { tag: '@cuj4' }, () => {
   });
 });
 
-// Chrome's download UI with several jobs and across SW restarts (R-005, iteration 3).
+// Chrome's download UI with several jobs and across SW restarts (R-005, iteration 3; R-006).
 // | PRD                                                                          | Test                     |
 // | ---------------------------------------------------------------------------- | ------------------------ |
-// | Edge "Chrome's own downloads button": hidden until both jobs end; job B      | 'download UI: two jobs'  |
-// |   ending while job A runs keeps it hidden, it returns when job A ends        |                          |
+// | Edge "Chrome's own downloads button" (R-006): one animation in total, with   | 'download UI: two jobs'  |
+// |   the last file either job hands to Chrome; job B ending while job A still   |                          |
+// |   has files to hand over makes no call, and the UI is back on just before    |                          |
+// |   job A's last file                                                          |                          |
 // | CUJ-1 edge "Background worker terminated mid-job" (§4.1 #3): hidden until    | 'download UI: service    |
-// |   the job ends; a worker that wakes with no job running turns it back on     | worker' (2 tests)        |
+// |   just before the final hand-off; a worker that wakes with no job running    | worker' (2 tests)        |
+// |   turns it back on                                                           |                          |
 // The tests read `self.__hfpTest.downloadUi()`: the calls the running SW instance made and what
 // the real Chrome answered. Each SW instance reports only its own calls.
 test.describe(
-  "CUJ-4: Chrome's download UI across jobs and restarts (R-005)",
+  "CUJ-4: Chrome's download UI across jobs and restarts (R-005, R-006)",
   { tag: '@cuj4' },
   () => {
-    test('download UI: two jobs: B ending while A runs makes no call; A ending turns the UI back on', async ({
+    test('download UI: two jobs: B ending while A runs makes no call; the UI is back on just before A’s last file', async ({
       harness,
       server,
     }) => {
@@ -450,6 +453,22 @@ test.describe(
         { enabled: false, ok: true },
         { enabled: true, ok: true },
       ]);
+      const items = await harness.swEval(async () =>
+        (await chrome.downloads.search({})).map(({ filename, startTime }) => ({
+          filename,
+          at: Date.parse(startTime),
+        })),
+      );
+      expect(items).toHaveLength(9 + 13);
+      const lastOfA = items
+        .filter((item) => item.filename.includes(EXAMPLE.id))
+        .reduce((last, item) => (item.at > last.at ? item : last));
+      const restoreAt = afterA.calls[base + 1]?.at ?? Number.NaN;
+      // chrome.downloads times are whole milliseconds, like Date.now() in the SW.
+      expect(
+        Math.max(...items.filter((item) => item !== lastOfA).map((item) => item.at)),
+      ).toBeLessThanOrEqual(restoreAt);
+      expect(restoreAt).toBeLessThanOrEqual(lastOfA.at);
     });
 
     test('download UI: service worker stopped mid-job: no call at the new boot, the job’s end turns the UI back on', async ({
