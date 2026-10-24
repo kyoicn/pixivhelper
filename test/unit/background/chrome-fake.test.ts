@@ -6,10 +6,13 @@ import {
   DOWNLOADS_DIR,
   EXTENSION_ORIGIN,
   FAKE_EXTENSION_ID,
+  FakeDownloads,
   INVALID_FILENAME_ERROR,
   RECEIVING_END_ERROR,
   SW_URL,
   SYNC_QUOTA_ERRORS,
+  UI_DISABLED_ERROR,
+  UI_PERMISSION_ERROR,
   installChromeFake,
   type ChromeFake,
 } from '../../fakes/chrome';
@@ -196,6 +199,91 @@ describe('chrome fake: downloads', () => {
     const third = await save('a/3.jpg');
     fake.downloads.complete(second);
     expect(fake.downloads.inProgress().map((item) => item.id)).toEqual([first, third]);
+  });
+});
+
+describe('chrome fake: download UI (setUiOptions, R-005)', () => {
+  const save = (filename: string): Promise<number> =>
+    chrome.downloads.download({ url: BLOB_URL, filename });
+
+  it('setUiOptions: the UI starts on', () => {
+    expect(fake.downloads.uiEnabled).toBe(true);
+  });
+
+  it('setUiOptions: turns the UI off and back on', async () => {
+    await chrome.downloads.setUiOptions({ enabled: false });
+    const off = fake.downloads.uiEnabled;
+    await chrome.downloads.setUiOptions({ enabled: true });
+    expect([off, fake.downloads.uiEnabled]).toEqual([false, true]);
+  });
+
+  it('setUiOptions: rejects like Chrome when the manifest lacks downloads.ui', async () => {
+    const downloads = new FakeDownloads(false);
+    await expect(downloads.setUiOptions({ enabled: false })).rejects.toThrow(UI_PERMISSION_ERROR);
+  });
+
+  it('setUiOptions: a refusal for a missing permission changes nothing', async () => {
+    const downloads = new FakeDownloads(false);
+    await downloads.setUiOptions({ enabled: false }).catch(() => undefined);
+    expect([downloads.uiEnabled, downloads.callLog]).toEqual([true, []]);
+  });
+
+  it('setUiOptions: the installed fake grants downloads.ui from src/manifest.json', async () => {
+    await expect(chrome.downloads.setUiOptions({ enabled: false })).resolves.toBeUndefined();
+  });
+
+  it('failNextSetUiOptions: rejects the next call with the message', async () => {
+    fake.downloads.failNextSetUiOptions('boom');
+    await expect(chrome.downloads.setUiOptions({ enabled: false })).rejects.toThrow('boom');
+  });
+
+  it('failNextSetUiOptions: defaults to Chrome’s "another extension" refusal', async () => {
+    fake.downloads.failNextSetUiOptions();
+    await expect(chrome.downloads.setUiOptions({ enabled: true })).rejects.toThrow(
+      UI_DISABLED_ERROR,
+    );
+  });
+
+  it('failNextSetUiOptions: the refused call changes nothing and the next one applies', async () => {
+    fake.downloads.failNextSetUiOptions();
+    await chrome.downloads.setUiOptions({ enabled: false }).catch(() => undefined);
+    const afterRefusal = [fake.downloads.uiEnabled, fake.downloads.uiCalls()];
+    await chrome.downloads.setUiOptions({ enabled: false });
+    expect([afterRefusal, [fake.downloads.uiEnabled, fake.downloads.uiCalls()]]).toEqual([
+      [true, []],
+      [false, [false]],
+    ]);
+  });
+
+  it('callLog: setUiOptions and download() share one ordered log', async () => {
+    await chrome.downloads.setUiOptions({ enabled: false });
+    await save('a/1.jpg');
+    await chrome.downloads.setUiOptions({ enabled: true });
+    expect(fake.downloads.callLog).toEqual([
+      { op: 'ui', enabled: false },
+      { op: 'download', filename: 'a/1.jpg' },
+      { op: 'ui', enabled: true },
+    ]);
+  });
+
+  it('callLog: a download is logged when asked for, a UI setting once applied', async () => {
+    const hide = chrome.downloads.setUiOptions({ enabled: false });
+    const download = save('a/1.jpg');
+    await Promise.all([hide, download]);
+    expect(fake.downloads.callLog.map((call) => call.op)).toEqual(['download', 'ui']);
+  });
+
+  it('callLog: a refused download is still logged', async () => {
+    fake.downloads.failNextDownload();
+    await save('a/1.jpg').catch(() => undefined);
+    expect(fake.downloads.callLog).toEqual([{ op: 'download', filename: 'a/1.jpg' }]);
+  });
+
+  it('uiCalls: the applied settings, oldest first', async () => {
+    await chrome.downloads.setUiOptions({ enabled: false });
+    await save('a/1.jpg');
+    await chrome.downloads.setUiOptions({ enabled: true });
+    expect(fake.downloads.uiCalls()).toEqual([false, true]);
   });
 });
 
@@ -415,6 +503,24 @@ describe('chrome fake: lifecycle', () => {
       chrome.downloads.onChanged.hasListeners(),
       chrome.action.onClicked.hasListeners(),
     ]).toEqual([false, false, false]);
+  });
+
+  it('restartWorker: keeps Chrome’s download UI setting and the call log', async () => {
+    await chrome.downloads.setUiOptions({ enabled: false });
+    fake.restartWorker();
+    expect([fake.downloads.uiEnabled, fake.downloads.uiCalls()]).toEqual([false, [false]]);
+  });
+
+  it('reset: turns the download UI back on and empties the call log', async () => {
+    await chrome.downloads.setUiOptions({ enabled: false });
+    fake.reset();
+    expect([fake.downloads.uiEnabled, fake.downloads.callLog]).toEqual([true, []]);
+  });
+
+  it('reset: drops injected setUiOptions failures', async () => {
+    fake.downloads.failNextSetUiOptions();
+    fake.reset();
+    await expect(chrome.downloads.setUiOptions({ enabled: false })).resolves.toBeUndefined();
   });
 
   it('restartWorker: keeps storage, downloads and the badge', async () => {

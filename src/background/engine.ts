@@ -12,6 +12,7 @@ import { __testHook } from '../shared/test-hooks';
 import type { JobOutcome, JobView } from '../shared/types';
 import { createBadgeRenderer, type BadgeRenderer } from './badge';
 import { getCaps, probePending } from './caps';
+import { createDownloadUi, type DownloadUi } from './download-ui';
 import {
   downloadOptions,
   onDownloadComplete,
@@ -51,6 +52,11 @@ export interface Engine {
   hydrate(): Promise<void>;
   /** SW start, after hydrate(): repairs what a restart interrupted, then pumps every job. */
   reconcile(): Promise<void>;
+  /**
+   * SW start, after hydrate(): with no job running, turns Chrome's download UI back on (R-005), in
+   * case an earlier instance died before its restore. Never rejects.
+   */
+  restoreDownloadUiIfIdle(): Promise<void>;
 }
 
 function errorMessage(error: unknown): string {
@@ -84,7 +90,8 @@ function summary(job: JobRecord, outcome: JobOutcome): Record<string, unknown> {
   };
 }
 
-export function createEngine(): Engine {
+/** `downloadUi` is injectable for tests. */
+export function createEngine(downloadUi: DownloadUi = createDownloadUi()): Engine {
   const registry = createRegistry({ storage: chrome.storage.session, run: runEffects });
   const badge = createBadgeRenderer(() => registry.list());
   /** Jobs whose final view is being pushed; they take no more running-view pushes. */
@@ -182,13 +189,22 @@ export function createEngine(): Engine {
     );
   }
 
-  /** Hands a `saving` file's blob URL to Chrome and stores the download id. */
+  /**
+   * Hands a `saving` file's blob URL to Chrome and stores the download id. Chrome's download UI is
+   * hidden first (R-005), so not even the job's first file plays Chrome's animation.
+   */
   async function handOff(job: JobRecord, idx: number): Promise<void> {
     const file = fileAt(job, idx);
     if (file?.state !== 'saving' || file.blobUrl === undefined || file.downloadId !== undefined) {
       return;
     }
     const { blobUrl } = file;
+    await downloadUi.hideForHandOff();
+    if (__TEST_HOOKS__) await __testHook('await:handoff.hideUi');
+    // Cancelled while the hide was in flight: the file never reaches Chrome, so it leaves no
+    // "Canceled" entry. The cancel itself fails the file before finalize drops the record.
+    const live = registry.get(job.jobId);
+    if (!live || fileAt(live, idx)?.state !== 'saving') return;
     if (__TEST_HOOKS__) await __testHook('await:handoff.download');
     let downloadId: number;
     try {
@@ -214,7 +230,8 @@ export function createEngine(): Engine {
   /**
    * Classifies the job, pushes its final view, then deletes its record (in that order, so a
    * restart in between finalizes again rather than losing the push), frees its offscreen tasks
-   * and updates the badge. The offscreen document closes after a grace once no job is left.
+   * and updates the badge. Once no job is left (a job still finalizing is still listed), Chrome's
+   * download UI comes back and the offscreen document closes after a grace.
    */
   async function finalize(job: JobRecord): Promise<void> {
     if (finalizing.has(job.jobId) || !registry.get(job.jobId)) return;
@@ -231,7 +248,10 @@ export function createEngine(): Engine {
         return effects;
       });
       log.info('job end', summary(job, outcome));
-      if (registry.list().length === 0 && !probePending()) scheduleClose();
+      if (registry.list().length === 0) {
+        await downloadUi.restore();
+        if (!probePending()) scheduleClose();
+      }
     } finally {
       finalizing.delete(job.jobId);
     }
@@ -388,6 +408,10 @@ export function createEngine(): Engine {
         const { byId, byUrl } = await searchDownloads(job);
         await registry.mutate(job.jobId, (record) => reconcileJob(record, { tasks, byId, byUrl }));
       }
+    },
+
+    restoreDownloadUiIfIdle() {
+      return registry.list().length === 0 ? downloadUi.restore() : Promise.resolve();
     },
   };
 }

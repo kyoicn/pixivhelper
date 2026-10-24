@@ -25,6 +25,12 @@
       "all_frames": false
     }
   ],
-  "permissions": ["downloads", "storage", "offscreen", "declarativeNetRequestWithHostAccess"],
+  "permissions": [
+    "downloads",
+    "storage",
+    "offscreen",
+    "declarativeNetRequestWithHostAccess",
+    "downloads.ui"
+  ],
   "host_permissions": ["https://www.pixiv.net/*", "https://i.pximg.net/*"]
 }

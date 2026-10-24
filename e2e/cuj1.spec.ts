@@ -35,6 +35,9 @@ import {
   artworkFiles,
   CLICK_GUARD_MS,
   downloadedPaths,
+  downloadUi,
+  downloadUiAfterBoot,
+  downloadUiRestored,
   expectBadge,
   fileName,
   IDLE_TITLE,
@@ -43,6 +46,7 @@ import {
   range,
   restingView,
   TRANSITION_MS,
+  uiCalls,
 } from './harness/flows';
 import {
   buttonCenter,
@@ -884,5 +888,103 @@ test.describe('CUJ-1: QA gate additions (iteration 2)', { tag: '@cuj1' }, () => 
     );
     expect([...new Set(widths)]).toEqual([idle.width]);
     test.info().annotations.push({ type: '200-page width px', description: String(idle.width) });
+  });
+});
+
+// Chrome's download UI while the job runs (R-005, iteration 3).
+// | PRD                                                                          | Test                     |
+// | ---------------------------------------------------------------------------- | ------------------------ |
+// | AC "During a 12-page download Chrome's download bubble does not appear or    | 'download UI: 12 pages'  |
+// |   animate, for any of the job's files including the first; after the job     |                          |
+// |   ends it is available again" (§4.1 #3)                                      |                          |
+// | Step 5 / edge "Chrome's own download UI": back after a cancel or a failure   | 'download UI: cancelled',|
+// |                                                                              | 'download UI: failed'    |
+// Playwright cannot see Chrome's toolbar or bubble: the tests read what the SW asked Chrome for and
+// what the real Chrome answered (`self.__hfpTest.downloadUi()`). The visual effect is an L5 check
+// (docs/release-checklist.md).
+test.describe("CUJ-1: Chrome's download UI while the job runs (R-005)", { tag: '@cuj1' }, () => {
+  test('download UI: 12 pages: hidden before metadata.json reaches Chrome, back after Saved · 12P', async ({
+    harness,
+    server,
+  }) => {
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    const base = (await downloadUiAfterBoot(harness)).calls.length;
+    const hold = server.hold(pagesOf(EXAMPLE, ALL_PAGES));
+    await clickButton(page);
+    await harness.downloads.waitForFile(`${FOLDER}/metadata.json`);
+    await expect.poll(() => hold.held).toBe(5);
+
+    const during = await downloadUi(harness);
+    expect(during.requested).toBe(false);
+    expect(uiCalls(during.calls, base)).toEqual([{ enabled: false, ok: true }]);
+    const items = await harness.swEval(async () =>
+      (await chrome.downloads.search({})).map(({ filename, startTime }) => ({
+        filename,
+        startTime,
+      })),
+    );
+    const started = items
+      .map(({ filename, startTime }) => ({ filename, at: Date.parse(startTime) }))
+      .sort((a, b) => a.at - b.at);
+    expect(started[0]?.filename.endsWith(`${path.sep}metadata.json`)).toBe(true);
+    expect(during.calls[base]?.at).toBeLessThanOrEqual(started[0]?.at ?? -Infinity);
+
+    hold.release();
+    await waitForText(page, 'Saved · 12P');
+    const after = await downloadUiRestored(harness);
+    expect(after.requested).toBe(true);
+    expect(uiCalls(after.calls, base)).toEqual([
+      { enabled: false, ok: true },
+      { enabled: true, ok: true },
+    ]);
+    expect(await downloadedPaths(harness)).toEqual(expectedFiles(FOLDER, ALL_PAGES, true));
+  });
+
+  test('download UI: cancelled: Chrome’s UI is back on after the cancel', async ({
+    harness,
+    server,
+  }) => {
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    const base = (await downloadUiAfterBoot(harness)).calls.length;
+    server.hold(pagesOf(EXAMPLE, range(5, 11)));
+    await clickButton(page);
+    const clickedAt = Date.now();
+    await waitForText(page, '5 / 12');
+    expect(uiCalls((await downloadUi(harness)).calls, base)).toEqual([
+      { enabled: false, ok: true },
+    ]);
+
+    await hoverButton(page, false);
+    await hoverButton(page, true);
+    await waitForText(page, 'Cancel');
+    await page.waitForTimeout(Math.max(0, clickedAt + CLICK_GUARD_MS - Date.now()));
+    await clickButton(page);
+    await hoverButton(page, false);
+    await waitForText(page, 'Download · 12P');
+    const after = await downloadUiRestored(harness);
+    expect(uiCalls(after.calls, base)).toEqual([
+      { enabled: false, ok: true },
+      { enabled: true, ok: true },
+    ]);
+  });
+
+  test('download UI: failed: every original answering 504 ends with Chrome’s UI back on', async ({
+    harness,
+    server,
+  }) => {
+    harness.allowConsoleErrors(/status of 504/, /net::ERR_/, /Failed to fetch/, /\[hfp:/);
+    server.fault({ match: 'https://i.pximg.net/img-original/', responses: 504 });
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    const base = (await downloadUiAfterBoot(harness)).calls.length;
+    await clickButton(page);
+    await waitForText(page, 'Retry', { timeout: 30_000 });
+    const after = await downloadUiRestored(harness);
+    expect(uiCalls(after.calls, base)).toEqual([
+      { enabled: false, ok: true },
+      { enabled: true, ok: true },
+    ]);
   });
 });

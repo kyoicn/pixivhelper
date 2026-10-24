@@ -20,6 +20,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.doUnmock('../../../src/background/engine');
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -47,6 +48,40 @@ describe('sw.ts', () => {
     expect([fake.action.badgeText, fake.action.title]).toEqual([
       '',
       'Helper for Pixiv — click to open settings',
+    ]);
+  });
+
+  it('sw: ready restores Chrome’s download UI after the first badge render, before reconcile', async () => {
+    const order: string[] = [];
+    const step = (name: string) =>
+      vi.fn(() => {
+        order.push(name);
+        return Promise.resolve();
+      });
+    vi.doMock('../../../src/background/engine', () => ({
+      createEngine: () => ({
+        badge: { render: step('badge.render') },
+        hydrate: step('hydrate'),
+        restoreDownloadUiIfIdle: step('restoreDownloadUiIfIdle'),
+        reconcile: step('reconcile'),
+      }),
+    }));
+    await boot();
+    expect(order).toEqual([
+      'hydrate',
+      'badge.render',
+      'restoreDownloadUiIfIdle',
+      'reconcile',
+      'badge.render',
+    ]);
+  });
+
+  it('sw: ready with no job running turns Chrome’s download UI back on', async () => {
+    fake.downloads.uiEnabled = false;
+    await boot();
+    expect([fake.downloads.uiEnabled, fake.downloads.callLog]).toEqual([
+      true,
+      [{ op: 'ui', enabled: true }],
     ]);
   });
 

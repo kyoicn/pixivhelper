@@ -35,6 +35,9 @@ import {
   badgeText,
   CLICK_GUARD_MS,
   downloadedPaths,
+  downloadUi,
+  downloadUiAfterBoot,
+  downloadUiRestored,
   expectBadge,
   fileName,
   IDLE_TITLE,
@@ -42,6 +45,7 @@ import {
   pagesOf,
   range,
   TRANSITION_MS,
+  uiCalls,
 } from './harness/flows';
 import {
   buttonView,
@@ -393,3 +397,107 @@ test.describe('CUJ-4: QA gate additions', { tag: '@cuj4' }, () => {
     await expectBadge(harness, '800', manyTitle(800, 4));
   });
 });
+
+// Chrome's download UI with several jobs and across SW restarts (R-005, iteration 3).
+// | PRD                                                                          | Test                     |
+// | ---------------------------------------------------------------------------- | ------------------------ |
+// | Edge "Chrome's own downloads button": hidden until both jobs end; job B      | 'download UI: two jobs'  |
+// |   ending while job A runs keeps it hidden, it returns when job A ends        |                          |
+// | CUJ-1 edge "Background worker terminated mid-job" (§4.1 #3): hidden until    | 'download UI: service    |
+// |   the job ends; a worker that wakes with no job running turns it back on     | worker' (2 tests)        |
+// The tests read `self.__hfpTest.downloadUi()`: the calls the running SW instance made and what
+// the real Chrome answered. Each SW instance reports only its own calls.
+test.describe(
+  "CUJ-4: Chrome's download UI across jobs and restarts (R-005)",
+  { tag: '@cuj4' },
+  () => {
+    test('download UI: two jobs: B ending while A runs makes no call; A ending turns the UI back on', async ({
+      harness,
+      server,
+    }) => {
+      const holdA = server.hold(pagesOf(EXAMPLE, range(4, 11)));
+      const holdB = server.hold(pagesOf(TAB_B, range(3, 7)));
+      const tabA = await openArtwork(harness, EXAMPLE.id);
+      await waitForText(tabA, 'Download · 12P');
+      const base = (await downloadUiAfterBoot(harness)).calls.length;
+      await clickButton(tabA);
+      await waitForText(tabA, '4 / 12');
+      const tabB = await openArtwork(harness, TAB_B.id);
+      await waitForText(tabB, 'Download · 8P');
+      await clickButton(tabB);
+      await waitForText(tabB, '3 / 8');
+      const hidden = await downloadUi(harness);
+      expect([hidden.requested, uiCalls(hidden.calls, base)]).toEqual([
+        false,
+        [{ enabled: false, ok: true }],
+      ]);
+
+      holdB.release();
+      await waitForText(tabB, 'Saved · 8P');
+      // Past the end of job B's finalize, which pushes the Saved view first.
+      await tabB.waitForTimeout(500);
+      const afterB = await downloadUi(harness);
+      expect([afterB.requested, uiCalls(afterB.calls, base)]).toEqual([
+        false,
+        [{ enabled: false, ok: true }],
+      ]);
+      expect((await buttonView(tabA)).ariaBusy).toBe('true');
+
+      holdA.release();
+      await waitForText(tabA, 'Saved · 12P');
+      const afterA = await downloadUiRestored(harness);
+      expect(uiCalls(afterA.calls, base)).toEqual([
+        { enabled: false, ok: true },
+        { enabled: true, ok: true },
+      ]);
+    });
+
+    test('download UI: service worker stopped mid-job: no call at the new boot, the job’s end turns the UI back on', async ({
+      harness,
+      server,
+    }) => {
+      const hold = server.hold(pagesOf(EXAMPLE, range(5, 11)));
+      const tab = await openArtwork(harness, EXAMPLE.id);
+      await waitForText(tab, 'Download · 12P');
+      await clickButton(tab);
+      await waitForText(tab, '5 / 12');
+      await expect.poll(() => hold.held).toBe(5);
+      expect((await downloadUi(harness)).requested).toBe(false);
+
+      await harness.stopServiceWorker();
+      expect(await harness.isServiceWorkerRunning()).toBe(false);
+      // swEval starts the new instance; its boot finds the running job and leaves the UI alone.
+      await expectBadge(harness, '7', oneTitle(7));
+      await tab.waitForTimeout(1_000);
+      expect(await downloadUi(harness)).toEqual({ requested: null, calls: [] });
+
+      hold.release();
+      await waitForText(tab, 'Saved · 12P');
+      const after = await downloadUiRestored(harness);
+      expect(uiCalls(after.calls)).toEqual([
+        { enabled: false, ok: true },
+        { enabled: true, ok: true },
+      ]);
+    });
+
+    test('download UI: service worker woken with no job running turns a leftover hidden UI back on', async ({
+      harness,
+    }) => {
+      await downloadUiAfterBoot(harness);
+      // A dead instance's leftover: Chrome keeps the UI off for the extension, not for the worker.
+      await harness.swEval(() => chrome.downloads.setUiOptions({ enabled: false }));
+      await harness.stopServiceWorker();
+      expect(await harness.isServiceWorkerRunning()).toBe(false);
+
+      // The content script's job/listForTab wakes the worker.
+      const tab = await openArtwork(harness, EXAMPLE.id);
+      await waitForText(tab, 'Download · 12P');
+      await expect.poll(async () => (await downloadUi(harness)).calls.length).toBeGreaterThan(0);
+      const woken = await downloadUi(harness);
+      expect([woken.requested, uiCalls(woken.calls)]).toEqual([
+        true,
+        [{ enabled: true, ok: true }],
+      ]);
+    });
+  },
+);

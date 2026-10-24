@@ -84,6 +84,7 @@ function stubEngine() {
     onDownloadChanged: vi.fn(() => Promise.resolve()),
     hydrate: vi.fn(() => Promise.resolve()),
     reconcile: vi.fn(() => Promise.resolve()),
+    restoreDownloadUiIfIdle: vi.fn(() => Promise.resolve()),
   } satisfies Engine;
 }
 

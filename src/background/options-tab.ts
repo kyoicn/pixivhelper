@@ -2,6 +2,8 @@
 // (options-tab.ts)"; PRD CUJ-3 step 1). runtime.openOptionsPage() is not used: its tab placement
 // and cross-window focus are unspecified, and the PRD requires both.
 
+import { exposeTestApi } from '../shared/test-hooks';
+
 const OPTIONS_PAGE = 'options.html';
 
 /**
@@ -44,7 +46,7 @@ function installTestApi(): void {
       await openOrFocusOptions(await chrome.tabs.get(tabId));
     },
   };
-  (globalThis as { __hfpTest?: ActionTestApi }).__hfpTest = api;
+  exposeTestApi({ ...api });
 }
 
 if (__TEST_HOOKS__) installTestApi();
