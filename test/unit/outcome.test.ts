@@ -73,13 +73,30 @@ function pagesJob(
   return job({ files, ...overrides });
 }
 
-/** A retryPages run over `requested` of 12 pages; the other pages were saved earlier. */
-function retryPagesJob(requested: Record<number, FileState | Failure>): JobRecord {
+/**
+ * A retryPages run over `requested` of 12 pages; the other pages were saved earlier. With
+ * `metadata`, the run also writes metadata.json (withMetadata, R-007), queued first.
+ */
+function retryPagesJob(
+  requested: Record<number, FileState | Failure>,
+  metadata?: FileState | Failure,
+): JobRecord {
   const pages = Object.keys(requested).map(Number);
-  const files = pages.map((page, i) => file(i, 'page', requested[page] ?? 'done', { page }));
+  const first = metadata === undefined ? [] : [file(0, 'metadata', metadata)];
+  const files = [
+    ...first,
+    ...pages.map((page, i) => file(first.length + i, 'page', requested[page] ?? 'done', { page })),
+  ];
   return job({
     mode: 'retryPages',
-    request: { mode: 'retryPages', artworkId: '135882741', folder: FOLDER, pages, total: 12 },
+    request: {
+      mode: 'retryPages',
+      artworkId: '135882741',
+      folder: FOLDER,
+      pages,
+      total: 12,
+      ...(metadata === undefined ? {} : { withMetadata: true as const }),
+    },
     pagesOffset: 12 - pages.length,
     files,
   });
@@ -287,6 +304,49 @@ describe('classifyOutcome', () => {
         failedPages: [4, 9, 11],
       });
     });
+
+    it('classifyOutcome: 3 pages and metadata.json failed is partial that flags metadata.json', () => {
+      const broken = pagesJob(
+        { 4: fail('network'), 9: fail('http', 503), 11: fail('timeout') },
+        fail('disk'),
+      );
+      expect(classifyOutcome(broken, ONLINE)).toEqual({
+        type: 'partial',
+        folder: FOLDER,
+        total: 12,
+        saved: 9,
+        failedPages: [4, 9, 11],
+        metadataFailed: true,
+      });
+    });
+
+    it('classifyOutcome: a partial whose metadata.json landed does not flag it', () => {
+      const broken = pagesJob({ 4: fail('network') });
+      expect(classifyOutcome(broken, ONLINE)).not.toHaveProperty('metadataFailed');
+    });
+
+    it('classifyOutcome: a partial with metadata off does not flag metadata.json', () => {
+      const broken = pagesJob({ 4: fail('network') });
+      broken.files = broken.files.filter((f) => f.role !== 'metadata');
+      expect(classifyOutcome(broken, ONLINE)).not.toHaveProperty('metadataFailed');
+    });
+
+    it('classifyOutcome: a retryPages run whose page and metadata.json fail again flags it', () => {
+      const retry = retryPagesJob({ 4: 'done', 9: fail('network') }, fail('disk'));
+      expect(classifyOutcome(retry, ONLINE)).toEqual({
+        type: 'partial',
+        folder: FOLDER,
+        total: 12,
+        saved: 11,
+        failedPages: [9],
+        metadataFailed: true,
+      });
+    });
+
+    it('classifyOutcome: a retryPages run that lands metadata.json but not a page does not flag it', () => {
+      const retry = retryPagesJob({ 4: 'done', 9: fail('network') }, 'done');
+      expect(classifyOutcome(retry, ONLINE)).not.toHaveProperty('metadataFailed');
+    });
   });
 
   describe('row 7: metadataOnly', () => {
@@ -307,6 +367,15 @@ describe('classifyOutcome', () => {
         files: [file(0, 'metadata', fail('disk'))],
       });
       expect(classifyOutcome(retry, ONLINE)).toMatchObject({ type: 'metadataOnly', total: 12 });
+    });
+
+    it('classifyOutcome: a retryPages run that lands its pages but not metadata.json is metadataOnly', () => {
+      const retry = retryPagesJob({ 4: 'done', 9: 'done', 11: 'done' }, fail('disk'));
+      expect(classifyOutcome(retry, ONLINE)).toEqual({
+        type: 'metadataOnly',
+        folder: FOLDER,
+        total: 12,
+      });
     });
   });
 
@@ -490,6 +559,11 @@ describe('classifyOutcome', () => {
     it('classifyOutcome: a retryPages run that lands every page is saved with all pages', () => {
       const retry = retryPagesJob({ 4: 'done', 9: 'done', 11: 'done' });
       expect(classifyOutcome(retry, ONLINE)).toMatchObject({ type: 'saved', pages: 12 });
+    });
+
+    it('classifyOutcome: a retryPages run that lands its pages and metadata.json is saved', () => {
+      const retry = retryPagesJob({ 4: 'done', 9: 'done', 11: 'done' }, 'done');
+      expect(classifyOutcome(retry, ONLINE)).toEqual({ type: 'saved', folder: FOLDER, pages: 12 });
     });
   });
 });

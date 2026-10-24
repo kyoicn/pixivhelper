@@ -16,7 +16,14 @@ import type {
 } from '../../shared/types';
 
 export type ButtonError =
-  | { t: 'partial'; folder: string; total: number; saved: number; failedPages: number[] }
+  | {
+      t: 'partial';
+      folder: string;
+      total: number;
+      saved: number;
+      failedPages: number[];
+      metadataFailed?: true; // the Retry also writes metadata.json; never shown (R-007)
+    }
   | { t: 'metadataOnly'; folder: string; total: number }
   | { t: 'encodeFailed'; folder: string; format: 'mp4' | 'webm' }
   | { t: 'cause'; cause: ErrorCause };
@@ -232,6 +239,7 @@ function outcomeState(outcome: JobOutcome, view: JobView, entry: Entry): ButtonS
           total: outcome.total,
           saved: outcome.saved,
           failedPages: outcome.failedPages,
+          ...(outcome.metadataFailed ? { metadataFailed: true } : {}),
         },
       };
     case 'metadataOnly':
@@ -268,6 +276,7 @@ function startRequest(entry: Entry, loggedIn: boolean | null): StartRequest {
           folder: err.folder,
           pages: err.failedPages,
           total: err.total,
+          ...(err.metadataFailed ? { withMetadata: true } : {}),
         };
       case 'metadataOnly':
         return { mode: 'retryMetadata', artworkId, folder: err.folder };

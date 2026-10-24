@@ -1,6 +1,7 @@
 /* Settings page (design-options-page.md "Styles"): colors and geometry from PRD CUJ-3 and the
-   cuj-3-*.html mocks, except the Saved, validation-message and "Still using" text colors, which
-   meet WCAG AA 4.5:1 (system.md §11.5). System fonts only; no remote resources. */
+   cuj-3-*.html mocks, except the Saved, validation-message, "Still using", link and selected-
+   segment colors, which meet WCAG AA 4.5:1 (system.md §11.5, R-007). System fonts only; no remote
+   resources. */
 
 :root {
   color-scheme: light dark;
@@ -14,7 +15,12 @@
   --seg-hover: #f5f7f9;
   --switch-off: #bdc1c6;
   --rule: #e3e6ea;
+  /* Pixiv blue, for the non-text blues: the switch, focus rings, header mark and chip hover. */
   --accent: #0096fa;
+  /* Blue text (R-007): 4.82:1 on the light page, 6.02:1 (pixiv blue) on the dark one. */
+  --accent-text: #0b6fc2;
+  /* White semibold on it is 5.16:1; on pixiv blue only 3.11:1, so dark mode keeps it too. */
+  --seg-selected: #0b6fc2;
   /* A non-text component: 3:1 suffices, so the border keeps the PRD red in both modes. */
   --invalid-border: #d93025;
   --error-text: #c5221f;
@@ -35,6 +41,7 @@
     --seg-hover: #2a2f35;
     --switch-off: #5f6368;
     --rule: #2a2f35;
+    --accent-text: #0096fa;
     --error-text: #f28b82;
     --saved: #1a9f5a;
     --muted: #8a8f94;
@@ -318,7 +325,7 @@ h2 {
 }
 
 .seg button[aria-pressed='true'] {
-  background: var(--accent);
+  background: var(--seg-selected);
   color: #fff;
   font-weight: 600;
 }
@@ -389,7 +396,7 @@ footer {
 }
 
 .link {
-  color: var(--accent);
+  color: var(--accent-text);
   text-decoration: none;
 }
 

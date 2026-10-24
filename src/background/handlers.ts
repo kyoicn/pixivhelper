@@ -52,6 +52,7 @@ export function startRequest(m: JobStartMessage): StartRequest {
         folder: m.folder,
         pages: [...m.pages],
         total: m.total,
+        ...(m.withMetadata ? { withMetadata: true } : {}),
       };
     case 'retryEncode':
       return { mode: m.mode, artworkId: m.artworkId, folder: m.folder, format: m.format };

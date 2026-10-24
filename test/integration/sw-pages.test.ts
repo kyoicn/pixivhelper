@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { JobRecord } from '../../src/shared/job';
+import { clickAction, createEntry, reduce } from '../../src/content/button/model';
+import type { JobRecord, StartRequest } from '../../src/shared/job';
 import { buildMetadata, serializeJson } from '../../src/shared/metadata';
 import type { JobStartResponse } from '../../src/shared/messages';
+import type { Failure, JobView } from '../../src/shared/types';
 import type { ChromeFake } from '../fakes/chrome';
 import {
   API,
@@ -478,6 +480,140 @@ describe('sw: retries (CUJ-5)', () => {
       tab.send({ type: 'job/start', mode: 'retryMetadata', artworkId: ID, folder: 'a/../b' }),
     );
     expect(response).toEqual({ ok: false, error: 'BAD_REQUEST' });
+  });
+});
+
+describe('sw: Retry after a partial failure (CUJ-5 step 5, R-007)', () => {
+  const FAILED_PAGES = [3, 8, 10];
+  const ALL_FILES = [
+    `${FOLDER}/metadata.json`,
+    ...Array.from({ length: 12 }, (_, page) => `${FOLDER}/${ID}_p${page}.jpg`),
+  ].sort();
+
+  function pageFailures(): Map<string, Failure> {
+    return new Map(
+      FAILED_PAGES.map((page) => [pageUrl(ID, page), { kind: 'http', status: 503, attempts: 4 }]),
+    );
+  }
+
+  /**
+   * Starts a job and drives Chrome until its final view arrives; with `failMetadata`, Chrome fails
+   * every metadata.json download (FILE_FAILED, a disk error).
+   */
+  async function drive(
+    tab: ContentTab,
+    start: Record<string, unknown>,
+    failMetadata: boolean,
+  ): Promise<JobView> {
+    const response = (await settle(tab.send({ type: 'job/start', ...start }))) as JobStartResponse;
+    if (!response.ok) throw new Error(`job/start refused: ${response.error}`);
+    const { jobId } = response.view;
+    const driver = new DownloadDriver(fake);
+    await until(() => {
+      for (const item of fake.downloads.inProgress()) {
+        if (failMetadata && item.filename.endsWith('/metadata.json')) {
+          fake.downloads.interrupt(item.id, 'FILE_FAILED');
+        }
+      }
+      driver.step();
+      return tab.ended(jobId) !== undefined;
+    }, 'job end');
+    await settle(new Promise((resolve) => setTimeout(resolve, 100)));
+    const ended = tab.ended(jobId);
+    if (!ended) throw new Error('no final view');
+    return ended;
+  }
+
+  /** What the content script sends when the user clicks the button that shows `view`'s outcome. */
+  function retryOf(view: JobView): StartRequest {
+    const shown = reduce(createEntry(ID), { type: 'update', view });
+    const action = clickAction(shown, 0, ARTWORK_URL, false);
+    if (action.type !== 'start') throw new Error(`a click does not start a job: ${action.type}`);
+    return action.request;
+  }
+
+  const FULL = { mode: 'full', artworkId: ID, expectedFiles: 12, loggedIn: false };
+
+  it('sw: 3 pages and metadata.json fail; Retry writes both and ends saved', async () => {
+    const failures = pageFailures();
+    new ScriptedOffscreen(fake, { failures });
+    await bootSw();
+    const tab = new ContentTab(fake, ARTWORK_URL, api12());
+    const first = await drive(tab, FULL, true);
+    failures.clear();
+    const retry = retryOf(first);
+    const last = await drive(tab, retry, false);
+    expect([first.outcome, retry, last.outcome, savedFiles(fake).sort()]).toEqual([
+      {
+        type: 'partial',
+        folder: FOLDER,
+        total: 12,
+        saved: 9,
+        failedPages: FAILED_PAGES,
+        metadataFailed: true,
+      },
+      {
+        mode: 'retryPages',
+        artworkId: ID,
+        folder: FOLDER,
+        pages: FAILED_PAGES,
+        total: 12,
+        withMetadata: true,
+      },
+      { type: 'saved', folder: FOLDER, pages: 12 },
+      ALL_FILES,
+    ]);
+  });
+
+  it('sw: with metadata.json, the Retry still counts 9 … 11 / 12 and badges 3 pages', async () => {
+    const failures = pageFailures();
+    // Slow enough for the coalesced badge to render while the files are in flight.
+    new ScriptedOffscreen(fake, { failures, delayMs: 100 });
+    await bootSw();
+    const tab = new ContentTab(fake, ARTWORK_URL, api12());
+    const first = await drive(tab, FULL, true);
+    failures.clear();
+    const badges: string[] = [];
+    fake.api.action.setBadgeText.mockImplementation(async ({ text }) => {
+      badges.push(text ?? '');
+      fake.action.badgeText = text ?? '';
+      await Promise.resolve();
+    });
+    const last = await drive(tab, retryOf(first), false);
+    const done = tab.views
+      .filter((v) => v.jobId === last.jobId && v.status === 'running')
+      .flatMap((v) => (v.progress?.kind === 'pages' ? [v.progress.done] : []));
+    expect([
+      done[0],
+      done.at(-1),
+      done.every((d, i) => i === 0 || d >= done[i - 1]!),
+      badges[0],
+      badges.every((badge) => badge === '' || Number(badge) <= FAILED_PAGES.length),
+    ]).toEqual([9, 11, true, '3', true]);
+  });
+
+  it('sw: only pages failed; Retry writes the pages and not metadata.json again', async () => {
+    const failures = pageFailures();
+    const offscreen = new ScriptedOffscreen(fake, { failures });
+    await bootSw();
+    const tab = new ContentTab(fake, ARTWORK_URL, api12());
+    const first = await drive(tab, FULL, false);
+    failures.clear();
+    const retry = retryOf(first);
+    const last = await drive(tab, retry, false);
+    expect([
+      first.outcome,
+      retry,
+      last.outcome,
+      savedFiles(fake).sort(),
+      offscreen.commandsOf('off/makeText').length,
+    ]).toEqual([
+      { type: 'partial', folder: FOLDER, total: 12, saved: 9, failedPages: FAILED_PAGES },
+      { mode: 'retryPages', artworkId: ID, folder: FOLDER, pages: FAILED_PAGES, total: 12 },
+      { type: 'saved', folder: FOLDER, pages: 12 },
+      ALL_FILES,
+      1,
+    ]);
   });
 });
 

@@ -436,7 +436,11 @@ function isStartRequest(m: Fields): boolean {
     case 'full':
       return isCount(m.expectedFiles) && (m.loggedIn === null || isBoolean(m.loggedIn));
     case 'retryPages':
-      return isFolder(m.folder) && isRetryPages(m.pages, m.total);
+      return (
+        isFolder(m.folder) &&
+        isRetryPages(m.pages, m.total) &&
+        isOptional(m, 'withMetadata', (w) => w === true)
+      );
     case 'retryEncode':
       return isFolder(m.folder) && isKeyOf(m.format, VIDEO_FORMATS);
     case 'retryMetadata':
@@ -507,7 +511,8 @@ function isJobOutcome(v: unknown): v is JobOutcome {
         isCount(v.total) &&
         isCount(v.saved) &&
         Array.isArray(v.failedPages) &&
-        (v.failedPages as unknown[]).every(isCount)
+        (v.failedPages as unknown[]).every(isCount) &&
+        isOptional(v, 'metadataFailed', (m) => m === true)
       );
     case 'metadataOnly':
       return isFolder(v.folder) && isCount(v.total);
