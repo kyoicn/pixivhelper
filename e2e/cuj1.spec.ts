@@ -1213,3 +1213,321 @@ test.describe('CUJ-1: QA gate additions (iteration 3), Chrome toolbar', { tag: '
     expect(after.button, 'Chrome’s downloads button after Saved · 12P').not.toBeNull();
   });
 });
+
+// Added by the QA gate (iteration 3, retry 1): R-006 checks with no e2e yet.
+// | PRD                                                                            | Test                   |
+// | ------------------------------------------------------------------------------ | ---------------------- |
+// | AC "… exactly one animation accompanies the last file" (R-006, §4.1 #3), when  | 'download UI: last     |
+// |   the last files land together (no page held back): every earlier file is in  |   files land together' |
+// |   Chrome before the UI comes back, and only the last file starts after it      |                        |
+// | §4.1 #3 (R-006): a single-image work ends with exactly one animation, with its | 'download UI: single   |
+// |   image; with metadata off the image is the job's only file, so the UI is      |   image' (2 tests)     |
+// |   never turned off                                                             |                        |
+// Whether Chrome had also named each earlier file (where it decides to animate) cannot be read
+// reliably from here: its onChanged filename delta can reach a listener after the
+// downloads.search answer the engine waits on. The headed 'Chrome toolbar' tests below check the
+// visible result instead.
+test.describe('CUJ-1: QA gate additions (iteration 3, retry 1)', { tag: '@cuj1' }, () => {
+  interface Item {
+    id: number;
+    name: string;
+    startedAt: number;
+  }
+
+  /** Chrome's download items in creation order (ids rise with creation). */
+  async function items(harness: Harness): Promise<Item[]> {
+    const list = await harness.swEval(async () =>
+      (await chrome.downloads.search({})).map(({ id, filename, startTime }) => ({
+        id,
+        name: filename.split(/[\\/]/).pop() ?? '',
+        startedAt: Date.parse(startTime),
+      })),
+    );
+    return list.sort((a, b) => a.id - b.id);
+  }
+
+  test('download UI: last files land together: every earlier file is in Chrome before the UI comes back; only the last file starts after it', async ({
+    harness,
+  }) => {
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    const base = (await downloadUiAfterBoot(harness)).calls.length;
+    await clickButton(page);
+    await waitForText(page, 'Saved · 12P');
+    const after = await downloadUiRestored(harness);
+    expect(uiCalls(after.calls, base)).toEqual([
+      { enabled: false, ok: true },
+      { enabled: true, ok: true },
+    ]);
+    const hideAt = after.calls[base]?.at ?? Number.POSITIVE_INFINITY;
+    const restoreAt = after.calls[base + 1]?.at ?? Number.NaN;
+    const all = await items(harness);
+    expect(all).toHaveLength(13);
+    const last = all.at(-1);
+    // chrome.downloads and the SW's Date.now() share the clock, in whole milliseconds.
+    expect(Math.min(...all.map((item) => item.startedAt))).toBeGreaterThanOrEqual(hideAt);
+    expect(
+      all
+        .slice(0, -1)
+        .filter((item) => item.startedAt > restoreAt)
+        .map((item) => item.name),
+      'files that reached Chrome only after the UI came back',
+    ).toEqual([]);
+    expect(restoreAt).toBeLessThanOrEqual(last?.startedAt ?? Number.NEGATIVE_INFINITY);
+    expect(await downloadedPaths(harness)).toEqual(expectedFiles(FOLDER, ALL_PAGES, true));
+  });
+
+  test('download UI: single image: off before metadata.json, back on just before the image is handed to Chrome', async ({
+    harness,
+  }) => {
+    const page = await openArtwork(harness, SINGLE.id);
+    await waitForText(page, 'Download');
+    const base = (await downloadUiAfterBoot(harness)).calls.length;
+    await clickButton(page);
+    await waitForText(page, 'Saved');
+    const after = await downloadUiRestored(harness);
+    expect(uiCalls(after.calls, base)).toEqual([
+      { enabled: false, ok: true },
+      { enabled: true, ok: true },
+    ]);
+    const restoreAt = after.calls[base + 1]?.at ?? Number.NaN;
+    const [metadata, image] = await items(harness);
+    expect([metadata?.name, image?.name]).toEqual(['metadata.json', fileName(SINGLE, 0)]);
+    expect(metadata?.startedAt).toBeGreaterThanOrEqual(after.calls[base]?.at ?? Infinity);
+    expect(metadata?.startedAt).toBeLessThanOrEqual(restoreAt);
+    expect(restoreAt).toBeLessThanOrEqual(image?.startedAt ?? Number.NEGATIVE_INFINITY);
+  });
+
+  test('download UI: single image, metadata off: the image is the only file, so Chrome’s UI is never turned off', async ({
+    harness,
+  }) => {
+    await writeSettings(harness, { folderPattern: 'pixiv/{artist}-{id}', saveMetadata: false });
+    const page = await openArtwork(harness, SINGLE.id);
+    await waitForText(page, 'Download');
+    const base = (await downloadUiAfterBoot(harness)).calls.length;
+    await clickButton(page);
+    await waitForText(page, 'Saved');
+    await expect
+      .poll(async () => (await items(harness)).map((item) => item.name))
+      .toEqual([fileName(SINGLE, 0)]);
+    // Give a stray call time to show up before asserting there is none.
+    await page.waitForTimeout(500);
+    const after = await downloadUi(harness);
+    expect([after.requested, uiCalls(after.calls, base)]).toEqual([true, []]);
+  });
+});
+
+// Added by the QA gate (iteration 3, retry 1): Chrome's toolbar under R-006, read from Chrome's
+// native-UI accessibility tree polled every few milliseconds inside chrome://accessibility (the
+// page's own 'requestNativeUITree' message), so an appearance of the downloads button between two
+// files cannot fall between two reads. Headed only (`HFP_HEADLESS=0`): headless Chromium has no
+// download UI, so each test skips when a control download from a page shows no button either.
+// | PRD                                                                            | Test                   |
+// | ------------------------------------------------------------------------------ | ---------------------- |
+// | AC "… does not appear or animate for the first 12 files; exactly one           | 'toolbar: one          |
+// |   animation accompanies the last file, after which the bubble lists            |   animation'           |
+// |   metadata.json and the 12 originals" (R-006); step 6                          |                        |
+// | Step 5 (R-006): after a cancel Chrome plays no animation and its downloads     | 'toolbar: cancel'      |
+// |   button stays out of the toolbar until the next download                      |                        |
+test.describe(
+  'CUJ-1: QA gate additions (iteration 3, retry 1), Chrome toolbar',
+  { tag: '@cuj1' },
+  () => {
+    interface Sample {
+      at: number;
+      /** Accessible name of a visible downloads toolbar button, or null. */
+      button: string | null;
+      bubbleOpen: boolean;
+      rows: string[];
+    }
+
+    /** Opens chrome://accessibility with the native tree on and starts the poller. */
+    async function startTree(harness: Harness): Promise<Page> {
+      const tree = await harness.newPage();
+      await tree.goto('chrome://accessibility');
+      const native = tree.locator('#native');
+      // Turning it on reloads the page; headed Chromium may have it on already.
+      if (!(await native.isChecked())) {
+        await Promise.all([tree.waitForEvent('load'), native.check()]);
+      }
+      await tree.locator('[id^="browser_"]').first().waitFor();
+      await tree.evaluate(() => {
+        const scope = window as unknown as {
+          __qaSamples: Sample[];
+          __qaPolling: boolean;
+          chrome: { send(message: string, args: unknown[]): void };
+        };
+        const sessions = [...document.querySelectorAll('[id^="browser_"]')]
+          .map((row) => row.id)
+          .filter((id) => /^browser_\d+$/.test(id))
+          .map((id) => Number(id.slice('browser_'.length)));
+        const name = (line: string): string => / name=(.*?) name_from/.exec(line)?.[1] ?? '';
+        const visible = (line: string): boolean => !line.includes('INVISIBLE');
+        const read = (sessionId: number): Promise<string> =>
+          new Promise((resolve) => {
+            const row = document.getElementById(`browser_${sessionId}`);
+            if (!row) return resolve('');
+            const timer = setTimeout(() => {
+              observer.disconnect();
+              resolve('');
+            }, 2_000);
+            const observer = new MutationObserver(() => {
+              const pre = document.getElementById(`browser_${sessionId}-tree`);
+              if ((pre?.textContent ?? '').length > 100) {
+                observer.disconnect();
+                clearTimeout(timer);
+                resolve(pre!.innerText);
+              }
+            });
+            observer.observe(row, { childList: true, subtree: true });
+            scope.chrome.send('requestNativeUITree', [
+              {
+                sessionId,
+                requestType: 'showOrRefreshTree',
+                filters: { allow: '*', allowEmpty: '', deny: '' },
+              },
+            ]);
+          });
+        scope.__qaSamples = [];
+        scope.__qaPolling = true;
+        void (async () => {
+          while (scope.__qaPolling) {
+            const at = Date.now();
+            const lines = (await Promise.all(sessions.map(read))).join('\n').split('\n');
+            const button = lines.find(
+              (line) =>
+                /class_name=(DownloadToolbarButtonView|PinnedActionToolbarButton)\b/.test(line) &&
+                /download/i.test(name(line)) &&
+                visible(line),
+            );
+            scope.__qaSamples.push({
+              at,
+              button: button === undefined ? null : name(button),
+              bubbleOpen: lines.some(
+                (line) =>
+                  /class_name=DownloadBubble(Contents|Partial|Primary)View\b/.test(line) &&
+                  visible(line),
+              ),
+              rows: lines
+                .filter((line) => line.includes('class_name=DownloadBubbleTransparentButton'))
+                .map((line) => name(line).split(' ')[0] ?? ''),
+            });
+          }
+        })();
+      });
+      return tree;
+    }
+
+    function samples(tree: Page): Promise<Sample[]> {
+      return tree.evaluate(() => (window as unknown as { __qaSamples: Sample[] }).__qaSamples);
+    }
+
+    const shown = (sample: Sample): boolean => sample.button !== null || sample.bubbleOpen;
+
+    /** Times at which the button or bubble went from hidden to shown, at or after `since`. */
+    function appearances(list: readonly Sample[], since: number): number[] {
+      return list.flatMap((sample, index) =>
+        sample.at >= since && shown(sample) && !(index > 0 && shown(list[index - 1]!))
+          ? [sample.at]
+          : [],
+      );
+    }
+
+    /** A download from a page; resolves with the samples taken in the 1.5 s after it landed. */
+    async function controlDownload(harness: Harness, tree: Page, file: string): Promise<Sample[]> {
+      const other = await harness.newPage();
+      await other.goto('https://www.pixiv.net/users/40285173');
+      const startedAt = Date.now();
+      await other.evaluate((name) => {
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(new Blob(['control']));
+        link.download = name;
+        document.body.append(link);
+        link.click();
+      }, file);
+      await harness.downloads.waitForFile(file);
+      await other.waitForTimeout(1_500);
+      return (await samples(tree)).filter((sample) => sample.at >= startedAt);
+    }
+
+    test('toolbar: one animation: no downloads button until p11 is handed to Chrome, then it returns once, with a bubble listing metadata.json and the 12 originals', async ({
+      harness,
+      server,
+    }) => {
+      const tree = await startTree(harness);
+      const hold = server.hold(pagesOf(EXAMPLE, [11]));
+      const page = await openArtwork(harness, EXAMPLE.id);
+      await waitForText(page, 'Download · 12P');
+      const base = (await downloadUiAfterBoot(harness)).calls.length;
+      const clickedAt = Date.now();
+      await clickButton(page);
+      await waitForText(page, '11 / 12');
+      await expect.poll(() => hold.held).toBe(1);
+      await page.waitForTimeout(500);
+      hold.release();
+      await waitForText(page, 'Saved · 12P');
+      const after = await downloadUiRestored(harness);
+      await page.waitForTimeout(2_000);
+      const list = (await samples(tree)).filter((sample) => sample.at >= clickedAt);
+      if (!list.some(shown)) {
+        const control = await controlDownload(harness, tree, 'control-download.txt');
+        test.skip(
+          !control.some(shown),
+          'this Chromium shows no download UI at all (headless): run with HFP_HEADLESS=0',
+        );
+      }
+      const restoreAt = after.calls[base + 1]?.at ?? Number.NaN;
+      // A read that starts a few ms before the change can still see it; one poll is ~5-10 ms.
+      expect(
+        list.filter((sample) => shown(sample) && sample.at < restoreAt - 20),
+        'button or bubble before the UI came back',
+      ).toEqual([]);
+      expect(
+        appearances(list, clickedAt),
+        'times Chrome’s downloads button came back',
+      ).toHaveLength(1);
+      expect(list.at(-1)?.button, 'Chrome’s downloads button after Saved · 12P').not.toBeNull();
+      const rows = new Set(list.flatMap((sample) => sample.rows));
+      expect(
+        ['metadata.json', ...ALL_PAGES.map((p) => fileName(EXAMPLE, p))].filter(
+          (n) => !rows.has(n),
+        ),
+        'files missing from the bubble',
+      ).toEqual([]);
+    });
+
+    test('toolbar: cancel: no animation, and Chrome’s downloads button stays out of the toolbar until the next download brings it back', async ({
+      harness,
+      server,
+    }) => {
+      const tree = await startTree(harness);
+      const hold = server.hold(pagesOf(EXAMPLE, range(5, 11)));
+      const page = await openArtwork(harness, EXAMPLE.id);
+      await waitForText(page, 'Download · 12P');
+      const since = Date.now();
+      await clickButton(page);
+      const clickedAt = Date.now();
+      await waitForText(page, '5 / 12');
+      await expect.poll(() => hold.held).toBe(5);
+      await hoverButton(page, false);
+      await hoverButton(page, true);
+      await waitForText(page, 'Cancel');
+      await page.waitForTimeout(Math.max(0, clickedAt + CLICK_GUARD_MS - Date.now()));
+      await clickButton(page);
+      await hoverButton(page, false);
+      await waitForText(page, 'Download · 12P');
+      await downloadUiRestored(harness);
+      hold.release();
+      await page.waitForTimeout(3_000);
+      const sinceClick = (await samples(tree)).filter((sample) => sample.at >= since);
+      const control = await controlDownload(harness, tree, 'next-download.txt');
+      test.skip(
+        !control.some(shown),
+        'this Chromium shows no download UI at all (headless): run with HFP_HEADLESS=0',
+      );
+      expect(sinceClick.length).toBeGreaterThan(50);
+      expect(sinceClick.filter(shown), 'button or bubble after the cancel').toEqual([]);
+      expect(appearances(control, 0)).toHaveLength(1);
+    });
+  },
+);
