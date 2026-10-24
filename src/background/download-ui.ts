@@ -32,9 +32,25 @@ export interface DownloadUiReport {
 }
 
 // A function referenced only from `if (__TEST_HOOKS__)`, like options-tab.ts, so prod sw.js carries
-// no trace of the test API.
-function installTestApi(report: () => DownloadUiReport): void {
-  exposeTestApi({ downloadUi: report });
+// no trace of the test API: it installs `downloadUi()` and returns `setUiOptions` wrapped to record
+// each settled call.
+function withTestApi(setUiOptions: SetUiOptions, requested: () => boolean | null): SetUiOptions {
+  const calls: DownloadUiCall[] = [];
+  exposeTestApi({
+    downloadUi: (): DownloadUiReport => ({
+      requested: requested(),
+      calls: calls.map((call) => ({ ...call })),
+    }),
+  });
+  return async (options) => {
+    let ok = false;
+    try {
+      await setUiOptions(options);
+      ok = true;
+    } finally {
+      calls.push({ enabled: options.enabled, ok, at: Date.now() });
+    }
+  };
 }
 
 export function createDownloadUi(
@@ -46,15 +62,13 @@ export function createDownloadUi(
   let chain: Promise<void> = Promise.resolve();
   /** The only documented refusal of a hide (no `downloads.ui` permission) cannot be fixed by retrying. */
   let hideRefused = false;
-  const calls: DownloadUiCall[] = [];
+  if (__TEST_HOOKS__) setUiOptions = withTestApi(setUiOptions, () => requested);
 
   async function apply(enabled: boolean): Promise<void> {
     if (!enabled && hideRefused) return;
-    let ok = true;
     try {
       await setUiOptions({ enabled });
     } catch (error) {
-      ok = false;
       if (enabled) {
         // Expected while another extension keeps the UI off; Chrome removed our entry first.
         log.debug("Chrome's download UI stays off", error);
@@ -64,7 +78,6 @@ export function createDownloadUi(
         log.warn("could not hide Chrome's download UI", error);
       }
     }
-    if (__TEST_HOOKS__) calls.push({ enabled, ok, at: Date.now() });
   }
 
   // `requested` changes before the call is queued, so a caller arriving while it is in flight
@@ -73,10 +86,6 @@ export function createDownloadUi(
     requested = enabled;
     chain = chain.then(() => apply(enabled));
     return chain;
-  }
-
-  if (__TEST_HOOKS__) {
-    installTestApi(() => ({ requested, calls: calls.map((call) => ({ ...call })) }));
   }
 
   return {
