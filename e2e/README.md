@@ -203,6 +203,7 @@ Skeleton: every PRD acceptance criterion (docs/prd/prd-000-mvp.md), the check th
 | PRD AC                                                                     | Check                                                                                      |
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | Idle label `Download · MP4` / `WebM` / `ZIP` per setting and codec support | idle label for each setting; MP4 gated on the codec probe (`avc: null` → skip with reason) |
+| 176 px (en) in idle, busy, Cancel-hover and Saved; output changes keep it  | `toBe(176)` on 136004512 with a `ResizeObserver` log; the zip held for busy and Cancel     |
 | Percent never decreases, no `100%` early, ≥ 1 update/s during encode       | `MutationObserver` label log on 136004517                                                  |
 | Badge `1` for the whole job                                                | `swEval(getBadgeText)` sampled                                                             |
 | Folder holds exactly zip, `frames.json`, video, `metadata.json`            | `downloads.files()`                                                                        |

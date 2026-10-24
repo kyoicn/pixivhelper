@@ -18,11 +18,23 @@ import {
 } from './labels';
 
 /**
- * Minimum width per resolved locale. English is pinned to the 164 px of AC CUJ-1 because OS
- * system fonts differ; other locales use the measured value alone.
+ * Minimum width per resolved locale for pages and for a work whose metadata is not known yet.
+ * English is pinned to the 164 px of AC CUJ-1 because OS system fonts differ; other locales use
+ * the measured value alone.
  */
 export const LOCALE_FLOOR_PX: Readonly<Record<LocaleTag, number>> = {
   en: 164,
+  ja: 0,
+  'zh-CN': 0,
+  'zh-TW': 0,
+};
+
+/**
+ * Minimum width per resolved locale for an ugoira. English is pinned to the 176 px of AC CUJ-2
+ * (R-004 S1), which `Download · WebM` measures only with some system fonts.
+ */
+export const UGOIRA_LOCALE_FLOOR_PX: Readonly<Record<LocaleTag, number>> = {
+  en: 176,
   ja: 0,
   'zh-CN': 0,
   'zh-TW': 0,
@@ -74,10 +86,14 @@ function ugoiraCandidates(): Face[] {
   ];
 }
 
-/** max(ceil(measure(c)) for every candidate, LOCALE_FLOOR_PX[locale]). */
+/**
+ * max(ceil(measure(c)) for every candidate, the locale floor): UGOIRA_LOCALE_FLOOR_PX for an
+ * ugoira, LOCALE_FLOOR_PX otherwise (also while the metadata is not known).
+ */
 export function computeWidth(work: WorkInfo | null, locale: LocaleTag, measure: Measure): number {
+  const floor = work?.illustType === 2 ? UGOIRA_LOCALE_FLOOR_PX[locale] : LOCALE_FLOOR_PX[locale];
   const measured = candidates(work).map((face) => Math.ceil(measure(face)));
-  return Math.max(LOCALE_FLOOR_PX[locale], ...measured);
+  return Math.max(floor, ...measured);
 }
 
 /**
