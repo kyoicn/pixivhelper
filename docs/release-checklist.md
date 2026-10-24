@@ -26,10 +26,12 @@ Use Chrome stable, not Chrome for Testing. Unzip the release zip into an empty f
   - Settings → Ugoira output → `ZIP only`: the button reads `Download · ZIP` and ends `Saved · ZIP`; the folder holds the zip and `frames.json`, and no video.
 - [ ] **Playback.** The MP4 plays at pixiv's frame timing in QuickTime Player (macOS), Windows Photos and Windows Media Player (Windows), and VLC (both). With Ugoira output → `WebM`, the WebM plays in Chrome (drop the file into a tab) and in VLC.
 - [ ] **"Ask where to save each file before downloading"** on (`chrome://settings/downloads`), then download a multi-page work. Expected, PRD-000 CUJ-1 edge cases (known v1 limitation): the extension requests no prompt; if Chrome still shows a Save dialog per file, that is Chrome honoring the setting; a file whose dialog is dismissed counts as failed and is not retried automatically. The Save dialog is a separate window, so it still appears while the extension keeps Chrome's download UI hidden (R-005). Record what Chrome actually did, since the PRD marks this "assumption — confirm by testing". Turn the setting off afterwards.
-- [ ] **Chrome's download UI (R-005, PRD-000 §4.1 #3).** Watch the toolbar; the e2e suite cannot see it.
-  - During the download of a live all-ages 12-page work, Chrome shows no fly-to-toolbar animation and no downloads button, not even for `metadata.json`.
-  - After `Saved · 12P` the downloads button is back, and its bubble lists the 13 files (`metadata.json` and the 12 originals).
-  - With two jobs, the button returns only after both have ended.
+- [ ] **Chrome's download UI (R-005, R-006, PRD-000 §4.1 #3).** Watch the toolbar; the e2e suite cannot see it.
+  - During the download of a live all-ages 12-page work, Chrome shows no fly-to-toolbar animation and no downloads button for the first 12 files, not even for `metadata.json`.
+  - **One animation, at the last file**: it brings the downloads button back, and after `Saved · 12P` its bubble lists the 13 files (`metadata.json` and the 12 originals).
+  - With two jobs, the button returns only with the last file of the job that ends last.
+  - **A re-download served from the HTTP cache** (click `Saved · 12P` again, so the last files land together) also shows exactly one animation, at the end.
+  - **After a cancel, the button returns only with the next download** (accepted by R-006).
   - A file downloaded from another site while a job runs shows no animation either (the browser-wide side effect R-005 accepts), and is listed once the button returns.
   - Windows, with Enhanced Safe Browsing on: an ugoira's zip raises no deep-scan or dangerous-file prompt that the hidden bubble would swallow. If one appears, the job waits and the button stays hidden until the file is handled in `chrome://downloads`; record it for pm (system.md §15, open spec gap 1).
 - [ ] **4 locales without clipping.** For each of en, ja, zh_CN and zh_TW, switch Chrome's UI language (Windows: `chrome://settings/languages` → "Display Google Chrome in this language"; macOS: System Settings → General → Language & Region → Applications → Google Chrome), relaunch, and check that no text is clipped or overflows:
