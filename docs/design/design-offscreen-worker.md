@@ -1,6 +1,6 @@
 # Offscreen Worker (bytes & ugoira encoding)
 
-> Last updated: 2026-10-27 20:32:56 (UTC-7)
+> Last updated: 2026-10-28 00:02:49 (UTC-7)
 > Serves: prd-000 — CUJ-1 (original bytes; edge "Same artwork clicked in two tabs": two independent jobs), CUJ-2 (zip, frames.json, in-browser video), CUJ-4 (AC "Starting a second artwork while one is running begins downloading the second immediately"), CUJ-5 (encode-failure retry, byte-level failures)
 
 ## Overview
@@ -395,6 +395,7 @@ sequenceDiagram
     4. `send`: a document with no listener at all (no handler) → `sendMessage` is called every 25 ms, at most 41 times, and the rejection propagates no earlier than 1000 ms after the first; a rejection with another message propagates at once with one call. **Mutation check:** replacing the loop with one immediate resend fails the first assertion.
     5. `ensureOffscreen`: a `createDocument` that rejects with "Only a single offscreen document may be created." resolves (d), and the next `send` is delivered.
     6. Integration: two `job/start` for different artworks in the same tick, creation held 1500 ms → both jobs end `saved`, no file is `failed`, and the offscreen handler received each file's command exactly once. The same for two tabs on one artwork (both `saved`; the folder choice sees no completed record, so both use the plain folder and the fake uniquifies the second's names, the accepted same-instant race). A job started 5 s after a busy period ended, with the close held → `saved`.
+    7. E2E (`e2e/cuj4.spec.ts` 'two tabs at once', ×3 same artwork and ×3 two artworks; [design-test-harness.md](design-test-harness.md) mapping): both clicks in one `Promise.all`, both buttons end `Saved`, both folders hold `metadata.json`, no `offscreen did not take` in the SW log (`recordSwLog()`). **What e2e does and does not discriminate.** The iteration-5 e2e discrimination check showed that removing rule (b) alone leaves every 'two tabs at once' run green on real Chrome: the document loads in well under the 1 s bound, so rule 2's resend loop delivers the second job's command anyway. Only removing the loop as well (the iteration-4 code) fails the e2e tests. Rule (b) is therefore pinned by the L2 tests 1 and 2 above (creation held 1500 ms, past `OFFSCREEN_READY_WAIT_MS`, which real Chrome cannot be made to do), and e2e pins the end-to-end outcome of the three rules together. Rule (a) is likewise L2-only (test 3).
   - QA's exit for CUJ-1 and CUJ-4 (pm-review iteration 4): `twoTabsProbe.ts` at `CLICK_GAP=0`, same and different artworks, e2e build and store zip, ≥ 8 runs each → both jobs `Saved` with `metadata.json` in both folders; the 0–800 ms gap sweep; the grace-close edge (second job about 5 s after a busy period, ±50 ms); the headed R-006 matrix unchanged.
   - Browser-level (Playwright, offscreen context): encode fixture ugoiras (48 frames 600×600; 601×451 odd; mixed delays; PNG frames) and verify with `ffprobe -show_frames` (frame count, `pkt_duration_time`, dimensions) plus SSIM ([design-test-harness.md](design-test-harness.md)).
 
