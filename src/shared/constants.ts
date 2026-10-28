@@ -81,6 +81,8 @@ export const OFFSCREEN_CLOSE_GRACE_MS = 5000;
 export const BADGE_COALESCE_MS = 50;
 /** Caps the wait for earlier in-progress files to finish before the UI restore (R-006 rev. 3). */
 export const HANDOFF_SETTLE_WAIT_MS = 2000;
+/** The wait for Chrome's asynchronous existence re-check before the folder check's second search (D15). */
+export const FOLDER_CHECK_RECHECK_WAIT_MS = 250;
 
 // ── Toolbar badge ──
 export const BADGE_BACKGROUND_COLOR = '#1f1f1f';

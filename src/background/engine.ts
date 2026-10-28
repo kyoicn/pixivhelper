@@ -17,6 +17,7 @@ import type { JobOutcome, JobView } from '../shared/types';
 import { createBadgeRenderer, type BadgeRenderer } from './badge';
 import { getCaps, probePending } from './caps';
 import { createDownloadUi, type DownloadUi } from './download-ui';
+import { chooseFolder } from './folder-choice';
 import {
   downloadOptions,
   onDownloadComplete,
@@ -363,7 +364,7 @@ export function createEngine(downloadUi: DownloadUi = createDownloadUi()): Engin
     const job = registry.get(jobId);
     if (job?.phase !== 'resolving') return;
     try {
-      const resolution = await resolve(job, { apiFetchJson, getCaps });
+      const resolution = await resolve(job, { apiFetchJson, getCaps, chooseFolder });
       await registry.mutate(jobId, (record) => applyResolution(record, resolution));
     } catch (error) {
       log.warn('resolve failed', jobId, error);

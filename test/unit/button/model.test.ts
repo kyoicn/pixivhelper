@@ -548,6 +548,18 @@ describe('clickAction', () => {
     });
   });
 
+  it('clickAction: a partial failure in a (1) folder retries into that folder, suffix included', () => {
+    const folder = `${FOLDER} (1)`;
+    const state: ButtonState = {
+      s: 'error',
+      err: { t: 'partial', folder, total: 12, saved: 9, failedPages: [3] },
+    };
+    expect(clickAction(entry(state), 0, HREF, LOGGED_OUT)).toEqual({
+      type: 'start',
+      request: { mode: 'retryPages', artworkId: ARTWORK, folder, pages: [3], total: 12 },
+    });
+  });
+
   it('clickAction: a partial failure that lost metadata.json retries the pages with it', () => {
     const state: ButtonState = {
       s: 'error',
