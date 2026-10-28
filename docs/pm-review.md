@@ -1,80 +1,46 @@
 # PM Review
 
-Last updated: 2026-10-23 23:54:34 (UTC-7)
-Iteration: 4
-Scope: prd-000 (prd-000-mvp, CUJ-1 … CUJ-5, as amended by R-004, R-005, R-006 and the R-006 rev. 3 spec-sync in `c2c9de0`)
+Last updated: 2026-10-28 01:29:50 (UTC-7)
+Iteration: 5
+Scope: prd-000 (prd-000-mvp, CUJ-1 … CUJ-5, as refined on 2026-10-27 for the sibling-folder repeat download, Issue 2026-10-27-19-58-31, and as amended by R-007 in `c8d95bc`). QA run `iter5-00-09-39`, `main` at `cac42dc`.
 
 ## Overall Assessment
-All three of the owner's complaints are now fixed and verified:
-- 20 flying icons per manga;
-- Chrome's downloads button never coming back;
-- the bubble leaving out the last file.
+Every product promise of prd-000 is now on `main`. The iteration-4 hold, the offscreen creation race, is closed by D16 with evidence that discriminates (32/32 at a click gap of 0 on HEAD, 1/8 on the pre-fix build), so CUJ-1 and CUJ-4 leave Caveats. The 2026-10-27 refinement, a repeat download of the same artwork going to `<folder> (n)` with clean names inside, is built as D15 and walked through every refined acceptance criterion on the e2e build twice and on the store zip once. The two R-007 behaviour items (settings contrast, Retry re-writing `metadata.json`) are verified.
 
-For the third, QA checked 44 busy periods with a final hand-off, on the e2e build, the dev build, the store zip and live pixiv. In every one, every other file had finished before the UI came back, the button appeared exactly once, and the bubble listed every file.
-
-One small fix stands between this build and shipping. A pre-existing race between two jobs whose first files reach the offscreen document within about 10 ms can end in a `Saved` button over a folder that has no `metadata.json`. CUJ-1 and CUJ-4 stay at Caveats for that fix only.
-
-The counter's `N / N` that sometimes flashes for one frame is not a defect: the spec line is wrong, not the build. It goes to the owner in R-007 together with five other spec-sync items. The product is converging.
+QA's verdict is FAIL on one LOW in CUJ-1: the folder check also counts this artwork's files under another Downloads location or under a longer earlier pattern, so a repeat run there gets a needless ` (1)`. I judge CUJ-1 Satisfied despite it, for reasons set out below (it errs only in the safe direction, costs one cosmetic suffix in an uncommon case, the tooltip still tells the truth, and no API gives the extension the fact it would need to do better). It goes to the owner as a spec-sync item, R-008, together with the 10 s existence re-check limit. All five CUJs are Satisfied; prd-000 flips to `completed`. 1.0.1 is ready for the release checklist.
 
 ## Per-CUJ Verdict
 
-### CUJ-1: Download an illustration or manga from the artwork page — Caveats
+### CUJ-1: Download an illustration or manga from the artwork page — Satisfied
 
-**QA verdict** (from qa-report.md): FAIL (two `[LOW][BUG]`s: the offscreen creation race on the edge "Same artwork clicked in two tabs", and `N / N` against AC 7)
-**PM verdict**: Caveats
+**QA verdict** (from qa-report.md): FAIL (one `[LOW][BUG]`: the folder check counts files outside `<Downloads>/<folder>/`)
+**PM verdict**: Satisfied
 
 **Assessment**:
-- **Iteration-3 caveat resolved: the bubble now lists the last file.** From QA's "Resolved in iteration 4" table:
-  - `race12-nohold` listed all 13 rows in 16/16 runs on the e2e build, 8/8 on the store zip and 4/4 on the dev build. Before the fix, 3/6 and 5/8 runs missed the last file.
-  - In all 44 final periods, Chrome's `endTime` for every other file was at or before the restore's issue time, by 0–889 ms. Exactly one file was created after the restore (+0 … +6 ms), and the button appeared once (+2 … +25 ms).
-  - The new tests discriminate: on `c2c9de0^` the headed "last files land together" test fails 4/4.
-  - Live, store zip: `cuj-1/run1/r006-live-151116453-walk.json` shows the bubble opening 25 ms after the restore with 8 rows (`151116453_p2.jpg` … `metadata.json`) and `missing: []`.
-- **The fix costs the user nothing visible.** Restore → `Saved` took 19–69 ms (n = 40). Click → `Saved` on a 12-page burst took 133–163 ms.
-- **My iteration-3 exit rule is not needed.** No residual remains, not even at the 2 s cap, so AC 14 stands as written.
-- **Steps 1–8 are green twice** (`cuj1.ts` run1/run2, 60 checks each, 0 failed):
-  - `cuj-1/run1/05b-11-of-12-p11-in-flight-row.png`: `11 / 12` with the ring while p11 is in flight, which is the amended counter top;
-  - `06-saved-row.png`: the outlined `Saved · 12P`, matching `cuj-1-saved-row0.png`;
-  - all 12 originals are sha256-identical to the served bytes;
-  - at most 5 files are in flight;
-  - cancel is silent, with 0 of 1470 toolbar samples visible.
-- **AC 7 (counter) holds within CUJ-1's own scenario.** QA saw `12 / 12` in 0 of 55 single 12-page runs.
+- **The refinement delivers what the owner asked for on 2026-10-27: a second download of the same artwork lands next to the first, not on top of it, with clean file names.** From `cuj-1/run1/folders-series-e2e-walk.json` (26/26 checks; repeated in run2 and 22/22 on the store zip):
+  - run 1 → `pixiv/みずき-135882741/` with `metadata.json` and 12 clean originals, tooltip `Saved to Downloads/pixiv/みずき-135882741`;
+  - run 2 → `pixiv/みずき-135882741 (1)/` with the 13 clean files, the plain folder untouched (names, sizes and mtimes checked), tooltip `Saved to Downloads/pixiv/みずき-135882741 (1)`, `aria-label` `Saved 12 pages to Downloads/pixiv/みずき-135882741 (1). Click to download again.` (steps 8 and AC 11);
+  - run 3 → `(2)`, with no `pixiv (n)/` anywhere (AC 12, AC 14);
+  - run 4, plain folder moved away → plain again, no `(3)`, the moved folder keeps its 13 (AC 13);
+  - runs 5 and 6, gaps → `(1)` re-created, then plain re-used (the "Gaps" edge);
+  - the busy face came 2–3 ms after every click, and the 250 ms re-check wait is invisible on a first run (click → `Saved` 141–157 ms on the store zip against 133–163 ms in iteration 4).
+- **The button face does not change, which is the design.** `cuj-1/run1/08-redownload-row.png` and `fs-e2e-02-second-sibling-1-row.png` show the same outlined `Saved · 12P` as `mocks/cuj-1-saved-again-row0.png`, 164 × 40. The index lives only in the tooltip and the accessible name, as §4.3 specifies. The mock renders the tooltip visibly; the product's native `title` was verified as text.
+- **The edges a real user hits are right:** history cleared → plain folder with per-file ` (1)` names (`fh-e2e-01-after-clear-history`, 26 files, the accepted limitation); files renamed inside the folder → plain again (`fr-e2e-01-after-rename-plain`, with `metadata (1).json` from the safety net, since `metadata.json` had not been renamed); token-free `pixiv` → two artworks share `pixiv/`, the repeat goes to `pixiv (1)/` (`ft-e2e-01-repeat-pixiv-1`); an ugoira repeat → `pixiv/ひなた-136004512 (1)/` with all four files (`folders-ugoira-e2e-walk.json`).
+- **The same-artwork two-tab edge now behaves exactly as the refined spec says:** the second job goes to `(1)` once the first job's originals have begun landing (12 runs at gaps ≥ 49 ms), and shares the folder with per-file suffixes when both choose before either has landed a file (20 runs at gaps ≤ 31 ms; QA's search spy confirmed the choice followed the rule in 8/8).
+- **The iteration-4 caveat is closed.** My exit condition was: `twoTabsProbe.ts` at `CLICK_GAP=0`, same artwork and `SECOND=136120877`, on the e2e build and the store zip, ≥ 8 runs each, both jobs `Saved` and both folders holding `metadata.json`; plus the R-006 regression green. QA's table: 8/8, 8/8, 8/8, 8/8, the 0–800 ms sweep 40/40, the R-006 matrix 137/137 twice, `race12-nohold` 16/16 with 13 rows. `logs/race-diff-e2e.log` shows every run with `metaOk: true`, 22 files, 0 failures, 0 resends. The pre-D16 build fails 7/8 under the same probe, so the probe discriminates.
+- **Everything else in the CUJ is unchanged and green twice** (`cuj1.ts` 62 checks per run, 0 console errors): counter tops at `11 / 12` alone and `Saved · 12P` follows the last file within 2–54 ms (the R-007 AC 7); cancel silent; one animation with the last file and 13 bubble rows; keyboard, focus ring, dark theme on the fake.
 
-**Caveats / gaps**:
-- **The offscreen creation race makes `Saved` untruthful.** It hits the edge "Same artwork clicked in two tabs", which promises "two independent jobs run".
-  - **What QA saw:**
-    - `logs/two-tabs-sweep.log`, second click 5–11 ms after the first: the second job ended `Retry · 4 failed` / `Retry · 5 failed` in 4/4 runs on the e2e build and 2/4 on the store zip (`Retry · 1 failed`), and every failed run was also missing `metadata.json` (e.g. 21 of 26 files on disk). At gaps of 50–800 ms there were 0 failures.
-    - `logs/two-artworks-retry-e2e.log`: after Retry the button reads `Saved · 8P`, with `secondFolderJson: []`.
-  - **What the user is told:**
-    - the tooltip says "failed after 4 attempts each", but no attempt reached pixiv;
-    - the `metadata.json` failure is never mentioned;
-    - after Retry the button says `Saved` while the folder lacks `metadata.json`.
-- **Why I hold this as a product caveat and not only engineering hardening:**
-  1. **Harm class.** This is a false done signal. `metadata.json` is one of the four things the product promises per artwork (§1). After `Saved` the user has no reason to look, so the gap is permanent and silent. The misleading tooltip is minor; the silent folder gap is not.
-  2. **Reachability on live pixiv is not settled.**
-     - The race is between the two jobs' first offscreen commands, not between the clicks. Each job sends its first command only after its pixiv API calls answer through the tab (`resolveJob`, `src/background/engine.ts:362-371`; `apiFetchJson`, `src/background/tab-client.ts:35-50`).
-     - On the fake those calls take milliseconds, so QA's "≥ 50 ms apart is safe" measures a click gap that equals the command gap.
-     - On live pixiv, two clicks a second apart can still collide if the first job's API calls answer about a second slower than the second job's.
-     - That is uncommon, unmeasured and not ruled out. Slower hardware may also widen the window.
-  3. **The fix is small and local**: `src/background/offscreen-client.ts`, Priority 1.
-- **Exit condition, which flips CUJ-1 (and CUJ-4) to Satisfied.** All of the following must hold:
-  - the Priority 1 fix lands;
-  - QA's `twoTabsProbe.ts` at `CLICK_GAP=0`, same artwork and `SECOND=136120877`, on the e2e build and the store zip, ≥ 8 runs each, ends with both jobs `Saved` and both folders holding `metadata.json` (26 files for two 12-page jobs, 21 for 12 + 8);
-  - the R-006 regression checks in Priority 5 stay green.
-- **Pre-decided exit, so this does not loop.** If, after the fix, QA can make a file fail only by interfering with the offscreen document by hand (closing it from DevTools mid-command), I accept that as an engineering item. I will not hold a CUJ for any timing edge that neither loses a file nor misreports an outcome. A `Saved` with a file missing is never a timing edge.
-- **The counter `N / N` is not a caveat.** Five reasons:
-  - **CUJ-1's own job never shows it** (0 of 55 runs).
-  - **It appears only with two jobs at once, or in a 200-page job.** In the DOM it lasts 0–2 ms. It was painted for one frame in 1 of 20 frame-sampled two-job runs (`logs/counter-probe-headed.log`, rep 7) and in 0 of 11 frame-sampled 200-page runs. Nobody perceives a 16 ms label that is replaced at once.
-  - **It is truthful**: N of N pages have landed.
-  - **The build already shows `12 / 12` by design in one place.** During a metadata-only retry the label is `12 / 12` throughout (`src/content/button/model.ts:292`, and `resolveRetryMetadata` sets `pagesOffset` to the page count in `src/background/resolver.ts`). That face is honest and correct, and the absolute AC forbids it.
-  - **The owner never asked for this.** "`12 / 12` is never shown" is the quick-fix's description of a side effect, not a requirement.
-- **No code change for the counter.** Suppressing the late running push would show a stale `N−1 / N` while every page has landed, for example while `metadata.json` waits on a Save dialog. That is less truthful than the flash. The AC is what needs fixing: spec-sync item 1.
-- **Evidence gaps, carried:**
-  - for a second animation shortly after a first in the same profile (re-download, retry), only the single appearance and Chrome's ordering were verified, not the bubble rows (QA "Coverage Gaps");
-  - the logged-in live surface and pixiv's dark theme are NOT_RUN (`docs/release-checklist.md` §3).
+**Caveats / gaps**: none that hold the CUJ. Two limits go to the owner as spec-sync items (R-008); my reasoning on each:
+- **QA's LOW: the folder check is a suffix match on Chrome's absolute path** (`src/shared/folder-choice.ts:18-21`). `cuj-1/run1/folders-dirchange-e2e-2-walk.json`: after the Downloads location moved from A to B, the repeat run in B used `pixiv/みずき-135882741 (1)` although B held no plain folder. `folders-nested-e2e-walk.json`: after a run with the pattern `x/pixiv/{artist}-{id}`, the default pattern's run used `(1)` as well. A pattern that drops a parent folder (`{artist}-{id}` after the default) is the same class and the more likely trigger. I accept this as a limitation rather than a caveat:
+  1. **It errs only in the safe direction.** A suffix match is a superset of the anchored match the PRD describes, so the check can over-suffix but never under-detect. Under-detection is the harmful direction: duplicates mixed into the plain folder as `135882741_p0 (1).jpg`, the pre-refinement behaviour the owner asked to leave. Over-suffixing costs one clean sibling folder with a truthful tooltip.
+  2. **The user is told the truth.** The tooltip and accessible name say `(1)`, and the folder holds every file with clean names. No file is lost, overwritten or misplaced. My iteration-4 rule stands: I hold a CUJ for a false done signal, never for a cosmetic naming edge.
+  3. **No clean fix exists.** The extension cannot read Chrome's download location. Anchoring to a root learned from the extension's own completed downloads would close the longer-pattern case, but the download-location case would still get its one needless suffix (the learned root is stale until a download completes in the new location). A root guessed from the newest download in history can be poisoned by a Save As to another folder and would then under-detect, which is worse than today.
+  4. **The triggers are uncommon**, and both require a repeat download of an artwork the user already has, where "you already have this one" is not a wrong message.
+  The owner may still prefer the partial fix; R-008 offers it as option B, which would reopen prd-000 for that work.
+- **Chrome's 10 s existence re-check limit** (tl, system.md §15 item 1; QA Recommendations 2). Chrome re-checks whether history files still exist at most once per 10 s per profile, and the previous job's own searches start that clock. A repeat click within 10 s of the previous download of this artwork, after its folder was moved away, still sees the records as present and takes the next free `(n)`; QA measured `(2)` instead of the plain folder, 2/2, and the plain folder after 10.5 s in every walk. This is an acceptable limit the spec should state, not a caveat: the normal case (a person moving a folder in Finder or Explorer and clicking again) takes longer than 10 s; the cost is one needless suffix; and no API forces an earlier check. PRD §4.2 and the "First folder moved" edge and AC 13 need the qualifier (R-008 item 2). tl's related fact belongs there too: a folder moved **back** stays flagged removed until Chrome restarts, so the next run uses the plain name plus per-file suffixes, the "history cleared" class.
+- **Evidence gaps, carried** (no pixiv account): the live dark theme and the logged-in live paths are NOT_RUN (`docs/release-checklist.md` §3). Windows backslash paths for the folder regex are unit-tested only (L5).
 
-**Spec gap**:
-- Spec-sync item 1: AC 7's absolute "`12 / 12` is never shown".
-- Spec-sync item 2: the edge "200-page manga: the counter runs `0 / 200` … `200 / 200`" (`prd-000-mvp.md:317`) contradicts AC 7. The build normally ends `199 / 200` → `Saved · 200P` (`logs/counter200-probe-headed.log`).
+**Spec gap**: R-008 items 1 and 2 above. Item 3, minor: the 200-page edge ("`199 / 200`, then `Saved · 200P`") can still hold `200 / 200` in the DOM for an unpainted instant in a lone 200-page job (QA 1 of 2 walks; the mechanism is recorded in design-download-engine.md). I decided in iteration 4 that this needs no probing and no code; one parenthetical makes the edge true as written.
 
 ### CUJ-2: Download an ugoira — Satisfied
 
@@ -82,16 +48,14 @@ The counter's `N / N` that sometimes flashes for one frame is not a defect: the 
 **PM verdict**: Satisfied
 
 **Assessment**:
-- **Walks:** `cuj2.ts` passed twice, R-006 `ugoira` / `ugoira-zip` passed ×2, and live 151105084 passed ×2 on the store zip.
-- **The settle wait adds no visible delay here.** Every other file had finished 187–199 ms before the video's restore. The `.mp4` was created +1 ms after the restore, with one appearance +10 ms after it and 4 bubble rows.
-- **ZIP only:** the done signal comes with `frames.json`, with 3 rows.
-- **Live:** `cuj-2/run1/r006-live-151105084-02-end-pill.png` shows `Saved · MP4` in pixiv's real row. There were 4 rows and one appearance, +7 ms after the restore.
-- **Every AC (1–13) passes in both runs.** The only change in this path is the shared settle wait.
-- **The offscreen race is not a CUJ-2 issue.** An ugoira job could be the second of two simultaneous starts, but that is a concurrency case judged under CUJ-4, and Priority 1 fixes it for every job kind.
+- **Nothing in the ugoira pipeline changed this iteration except the two shared paths**, the folder choice and the offscreen client, and both are verified on this CUJ. `cuj2.ts` passed twice (44 checks each), the R-006 `ugoira` / `ugoira-zip` rows passed headed twice, and the live ugoira 151301221 passed twice (MP4 with H.264, ZIP only).
+- **The repeat case holds for ugoira:** `cuj-1/run1/fu-e2e-01-ugoira-repeat-row.png` shows `Saved · MP4` with the tooltip `Saved to Downloads/pixiv/ひなた-136004512 (1)`, and the `(1)` folder holds `136004512.mp4`, `136004512_ugoira.zip`, `frames.json` and `metadata.json` with clean names. The SW log names the same folder (`records: 2, surviving: 2, chosen: … (1)`).
+- **The one animation with the video / with `frames.json` is unchanged** (R-006 matrix PASS), and the timing and dimension ACs still hold (ffprobe: 4 frames at 40/40/500/40, 601×451 → 600×450).
+- `cuj-2/run1/05-saved-row.png` matches the Saved style; `03-encoding-row.png` matches `cuj-2-encoding-row0.png` as in iteration 4.
 
 **Caveats / gaps**: none in the product. Evidence limit, carried: playback in the VLC GUI and on Windows is L5.
 
-**Spec gap**: spec-sync item 5, carried from iteration 3 (system.md §15 gap 1). A Chrome prompt on the frame zip should be recorded as a known v1 limitation in CUJ-2's edge cases, with the pre-decided response.
+**Spec gap**: none. The Chrome-prompt-on-the-zip limitation is now in the PRD (R-007 item 5).
 
 ### CUJ-3: Configure the extension from the toolbar icon — Satisfied
 
@@ -99,149 +63,59 @@ The counter's `N / N` that sometimes flashes for one frame is not a defect: the 
 **PM verdict**: Satisfied
 
 **Assessment**:
-- **Nothing has changed on this page since iteration 3,** which judged it Satisfied with the full run2 evidence.
-- **QA re-walked run1** (main plus the 4 locales, 0 failed checks, 0 console errors), and all @cuj3 e2e tests pass in both gate runs.
-- **`cuj-3/run1/05-error.png` still shows the R-004 behaviour:**
-  - the red field with `Unknown token {artst}. Available tokens: …`;
-  - `Still using:` and the last valid pattern on one line;
-  - the three sections only, with no Save button.
+- **R-007 item 4 is built and matches the amended spec in both themes.** `cuj-3/run1/contrast-light.png`: the footer links `Reset to defaults` and `Report an issue` render in the darker `#0b6fc2`, and the selected `MP4` segment is a `#0b6fc2` fill with white semibold text, while the switch, the header mark and the chips keep pixiv's `#0096FA`. `contrast-dark.png`: the links are `#0096FA` on `#121212`, the selected segment stays `#0b6fc2` with white text. QA's computed colours and ratios match the PRD exactly (4.82:1, 6.02:1, 5.16:1). The iteration-3/4 contrast gap is closed.
+- **Nothing else on this page changed.** `cuj3.ts` passed twice (main plus the four locales, 72 checks each), with 0 console errors, and the mocks `cuj-3-initial.html` / `-error.html` / `-saved.html` match the shots.
 
-**Caveats / gaps**: none in the product.
+**Caveats / gaps**: none.
 
-**Spec gap**: spec-sync item 4, carried from iteration 3 (system.md §15 gap 2). The same screenshot shows both pairs below the index's 4.5:1 rule:
-- the footer links `Reset to defaults` and `Report an issue`, `#0096FA` on `#f6f7f9`, 2.91:1;
-- the selected `MP4` segment, white on `#0096FA`, 3.11:1.
+**Spec gap**: none.
 
-The build follows CUJ-3's literal colours, so this is a PRD contradiction and not an implementation miss.
+### CUJ-4: Follow several downloads at once from the toolbar badge — Satisfied
 
-### CUJ-4: Follow several downloads at once from the toolbar badge — Caveats
-
-**QA verdict** (from qa-report.md): FAIL (the offscreen creation race, on AC 5)
-**PM verdict**: Caveats
-
-**Assessment**:
-- **The badge, this CUJ's actual job, is fully right.** ACs 1–4 and 6–10 pass in both runs (`cuj4.ts`, 28 checks each, 0 failed).
-  - `cuj-4/run1/02-tab-b-busy-row.png` shows `3 / 8` with the ring, matching `cuj-4-initial-row0.png`.
-  - Also green: `23` with "across 2 downloads", the one-job tooltip, the drop on cancel, `999+`, and recovery after a worker restart.
-- **Iteration-3 caveat resolved: the bubble lists both jobs.**
-  - B ending first and A ending first, ×4 each: in 8/8 runs the bubble lists all 21 names of both jobs, with one appearance in total (+11 / +12 ms). Before the fix, 3 of 4 runs missed a file.
-  - B ends with 0 visible samples.
-  - `r006-two-b-first-both-done-row.png` shows `Saved · 12P` in the Saved style. Its pale fill (computed `rgb(223, 240, 253)`) was captured during the button's 120 ms background transition (`src/content/button/styles.ts:44`) toward the `#e6f4fe` hover tint, with the pointer still on the button. It is not a style defect.
-- **Every other R-006 edge passes:** cancel-after-B is silent, and the restarted worker makes no call at boot.
-
-**Caveats / gaps**:
-- **AC 5 ("Starting a second artwork while one is running begins downloading the second immediately") fails when the two starts coincide.**
-  - `cuj-4/run1/two-artworks-e2e-gap0-1-failed.png` shows 夏祭りの帰り (136120877) at `Retry · 4 failed`. The walk records the tooltip "4 of 8 pages saved. 4 failed after 4 attempts each. Click to retry just those 4.", yet no request reached pixiv. This happened in 6/6 + 2/2 runs.
-  - After Retry, the folder has no `metadata.json` (`logs/two-artworks-retry-e2e.log`).
-  - Concurrent starts are this CUJ's whole premise, so the defect belongs here first. Judgment and reasons are as under CUJ-1.
-- **Exit condition:** as under CUJ-1.
-  - The fix may have the second job wait the few milliseconds the shared document needs to finish loading. That is not "waiting for the other job" in AC 5's sense, and it is acceptable.
-- **The two-job `N / N` is not a CUJ-4 issue.** CUJ-4 names no counter top. It is spec-sync item 1.
-
-**Spec gap**: none beyond item 1.
-
-### CUJ-5: Recover when a download can't start or breaks — Satisfied
-
-**QA verdict** (from qa-report.md): PASS (live logged-in paths NOT_RUN)
+**QA verdict** (from qa-report.md): PASS
 **PM verdict**: Satisfied
 
 **Assessment**:
-- **The amended step 5 holds in all 4 walked retries and in the e2e 'partial' test.**
-  - `cuj-5/run1/05b-retry-11-of-12-row.png` shows `11 / 12` with the ring and badge `1`, then `Saved · 12P` directly.
-  - At `9 / 12` the badge is `3`.
-- **Step 4:** `04-retry-3-failed-row.png` matches `cuj-5-retry-row0.png`. The end is silent (0 of 1300 samples visible), and the next download brings the button back (+21 ms).
-- **R-006 ends:**
-  - the retry brings one animation with p11;
-  - Unavailable makes no call;
-  - `403` and `403-last` behave as §4.1 #3's definition of a final hand-off says.
-- **Every AC (1–16) passes on the fake in both runs**, with 48 checks each and 0 failed.
-- **The intent holds.** Every failure says what happened in the button itself, and no failure end fakes a done signal.
+- **AC 5, the iteration-4 hold, is met.** "Starting a second artwork while one is running begins downloading the second immediately. Neither job waits for the other." `cuj-4/run1/two-artworks-e2e-gap0-1-walk.json`: both clicks 6 ms apart, `Saved · 12P` and `Saved · 8P`, both folders holding `metadata.json`, 22 files, 0 failures, 0 resends. The same in all 16 gap-0 runs on the e2e build and the store zip, in the 20 two-artwork sweep runs, and in the 111 grace-close runs (a second job started about 5 s after a busy period, while `closeDocument` can be in flight). On the pre-D16 build the same probe ends `Retry · 2 failed` (`two-artworks-pred16-gap0-1-failed-row.png`) and, with a slowed close, hangs at `7 / 8` (`grace-pred16-slowclose-off100-B-7_8-row.png`), so the evidence discriminates.
+- **The cost of the fix is as I pre-accepted:** the second job may wait the few milliseconds the shared document needs to start listening (rule b in `src/background/offscreen-client.ts`, `ensureOffscreen` returning the in-flight creation). QA saw 0 resends in 72 e2e-build runs, so on this machine the wait is the creation itself and nothing more. That is not "waiting for the other job" in AC 5's sense.
+- **The badge, this CUJ's actual job, is unchanged and green twice** (`cuj4.ts`, 28 checks each): `23` with "across 2 downloads" (`02-tab-b-busy-row.png` shows `3 / 8` with the ring, matching `cuj-4-initial-row0.png`), the one-job tooltip, the drop on cancel, `999+`, recovery after a worker restart within 61–88 ms.
+- **The same-artwork two-tab edge** reads `24` with "across 2 downloads" and lands the second job in `(1)` once the first's originals have landed, as the refined edge says.
+- **R-006 across two jobs** (one animation in total, B silent while A still has files, a cancelled A ending silently) passes in both headed runs.
+
+**Caveats / gaps**: none.
+
+**Spec gap**: none.
+
+### CUJ-5: Recover when a download can't start or breaks — Satisfied
+
+**QA verdict** (from qa-report.md): PASS (live logged-in paths NOT_RUN, no account)
+**PM verdict**: Satisfied
+
+**Assessment**:
+- **R-007 item 6 is built: `Saved` after a Retry now guarantees every file is on disk.** `cuj-5/run1/meta-01-retry-3-failed-row.png` shows `Retry · 3 failed` in the error style after pages 4, 9, 11 and `metadata.json` all failed (9 pages on disk, no `metadata.json`); after the click, `meta-02-saved-after-retry-row.png` shows `Saved · 12P` and the folder holds all 13 files. The pre-R-007 build `f15466a` ends the same scenario `Saved` without `metadata.json` (2/2), so the new e2e test discriminates. The "only `metadata.json` failed" edge keeps its own copy and writes only `metadata.json` (e2e ×4).
+- **The refined step 5 holds: a Retry stays in the job's own folder, suffix included, with no second folder check.** `meta-03-sibling-retry-3-failed-row.png` → `meta-04-sibling-saved-row.png`: a repeat run that failed 3 pages in `(1)` retried only `(1)/p4, p9, p11` and ended `Saved · 12P` naming `(1)`; one `folder choice` log line in total.
+- **The refined reload edge and step 9 hold:** a partial failure followed by reload and click runs the full job into `(1)` with the partial folder untouched; a mid-job 403, login and click lands in `(1)`.
+- **Everything else is unchanged and green twice** (`cuj5.ts`, 48 checks each): the pre-emptive `Log in to download` on R-18 and walled works, the four cause tooltips, `Unavailable`, `Retry · MP4` after an encode failure, the floating fallback, and the R-006 ends (`retry3`, `403`, `403-last`, `unavailable`).
+- **The intent holds:** every failure says what happened in the button itself, and after this iteration no end state fakes a done signal.
 
 **Caveats / gaps**: none in the product. Evidence gap, carried: AC 2 / AC 4 after a real login, R-18 display off, and the stale-page probe are NOT_RUN (`docs/release-checklist.md` §3).
 
-**Spec gap**:
-- **Item 3, carried:** the §4.1 #3 parenthetical and CUJ-5 step 9 wording for a mid-job 403.
-- **Item 6, new: a Retry after the pages and `metadata.json` both failed ends `Saved` without `metadata.json`.**
-  - Step 5 says "`metadata.json` is not written again", which assumes it landed.
-  - The build follows the step:
-    - `classifyOutcome` returns `partial` before it looks at `metadata.json` (`src/shared/outcome.ts:100-104`);
-    - `resolveRetryPages` writes only pages (`src/background/resolver.ts:181-204`).
-  - Today the only known trigger is the CUJ-1/CUJ-4 race, so Priority 1 removes it. The spec change closes the class, e.g. a disk error on `metadata.json` next to network failures on pages.
-  - It is not a CUJ-5 caveat: the literal step is met, and the trigger is judged under CUJ-1/CUJ-4.
-  - The "after 4 attempts each" tooltip is true for every failure that goes through the retry policy. The 0-attempt failures come only from the race and disappear with the fix, so no copy change is needed.
+**Spec gap**: none.
 
-## Spec-sync batch (R-007)
+## Spec-sync batch (R-008)
 
-For the owner through `docs/owner-queue.md` R-007. Once it is approved, pm applies the batch in the next Phase 1, as with R-004. Items 1–3 and 5 are wording only. Items 4 and 6 need a small code change after approval.
+For the owner through `docs/owner-queue.md` R-008. All three are wording that records a limit the build has; none changes behaviour. Once approved, pm applies them in the next Phase 1, as with R-004 and R-007.
 
-1. **Counter (CUJ-1 AC 7, CUJ-5 step 5). No code change.**
-   - **CUJ-1 AC 7** becomes: "During the job the label reads `N / 12`, where N counts the originals that have completed. N never decreases, and `metadata.json` never changes it. In a job running on its own, the last original is handed to Chrome only after every other file has finished, so the label tops out at `11 / 12`, and the last original's landing turns the button to `Saved · 12P` directly. When other files are still finishing at that moment (for example a second job's, CUJ-4), `12 / 12` may show for an instant first. Either way `Saved · 12P` follows the job's last file within 300 ms."
-   - **CUJ-5 step 5 "User sees"** becomes: "The busy state continues from the earlier count, `9 / 12` → `11 / 12`, and the badge shows `3`. On success the last retried page turns the button to `Saved · 12P` directly, under CUJ-1's counter rule. If some still fail, `Retry · N failed` returns with updated numbers."
-   - **Why:** QA can test the rule as written, it is true in every case QA measured, and it allows the honest `12 / 12` of a metadata-only retry.
-2. **200-page edge (CUJ-1, `prd-000-mvp.md:317`). No code change.** "`0 / 200` … `200 / 200`" becomes "the counter runs `0 / 200` … `199 / 200`, then `Saved · 200P` (the counter rule in the acceptance criteria)".
-3. **A 403 mid-job (§4.1 #3, CUJ-5 step 9), carried from iteration 3 (3a). No code change.**
-   - In §4.1 #3's list of ends without a final hand-off, "needed login after a mid-job 403" becomes "needed login after a 403 with no other file still on its way to Chrome".
-   - Add to CUJ-5 step 9 "User sees": "Files already on their way to Chrome when the 403 arrived still land. The last of them brings the job's one animation, so Chrome's downloads button can be back while the button reads `Log in to download`. If none was on its way, the end is silent (4.1 #3)."
-4. **Settings-page contrast (CUJ-3 steps 7 and 10, the dark-theme edge, the index "Contrast" claim), carried from iteration 3 (3b).** Apply the R-004 S2 rule; do not widen the pixiv-blue exemption.
-   - **Text colours:**
-     - links `#0b6fc2` in light mode (4.82:1 on `#f6f7f9`) and `#0096FA` in dark mode (6.02:1 on `#121212`);
-     - the selected segment filled `#0b6fc2` with white semibold text (5.16:1) in both modes.
-   - **Non-text blues stay `#0096FA`:** the switch, focus rings, the header mark and the chip hover.
-   - **Docs:** update `cuj-3-initial.html`, `cuj-3-error.html` and `cuj-3-saved.html`, and correct the index sentence "the colours specified in PRD-000 (§4.7.3, CUJ-3) pass it".
-   - **Code:** `src/options/options.css`, one text-accent variable for `.link` and `.seg button[aria-pressed='true']`.
-5. **A Chrome prompt on the ugoira frame zip (CUJ-2 edge cases), carried from iteration 3 (3c). No code change.**
-   - Add the known v1 limitation: "If Chrome holds the frame zip for a decision (dangerous-file or deep-scan prompt), `frames.json` and the video wait for it. The button stays busy, and Chrome's download UI stays hidden, until the user acts on the zip in `chrome://downloads`. Cancel ends the job as usual."
-   - Pre-decided response if L5 ever observes it: restore the UI as soon as `downloads.onChanged` reports a `danger` value that needs a decision for a running job's file.
-6. **A Retry after the pages and `metadata.json` both failed (CUJ-5 step 5 and edge cases). New.**
-   - **Step 5 "System response":** "`metadata.json` is not written again" becomes "`metadata.json` is written again only if it did not land in the earlier run. The label and tooltip do not mention it."
-   - **New edge:** "**Pages and `metadata.json` both failed**: the button shows `Retry · N failed` with the usual tooltip (`metadata.json` is not a page). Retry re-writes the failed pages and `metadata.json`, so `Saved · 12P` always means every file of the job is on disk."
-   - **Code, in three places:**
-     - `src/shared/outcome.ts` row 6 records whether `metadata.json` landed;
-     - `src/content/button/model.ts` `startRequest` passes that on;
-     - `src/background/resolver.ts` `resolveRetryPages` adds `metadata` when asked (with the illust body, as `resolveRetryMetadata` does).
-   - The counter and badge are unchanged.
-   - **Rejected:** a tooltip sentence about `metadata.json`. It adds copy for a case that is near-impossible after Priority 1, and the Retry repairs the folder anyway.
+1. **Folder-check scope (§4.3 "Folder choice", the "Present" bullet; CUJ-1 AC 13 family). No code change.** Add: "The check matches the folder as the last segments of each record's path, because the extension cannot read Chrome's download location. A record of this artwork in the same folder name under another Downloads location (the user changed Chrome's download location), or under a longer earlier pattern whose folder ends with the current one (e.g. `x/pixiv/{artist}-{id}` before `pixiv/{artist}-{id}`), therefore also counts, and the run takes the next free `(n)` although the plain folder is free. One needless suffix with clean names inside; the check never fails the other way. Accepted limitation." Alternative the owner may choose instead: tl's root-anchoring fix (learn the Downloads root from the extension's own completed downloads and anchor the regex there), an iteration-6 code task that closes the longer-pattern case only; the location-change case keeps its one needless suffix. Choosing it reopens prd-000.
+2. **The 10 s existence re-check (§4.2; CUJ-1 edge "First folder moved, renamed or deleted before the repeat click"; AC 13). No code change.** §4.2: after "The re-check is asynchronous and takes at most a few hundred ms", add "and Chrome runs it at most once every 10 s per profile; a search inside that window returns the flags as they were." The edge and AC 13 gain "at least 10 s after the previous download of this artwork": a repeat click sooner than that after the folder was moved away may still take the next free `(n)`. Also record: a folder moved back stays flagged removed until Chrome restarts, so the next run uses the plain name and the per-file safety net, as after a history clear.
+3. **The 200-page edge (CUJ-1 edge cases). No code change.** "`0 / 200` … `199 / 200`, then `Saved · 200P`" gains "(an unpainted instant of `200 / 200` can occur; the counter rule in the acceptance criteria)".
 
 ## Recommended Next-Iteration Priorities
-1. **[tl design, then coder] Fix the offscreen creation race.** This flips CUJ-1 and CUJ-4.
-   - **Behaviour:** no file fails because the offscreen document is still being created, or is closing, when a job's command arrives.
-   - **Change, `src/background/offscreen-client.ts`:**
-     - `ensureOffscreen()` returns the in-flight `creating` promise whenever one exists, *before* asking `chrome.runtime.getContexts`.
-     - `send()` treats "Receiving end does not exist" as "not ready yet": re-ensure and resend under a short bounded wait, not one immediate resend. tl picks the bound, ≤ 1 s, or a readiness handshake from the document. Only after the bound does the command fail as `internal`.
-     - The same path covers a job that starts while `scheduleClose()`'s `closeDocument()` (after `OFFSCREEN_CLOSE_GRACE_MS`, 5 s) is in flight.
-   - **Design doc:** record the rule in design-offscreen-worker.md "Lifecycle".
-   - **Tests (L2 integration):**
-     - two jobs whose first commands arrive while `createDocument` is pending and the context is already listed: both end `saved`, with no `internal` failure;
-     - a command sent while `closeDocument` is in flight is resent, not failed.
-     - Mutation check: removing the `creating` short-circuit fails the first test.
-   - **Done when:** the exit condition under CUJ-1 is met, and Priority 5a–c are green.
-2. **[owner → pm → coder] The spec-sync batch, R-007.**
-   - On approval, pm applies the six items in Phase 1, and the coder builds items 4 and 6.
-   - This does not gate Priority 1 or the closure of prd-000. If R-007 is still open when Priority 1 passes, I flip prd-000 to `completed` and record QA's counter LOW as the spec over-statement in item 1.
-   - Items 4 and 6 change behaviour, so approving them later reopens the PRD (`completed → active`) for that work.
-3. **[coder, in parallel with 1] ENG-013 (P2, test-only):** the three `othersSettled()` unit tests in `test/unit/background/engine-download-ui.test.ts`, as specified in `docs/eng-backlog.md`. It touches different files from Priority 1.
-4. **[tl, design docs]**
-   - **design-download-engine.md "Progress counter", "When `N / N` can still show" (`:377-380`), and Open Questions (`:1090`):** replace the account with QA's measured mechanism:
-     - the earlier completion's `push` runs after its `release` round trip and reads a record the last completion has already updated;
-     - add the metadata-only retry's deliberate `12 / 12`.
-   - **After R-007:** close system.md §15 gaps 1–3 and add the item-6 retry rule.
-   - **Not recommended:** a counter code change (reasons under CUJ-1). Only if the owner rejects item 1 does tl design one. It must never show a count lower than what has landed.
-5. **[qa] Verification next cycle.**
-   - **a. The race:** `twoTabsProbe.ts` at `CLICK_GAP=0`, same artwork and `SECOND=136120877`, on the e2e build and the store zip, ≥ 8 runs each. Every run ends with both jobs `Saved` and both folders holding `metadata.json`. Also re-run the 0–800 ms gap sweep.
-   - **b. The grace-close edge:** a second job started about 5 s after a busy period ended (`OFFSCREEN_CLOSE_GRACE_MS`), swept ±50 ms. Expect 0 failures.
-   - **c. Regression, since every offscreen command passes through the changed code:**
-     - the headed R-006 matrix (one appearance per busy period, silent ends unchanged);
-     - `race12-nohold` ×8 on the store zip (all 13 rows);
-     - click → `Saved` on a 12-page burst, reported against this run's 133–163 ms.
-   - **d. After R-007 items 4 and 6 land:**
-     - CUJ-3 against the updated mocks, with the computed colour and contrast for the links and the selected segment in both themes;
-     - CUJ-5 with injected failures on `metadata.json` and 3 pages: after Retry the folder holds `metadata.json` and the button reads `Saved · 12P`.
-   - **e. After item 1 lands:** judge the counter against the amended AC. No further millisecond probing of `N / N` is needed.
-6. **[release, owner-run before Web Store submission; not a loop gate]** `docs/release-checklist.md`:
-   - **§2's R-006 item,** including the re-download served from the HTTP cache and the Windows Enhanced Safe Browsing ugoira-zip check;
-   - **§3's logged-in checks;**
-   - **§6, making the repository public (R-001).**
-   - **New for tl to add to §2:** on live pixiv, click Download on two artworks in two tabs as fast as you can switch, five times. Both folders must hold `metadata.json` every time. This is the branded-Chrome confirmation of Priority 1.
+1. **[owner] R-008**: approve the three-item spec-sync batch (recommended, option A), or choose option B to have the folder-check fix built. On A, pm applies the wording in Phase 1 and nothing is coded. On B, tl designs the root-anchoring change in `src/shared/folder-choice.ts` / `src/background/folder-choice.ts` (anchor only to a root learned from the extension's own completed downloads, never a guessed one; the fix must be shown never to under-detect), with the deterministic repro `cuj1folders.ts SECTIONS=nested,dirchange` as the acceptance check for the nested case.
+2. **[release, owner-run] Ship 1.0.1.** `docs/release-checklist.md`: bump `package.json` to `1.0.1` (line 7), `npm run zip`, and run §2 including its two new items (the repeat download landing in `<folder> (1)/` with clean names on real Chrome history, and the two-tabs ×5 `metadata.json` check that confirms D16 on branded Chrome) and §3's logged-in checks (CUJ-5 AC 2 / AC 4 / AC 9, CUJ-1 AC 20 dark theme). The release note should name the two user-visible changes: repeat downloads go to a sibling folder; two downloads started at the same instant no longer fail files.
+3. **[tl, design docs, after R-008]** Close system.md §15 item 1 and fold the folder-check scope limit into design-download-engine.md "Folder choice" (the table row for records outside the Downloads root), so the next review has nothing to carry.
+4. **[qa, next cycle, only if option B is chosen]** Re-run `cuj1folders.ts` with `SECTIONS=nested,dirchange` and the full `folders-series` walk on both builds; expect the plain folder in the nested case, and no regression in the six-run series. Nothing else needs re-verification: no other code path is touched.
+5. **[pm, after R-008 wording lands]** No further review is needed for prd-000 unless option B reopens it. The next product work, if any, is a new PRD (candidates the owner has parked: a ZIP-per-artwork option, a folder picker outside Downloads), through `/design-feature`.
 
 ## PRD Lifecycle Changes (if any)
-- None. prd-000-mvp stays `active`, because CUJ-1 and CUJ-4 are Caveats. It closes when Priority 1 meets the exit condition; R-007 does not gate the flip.
+- prd-000-mvp: `active → completed` — all five CUJs Satisfied this iteration. The flip is in the PRD's frontmatter. R-008 does not gate it: items 1–3 are wording. If the owner chooses R-008 option B (build the folder-check fix), the PRD reopens `completed → active` for that work.

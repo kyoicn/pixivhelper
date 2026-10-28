@@ -1,7 +1,7 @@
 ---
 id: prd-000
 title: Helper for Pixiv MVP
-status: active
+status: completed
 created: 2026-10-08
 deprecation_reason:
 ---

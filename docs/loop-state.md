@@ -1,40 +1,37 @@
 # Dev Loop State
 
-Last updated: 2026-10-23 23:58:55 (UTC-7)
-Iteration: 4
-Status: continue
+Last updated: 2026-10-28 01:32:37 (UTC-7)
+Iteration: 5
+Status: done
 
 ## Last Cycle Summary
-- Tasks executed: 1 (ENG-012 test pins), merged, 0 failed; plus the between-cycles quick-fix c2c9de0 (bubble-misses-last-file LOW)
-- CUJs passed QA: 3 of 5 (0 unimplemented) — CUJ-2, CUJ-3, CUJ-5 PASS; CUJ-1, CUJ-4 FAIL with LOW-only findings
-- Tests passing: 3066 unit/integration (67 files) + 146 e2e (6 headed-only skipped headless; headed toolbar 6/6) + 4/4 live ×2
+- Tasks executed: 6 (two groups: D15 folder choice, D16 offscreen readiness, ENG-014 test doubles, L2/fake tests, e2e sibling-folder + D16 suites, ENG-013 settle-wait tests), all merged, 0 failed; tl review 0 critical (docs/code-review.md)
+- CUJs passed QA: 4 of 5 (0 unimplemented) — CUJ-2, CUJ-3, CUJ-4, CUJ-5 PASS; CUJ-1 FAIL with one LOW
+- Tests passing: 3305 unit/L2 (vitest) + 162 e2e (6 headed-only skipped headless; headed toolbar 6/6) + 4/4 live ×2
 - Tests failing: 0
 - QA inner loops used: 0
-- CUJs completed this cycle (PM Satisfied): CUJ-2, CUJ-3, CUJ-5 (unchanged)
-- CUJs remaining: 2 (CUJ-1, CUJ-4 — PM Caveats for the offscreen creation race only)
-- ENG entries completed this cycle: ENG-012
-- ENG entries open: 1 (0 blocking) — ENG-013 P2 test-only (othersSettled search-fallback + cross-job unit tests)
-- Routed issues: taken none / closed none / still open 0
-- Owner sweep: queue was empty at setup; pm filed R-007 (spec-sync batch of 6) at review — open, no default
+- CUJs completed this cycle (PM Satisfied): CUJ-1 (refined 2026-10-27), CUJ-4 — both out of Caveats; CUJ-2, CUJ-3, CUJ-5 unchanged. All 5 Satisfied; prd-000 flipped to `completed`
+- CUJs remaining: 0
+- ENG entries completed this cycle: ENG-013, ENG-014
+- ENG entries open: 0 (0 blocking)
+- Routed issues: taken none / closed none / still open 0 (Issue 2026-10-27-19-58-31 was refined through /design-feature before this cycle and is closed)
+- Owner sweep: queue empty at setup; pm filed R-008 (prd-000 spec-sync batch of 3) at review — open, no default
 
 ## QA Gate
 - Verdict: FAIL (LOW only → proceeded)
 - Fabrications found: 0 (none)
-- Bugs by severity: CRITICAL 0 / HIGH 0 / MEDIUM 0 / LOW 2
-  - [LOW][BUG] CUJ-1/CUJ-4: offscreen-document creation race when two jobs start within ~10 ms (second job's metadata.json + first pages fail with 0 attempts; "4 attempts" tooltip misleading; after Retry the folder lacks metadata.json with no report). 14/16 at 5–11 ms gap, 0/36 at ≥50 ms on the fake; live reachability unmeasured (API latency, not click gap, sets the race). src/background/offscreen-client.ts ensureOffscreen()/send(), engine.ts ~180–200. Pre-existing.
-  - [LOW][BUG] CUJ-1: pages counter shows N / N in the DOM for 0–2 ms before Saved in two-job and 200-page cases (painted once in 20 two-job runs; never in single 12-page jobs). PM: not a caveat; the AC wording should change (R-007 item 1), no code change.
-- Resolved this cycle: iteration-3 LOW (bubble missing the last file) — 44/44 busy periods ordered correctly across e2e, dev, store-zip and live builds
-- Not run: logged-in live paths (no pixiv account) — docs/release-checklist.md §3
+- Bugs by severity: CRITICAL 0 / HIGH 0 / MEDIUM 0 / LOW 1
+  - [LOW][BUG] CUJ-1: `folderCheckRegex` (src/shared/folder-choice.ts) is a suffix match on Chrome's absolute path, so a record under a previous Downloads location or an earlier longer pattern (`x/pixiv/{artist}-{id}`) makes the next run take `<folder> (1)` although `<Downloads>/<folder>/` is absent. Cosmetic: nothing lost or overwritten. PM: not a caveat; R-008 decides between recording it as a §4.3 limitation (A) and a root-anchored check (B).
+- Resolved this cycle: both iteration-4 LOWs — the offscreen creation race (D16: 32/32 at click gap 0 on both builds, sweep 40/40, pre-fix build 1/8) and the `N / N` counter (spec via R-007 item 1)
+- Spec note, not a bug: Chrome rate-limits the download-existence re-check to once per 10 s per profile, so a repeat click within 10 s of moving the first folder away takes `(2)`; PRD §4.2 / CUJ-1 moved edge omit this (system.md §15 item 1) — R-008 item 2
+- Not run: logged-in live paths (no pixiv account), Windows backslash paths, branded Chrome — docs/release-checklist.md §2/§3
 
 ## Blocker (if status = blocked)
 none
 
 ## Next Focus
-Planner priority order (from docs/pm-review.md iteration 4):
-1. [tl → coder] Fix the offscreen creation race in src/background/offscreen-client.ts: ensureOffscreen() returns the in-flight creating promise before calling getContexts; send() treats "Receiving end does not exist" as not-ready-yet with a bounded wait (≤ 1 s) and resend (also covers a job starting during the 5 s grace close); record in design-offscreen-worker.md "Lifecycle"; L2 tests for two jobs starting during creation and a command during close, with a mutation check. Exit: twoTabsProbe.ts at CLICK_GAP=0, same and different artworks, e2e build and store zip, ≥ 8 runs each → both jobs Saved with metadata.json; R-006 regressions green.
-2. [owner → pm → coder] R-007 spec-sync batch (6 items; see docs/pm-review.md "Spec-sync batch (R-007)"): counter wording; the 200-page edge line; mid-job 403 wording; settings contrast (#0b6fc2 links + selected segment, three cuj-3 mocks, options.css); ugoira-zip prompt as a known v1 limitation; Retry after pages + metadata.json both failed must re-write metadata.json (outcome.ts, model.ts startRequest, resolver.ts resolveRetryPages).
-3. [coder, parallel with 1] ENG-013 (P2, test-only).
-4. [tl] design-download-engine.md "When N / N can still show" → QA's measured mechanism + the metadata-only retry's 12 / 12; close §15 gaps 1–3 after R-007.
-5. [qa] race probe at CLICK_GAP=0 both builds ≥ 8 runs + 0–800 ms sweep; grace-close edge (second job ~5 s after a busy period, ±50 ms); regression: headed R-006 matrix, race12-nohold ×8 on the store zip, click→Saved 133–163 ms; after R-007 items 4/6: CUJ-3 colours both themes, CUJ-5 with injected metadata.json + page failures.
-6. [owner, not a loop gate] docs/release-checklist.md §2 (R-006 item, Windows ESB ugoira check, new: two artworks in two tabs ×5 on live pixiv → both folders hold metadata.json), §3 logged-in checks, §6 make the repo public (R-001).
-Owner decisions never park here: R-007 is in docs/owner-queue.md.
+No CUJ work remains in prd-000. From docs/pm-review.md iteration 5:
+1. [owner] Answer R-008 in docs/owner-queue.md (A recommended: wording only). On A, pm applies the three amendments via /spec-sync. On B, tl designs the root-anchored folder check (root learned from the extension's own completed downloads, never guessed; must never under-detect) and prd-000 reopens for one iteration; qa re-runs `cuj1folders.ts` nested/dirchange on both builds.
+2. [release, owner-run] Ship 1.0.1: bump package.json, `npm run zip`, release-checklist §2 (incl. the repeat-download and two-tabs ×5 items) and §3 logged-in checks; release note names the two user-visible changes (sibling folder on repeat, race fix). Push main first — commits since 5ea4c27 are not on origin.
+3. [tl, after R-008] Close system.md §15 item 1; fold the folder-check scope limit into design-download-engine.md "Folder choice".
+4. [pm] Next product work is a new PRD via /design-feature.
