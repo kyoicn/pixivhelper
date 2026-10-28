@@ -14,6 +14,8 @@
 //   - one click saves every page, each file the size of the Content-Length i.pximg.net sends to a
 //     HEAD request with `Referer: https://www.pixiv.net/` (validates the DNR Referer rule);
 //   - metadata.json has the 12 keys of PRD §4.3 in order;
+//   - a click on Saved saves every file again into `<folder> (1)/` with clean names, and the
+//     tooltip names `(1)` (CUJ-1 step 8, D15: Chrome's real download history);
 // - an all-ages work behind pixiv's login wall (R-003): `Log in to download` before any click, and
 //   the click opens pixiv login with the page as return_to. This is the drift alarm for the §8.5
 //   signal; skipped with a logged reason when no walled all-ages work can be found;
@@ -434,6 +436,23 @@ test.describe('L4 live smoke against the real pixiv', { tag: '@live' }, () => {
       expect(file?.size).toBe(await contentLength(url));
     }
     await expectMetadata(harness, folder, work.id, pageCount);
+
+    // CUJ-1 step 8 (D15): a click on Saved saves everything again into the sibling folder, with
+    // clean names, found through Chrome's real download history.
+    await clickButton(page);
+    const sibling = `${folder} (1)`;
+    const first = listing.map((file) => file.path).sort();
+    const again = [...names, 'metadata.json'].map((name) => `${sibling}/${name}`);
+    const downloads = harness.downloads;
+    await expect
+      .poll(async () => (await downloads.files()).map((file) => file.path).sort(), {
+        timeout: SAVE_TIMEOUT_MS,
+      })
+      .toEqual([...first, ...again].sort());
+    await expect
+      .poll(async () => (await buttonView(page)).title, { timeout: SAVE_TIMEOUT_MS })
+      .toBe(`Saved to Downloads/${sibling}`);
+    expect((await buttonView(page)).text).toBe(`Saved${hint}`);
 
     expect((await buttonView(page)).ariaBusy).toBeNull();
     expect(await harness.swEval(() => chrome.action.getBadgeText({}))).toBe('');

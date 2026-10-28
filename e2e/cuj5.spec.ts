@@ -545,12 +545,24 @@ test.describe('CUJ-5: recover when a download can’t start or breaks', { tag: '
     await page.reload();
     await exposeButton(page);
     await waitForText(page, 'Download · 12P');
+    const partial = await downloadedPaths(harness);
+    expect(partial).toEqual(
+      artworkFiles(
+        EXAMPLE,
+        FOLDER,
+        ALL_PAGES.filter((p) => p !== 7),
+        true,
+      ),
+    );
     await clickButton(page);
-    await settle(page, 'Saved · 12P');
-    const paths = await downloadedPaths(harness);
-    expect(paths).toContain(`${FOLDER}/135882741_p7.png`);
-    expect(paths).toContain(`${FOLDER}/135882741_p0 (1).jpg`);
-    expect(paths).toContain(`${FOLDER}/metadata (1).json`);
+    const saved = await settle(page, 'Saved · 12P');
+    // The new full job finds the 11 landed pages, so it saves everything into the sibling folder
+    // with clean names and leaves the partial folder as it is (PRD CUJ-5 edge "Partial failure,
+    // then reload").
+    expect(saved.title).toBe(`Saved to Downloads/${FOLDER} (1)`);
+    expect(await downloadedPaths(harness)).toEqual(
+      [...partial, ...artworkFiles(EXAMPLE, `${FOLDER} (1)`, ALL_PAGES, true)].sort(),
+    );
   });
 
   // PRD CUJ-5 step 6, accepted cost: the job's API calls answered, so this reads as a server
@@ -578,6 +590,7 @@ test.describe('CUJ-5: recover when a download can’t start or breaks', { tag: '
     server.clearFaults();
     await clickButton(page);
     await settle(page, 'Saved · 12P');
+    // Only metadata.json had landed; the folder check never consults it (PRD §4.3 "Folder choice").
     expect(await downloadedPaths(harness)).toEqual(
       [...artworkFiles(EXAMPLE, FOLDER, ALL_PAGES, true), `${FOLDER}/metadata (1).json`].sort(),
     );
@@ -880,14 +893,13 @@ test.describe('CUJ-5: recover when a download can’t start or breaks', { tag: '
     await exposeButton(page);
     await waitForText(page, 'Download · 12P');
     await clickButton(page);
-    await settle(page, 'Saved · 12P');
-    const after = await downloadedPaths(harness);
-    for (const p of ALL_PAGES) {
-      const name = fileName(EXAMPLE, p);
-      const dup = name.replace(/(\.\w+)$/, ' (1)$1');
-      expect(after.includes(`${FOLDER}/${name}`), name).toBe(true);
-      expect(after.includes(`${FOLDER}/${dup}`), dup).toBe(onDisk.includes(`${FOLDER}/${name}`));
-    }
+    const saved = await settle(page, 'Saved · 12P');
+    // The earlier files are still present, so the new job lands in the sibling folder with clean
+    // names; the first folder keeps what it had (PRD CUJ-5 step 9, §4.3 "Folder choice").
+    expect(saved.title).toBe(`Saved to Downloads/${FOLDER} (1)`);
+    expect(await downloadedPaths(harness)).toEqual(
+      [...onDisk, ...artworkFiles(EXAMPLE, `${FOLDER} (1)`, ALL_PAGES, true)].sort(),
+    );
   });
 
   test('badge in error states: a failed job shows no badge, another running job keeps counting', async ({

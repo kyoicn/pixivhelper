@@ -1024,16 +1024,17 @@ test.describe('CUJ-2: download an ugoira', { tag: '@cuj2' }, () => {
     expect((await readPill(page)).text).toBe(`Saved · ${label}`);
     expect(await filePaths(harness)).toEqual(expectedPaths(EXAMPLE, format));
 
-    // The next click snapshots the new setting: ZIP only, so no second video.
+    // The next click snapshots the new setting: ZIP only, so no second video. The first run's
+    // files are still there, so it goes to the sibling folder (PRD §4.3 "Folder choice").
     const second = await runJob(harness, page);
     expect(second.end.text).toBe('Saved · ZIP');
-    const folder = folderOf(EXAMPLE);
+    const sibling = `${folderOf(EXAMPLE)} (1)`;
     expect(await filePaths(harness)).toEqual(
       [
         ...expectedPaths(EXAMPLE, format),
-        `${folder}/${EXAMPLE.id}_ugoira (1).zip`,
-        `${folder}/frames (1).json`,
-        `${folder}/metadata (1).json`,
+        `${sibling}/${EXAMPLE.id}_ugoira.zip`,
+        `${sibling}/frames.json`,
+        `${sibling}/metadata.json`,
       ].sort(),
     );
   });

@@ -17,18 +17,31 @@
 // | 10 SPA away and back shows Saved; reload shows `Download · 12P`            | 'saved'; with a job     |
 // |    (edge cases: SPA away and back, or a reload, mid-job show the live job) | running: 'mid-job       |
 // |                                                                            | navigation'             |
-// | 11 Clicking Saved downloads again as ` (1)` duplicates                     | 're-download'           |
-// | 12 Closing the tab does not stop the job                                   | 'tab closed'            |
-// | 13 Badge = pages not yet complete, gone at the end                         | 'counter and badge'     |
-// | 14 Tab / Enter / Space, 2 px #0096FA focus ring, aria-busy while busy      | 'keyboard'              |
-// | 15 Dark theme: identical fill, text, icon (focus ring #5fb9fb)             | 'dark theme'            |
-// | 16 Pattern changed mid-job: running job keeps its folder (also CUJ-3 AC    | 'settings mid-job'      |
+// | 11 Clicking `Saved · 12P` saves every file again into `<folder> (1)/`      | 're-download' (second   |
+// |    with clean names; the first folder unchanged; face `Saved · 12P`,       | click)                  |
+// |    tooltip and aria-label name `(1)`                                       |                         |
+// | 12 A third run lands in `<folder> (2)/`                                    | 're-download' (third)   |
+// | 13 First folder moved or deleted → the plain folder again, no new `(n)`    | 're-download' (moved)   |
+// | 14 No parent folder of the pattern ever gets a ` (n)` suffix               | 're-download' (third,   |
+// |                                                                            | moved)                  |
+// | 15 History erased, files on disk → the plain folder with `p0 (1).jpg` …    | 're-download' (history  |
+// |    and `metadata (1).json` (accepted limitation)                           | erased)                 |
+// | 16 Closing the tab does not stop the job                                   | 'tab closed'            |
+// | 17 Badge = pages not yet complete, gone at the end                         | 'counter and badge'     |
+// | 18 Tab / Enter / Space, 2 px #0096FA focus ring, aria-busy while busy      | 'keyboard'              |
+// | 19 Dark theme: identical fill, text, icon (focus ring #5fb9fb)             | 'dark theme'            |
+// | 20 Pattern changed mid-job: running job keeps its folder (also CUJ-3 AC    | 'settings mid-job'      |
 // |    "Changing a setting while a download runs …" for folder and metadata)   |                         |
+// | Edge: gaps in the suffix series → the lowest free n                        | 're-download' (gap)     |
+// | Edge: token-free pattern `pixiv`: artworks share `pixiv/`; a repeat of     | 're-download'           |
+// |       the same artwork → `pixiv (1)/`                                      | (token-free)            |
+// | (design) one `folder choice` debug line per job that found files of the    | every 're-download'     |
+// |          artwork; never `folder check failed`                              | test                    |
 //
 // Files in flight are held with server.hold(): originals trickle until released, so a job can be
 // stopped at any count without the e2e build's 300 ms stall timeout failing it.
 
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { pageBytes } from './fixtures/assets';
 import { artworkUrl, originalUrl, requireWork, type IllustWork } from './fixtures/works';
@@ -45,9 +58,11 @@ import {
   openArtwork,
   pagesOf,
   range,
+  recordSwLog,
   restingView,
   TRANSITION_MS,
   uiCalls,
+  type SwLogLine,
 } from './harness/flows';
 import {
   buttonCenter,
@@ -64,6 +79,7 @@ import {
   recordHostConnection,
   waitForText,
   watchLabels,
+  type ButtonView,
 } from './harness/hfp-button';
 import type { Page } from '@playwright/test';
 import type { Harness } from './harness/launch';
@@ -92,8 +108,75 @@ const BLUE = 'rgb(0, 150, 250)';
 const WHITE = 'rgb(255, 255, 255)';
 const CANCEL_GRAY = 'rgb(60, 64, 67)';
 
+/** A parent folder with a ` (n)` suffix, e.g. `pixiv (1)/…`: no run ever writes one (PRD CUJ-1 AC). */
+const PARENT_SUFFIX = /^pixiv \(\d+\)\//;
+/** Long enough for a 12-page job on the fake server, which takes about 1 s. */
+const SAVE_TIMEOUT = { timeout: 10_000 };
+
 function expectedFiles(folder: string, pages: readonly number[], metadata: boolean): string[] {
   return artworkFiles(EXAMPLE, folder, pages, metadata);
+}
+
+/** The example's 13 files in each run `ns` (0 = the plain folder, n = `<folder> (n)`), sorted. */
+function runFiles(...ns: number[]): string[] {
+  return ns
+    .flatMap((n) => expectedFiles(n === 0 ? FOLDER : `${FOLDER} (${n})`, ALL_PAGES, true))
+    .sort();
+}
+
+/**
+ * Clicks the example's button (idle or Saved) and waits until the downloads directory holds
+ * exactly `expected` and the button reads `Saved · 12P` with its tooltip naming `folder`. Returns
+ * the resting view.
+ */
+async function saveExample(
+  harness: Harness,
+  page: Page,
+  folder: string,
+  expected: readonly string[],
+): Promise<ButtonView> {
+  await clickButton(page);
+  await expect.poll(() => downloadedPaths(harness), SAVE_TIMEOUT).toEqual([...expected].sort());
+  await expect
+    .poll(async () => {
+      const { text, title } = await buttonView(page);
+      return { text, title };
+    })
+    .toEqual({ text: 'Saved · 12P', title: `Saved to Downloads/${folder}` });
+  return restingView(page);
+}
+
+/** Size and modification time of every file under `folder`, by path. */
+async function fileStats(
+  harness: Harness,
+  folder: string,
+): Promise<Record<string, { size: number; mtimeMs: number }>> {
+  const files = (await harness.downloads.files()).filter((file) =>
+    file.path.startsWith(`${folder}/`),
+  );
+  const entries = await Promise.all(
+    files.map(async (file) => {
+      const { mtimeMs } = await stat(path.join(harness.downloads.dir, file.path));
+      return [file.path, { size: file.size, mtimeMs }] as const;
+    }),
+  );
+  return Object.fromEntries(entries);
+}
+
+/**
+ * The SW logged one `folder choice` line for each job whose history search found files of the
+ * artwork, naming the folders `chosen` in order, and never `folder check failed`. A job with no
+ * such record (a first run, or after the history was erased) takes the plain folder at once and
+ * logs nothing (design-download-engine.md "Folder choice").
+ */
+function expectFolderChoices(log: readonly SwLogLine[], chosen: readonly string[]): void {
+  const choices = log.filter((line) => line.text.includes('folder choice'));
+  expect(choices.map((line) => line.type)).toEqual(chosen.map(() => 'debug'));
+  for (const [index, folder] of chosen.entries()) {
+    // The logged object ends with `chosen`: `{artworkId: …, records: …, surviving: …, chosen: …}`.
+    expect(choices[index]?.text).toContain(`chosen: ${folder}}`);
+  }
+  expect(log.filter((line) => line.text.includes('folder check failed'))).toEqual([]);
 }
 
 async function writeSettings(
@@ -561,26 +644,134 @@ test.describe('CUJ-1: download an illustration or manga', { tag: '@cuj1' }, () =
     await waitForText(page, 'Download · 12P');
   });
 
-  test('re-download: clicking Saved saves every file again as (1) duplicates', async ({
+  // CUJ-1 step 8, ACs 11–15 and the folder-choice edge cases (refined 2026-10-27; D15). Each case
+  // gets a fresh browser, so its first downloads.search() always re-checks file existence; only
+  // the moved-folder and gap cases wait out Chrome's 10 s re-check rate limit.
+  test('re-download: the second click on Saved · 12P saves every file again into "<folder> (1)" with clean names; the first folder is untouched', async ({
     harness,
+    server,
   }) => {
+    const log = recordSwLog(harness);
     const page = await openArtwork(harness, EXAMPLE.id);
     await waitForText(page, 'Download · 12P');
-    await clickButton(page);
-    await waitForText(page, 'Saved · 12P');
-    await hoverButton(page, false);
+    await saveExample(harness, page, FOLDER, runFiles(0));
+    const first = await fileStats(harness, FOLDER);
 
-    await clickButton(page);
-    await harness.downloads.waitForFile(`${FOLDER}/metadata (1).json`);
-    await waitForText(page, 'Saved · 12P');
-    await expect.poll(() => downloadedPaths(harness)).toHaveLength(26);
+    const saved = await saveExample(harness, page, `${FOLDER} (1)`, runFiles(0, 1));
+    expect(saved).toMatchObject({
+      text: 'Saved · 12P',
+      glyph: 'check',
+      title: `Saved to Downloads/${FOLDER} (1)`,
+      ariaLabel: `Saved 12 pages to Downloads/${FOLDER} (1). Click to download again.`,
+      width: 164,
+    });
+    const listing = await harness.downloads.files();
+    for (const p of ALL_PAGES) {
+      const served = server
+        .requests(originalUrl(EXAMPLE, p))
+        .filter((request) => request.status === 200);
+      expect(served).toHaveLength(2);
+      const file = listing.find((entry) => entry.path === `${FOLDER} (1)/${fileName(EXAMPLE, p)}`);
+      // The fake server sends Content-Length = body length (`bytes`).
+      expect(file?.size).toBe(served[1]?.bytes);
+      expect(file?.size).toBe(pageBytes(EXAMPLE, p).length);
+    }
+    expect(await fileStats(harness, FOLDER)).toEqual(first);
+    expectFolderChoices(log, [`${FOLDER} (1)`]);
+  });
+
+  test('re-download: a third click goes to "(2)"; no parent folder of the pattern ever gets a suffix', async ({
+    harness,
+  }) => {
+    const log = recordSwLog(harness);
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    await saveExample(harness, page, FOLDER, runFiles(0));
+    await saveExample(harness, page, `${FOLDER} (1)`, runFiles(0, 1));
+    const third = await saveExample(harness, page, `${FOLDER} (2)`, runFiles(0, 1, 2));
+    expect(third.ariaLabel).toBe(
+      `Saved 12 pages to Downloads/${FOLDER} (2). Click to download again.`,
+    );
+    expect(await downloadedPaths(harness)).not.toContainEqual(expect.stringMatching(PARENT_SUFFIX));
+    expectFolderChoices(log, [`${FOLDER} (1)`, `${FOLDER} (2)`]);
+  });
+
+  test('re-download: after the first folder is moved away the next click uses the plain folder again, no "(3)"', async ({
+    harness,
+  }) => {
+    const log = recordSwLog(harness);
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    await saveExample(harness, page, FOLDER, runFiles(0));
+    await saveExample(harness, page, `${FOLDER} (1)`, runFiles(0, 1));
+    await saveExample(harness, page, `${FOLDER} (2)`, runFiles(0, 1, 2));
+
+    await harness.downloads.move(FOLDER, 'moved-away');
+    await harness.downloads.expireExistenceCheck();
+    const moved = artworkFiles(EXAMPLE, 'moved-away', ALL_PAGES, true);
+    await saveExample(harness, page, FOLDER, [...moved, ...runFiles(0, 1, 2)]);
+    const paths = await downloadedPaths(harness);
+    expect(paths).not.toContainEqual(expect.stringMatching(/^pixiv\/みずき-135882741 \(3\)\//));
+    expect(paths).not.toContainEqual(expect.stringMatching(PARENT_SUFFIX));
+    expectFolderChoices(log, [`${FOLDER} (1)`, `${FOLDER} (2)`, FOLDER]);
+  });
+
+  test('re-download: gap: with the plain folder and "(2)" kept and "(1)" deleted, the next click uses "(1)"', async ({
+    harness,
+  }) => {
+    const log = recordSwLog(harness);
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    await saveExample(harness, page, FOLDER, runFiles(0));
+    await saveExample(harness, page, `${FOLDER} (1)`, runFiles(0, 1));
+    await saveExample(harness, page, `${FOLDER} (2)`, runFiles(0, 1, 2));
+
+    await harness.downloads.remove(`${FOLDER} (1)`);
+    await harness.downloads.expireExistenceCheck();
+    await saveExample(harness, page, `${FOLDER} (1)`, runFiles(0, 1, 2));
+    expectFolderChoices(log, [`${FOLDER} (1)`, `${FOLDER} (2)`, `${FOLDER} (1)`]);
+  });
+
+  test('re-download: after Chrome’s download history is erased, the next click writes into the plain folder with " (1)" file names (accepted limitation)', async ({
+    harness,
+  }) => {
+    const log = recordSwLog(harness);
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    await saveExample(harness, page, FOLDER, runFiles(0));
+    await harness.downloads.eraseHistory();
+
     const duplicates = [
-      ...ALL_PAGES.map((page) => fileName(EXAMPLE, page).replace(/(\.\w+)$/, ' (1)$1')),
+      ...ALL_PAGES.map((p) => fileName(EXAMPLE, p).replace(/(\.\w+)$/, ' (1)$1')),
       'metadata (1).json',
     ].map((name) => `${FOLDER}/${name}`);
-    expect(await downloadedPaths(harness)).toEqual(
-      [...expectedFiles(FOLDER, ALL_PAGES, true), ...duplicates].sort(),
-    );
+    await saveExample(harness, page, FOLDER, [...runFiles(0), ...duplicates]);
+    expectFolderChoices(log, []);
+  });
+
+  test('re-download: token-free pattern "pixiv": two artworks share pixiv/; a repeat of the first goes to "pixiv (1)"', async ({
+    harness,
+  }) => {
+    const log = recordSwLog(harness);
+    await writeSettings(harness, { folderPattern: 'pixiv', saveMetadata: true });
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    const exampleRun = (folder: string) => expectedFiles(folder, ALL_PAGES, true);
+    await saveExample(harness, page, 'pixiv', exampleRun('pixiv'));
+
+    const other = await openArtwork(harness, SINGLE.id);
+    await waitForText(other, 'Download');
+    await clickButton(other);
+    const shared = [
+      ...exampleRun('pixiv'),
+      `pixiv/${fileName(SINGLE, 0)}`,
+      'pixiv/metadata (1).json',
+    ];
+    await expect.poll(() => downloadedPaths(harness)).toEqual(shared.sort());
+    expect((await waitForText(other, 'Saved')).title).toBe('Saved to Downloads/pixiv');
+
+    await saveExample(harness, page, 'pixiv (1)', [...shared, ...exampleRun('pixiv (1)')]);
+    expectFolderChoices(log, ['pixiv (1)']);
   });
 
   test('tab closed: the job still completes and the badge counts down to empty', async ({
@@ -848,16 +1039,24 @@ test.describe('CUJ-1: QA gate additions (iteration 2)', { tag: '@cuj1' }, () => 
       server.patchWork(PUNCT.id, { userName: artist });
       folders.push(await saveInto(harness, PUNCT.id));
     }
-    expect(folders).toEqual(new Array(4).fill('pixiv/unknown/Punctuation_テスト_2nd'));
+    // Four saves of one artwork under one resolved folder: each repeat goes to the next sibling
+    // (PRD §4.3 "Folder choice", D15).
+    const unknown = 'pixiv/unknown/Punctuation_テスト_2nd';
+    const siblings = [unknown, `${unknown} (1)`, `${unknown} (2)`, `${unknown} (3)`];
+    expect(folders).toEqual(siblings);
     const files = await downloadedPaths(harness);
     expect(files.filter((file) => file.startsWith('pixiv/Sora_空_2nd-135882744/'))).toEqual(
       artworkFiles(PUNCT, 'pixiv/Sora_空_2nd-135882744', [0, 1], true),
     );
-    // Four saves into one folder: the later ones are uniquified, nothing lands a level up.
-    expect(
-      files.filter((file) => file.startsWith('pixiv/unknown/Punctuation_テスト_2nd/')),
-    ).toHaveLength(12);
+    for (const folder of siblings) {
+      expect(files.filter((file) => file.startsWith(`${folder}/`))).toEqual(
+        artworkFiles(PUNCT, folder, [0, 1], true),
+      );
+    }
+    expect(files.filter((file) => file.startsWith('pixiv/unknown/'))).toHaveLength(12);
+    // Nothing lands a level up, and only the last segment carries a suffix.
     expect(files.filter((file) => file.startsWith('pixiv/Punctuation'))).toEqual([]);
+    expect(files.filter((file) => file.startsWith('pixiv/unknown ('))).toEqual([]);
   });
 
   test('200 pages: one width from Download · 200P through 0 / 200 … and Cancel to Saved · 200P', async ({
