@@ -1,6 +1,6 @@
 {
   "name": "helper-for-pixiv",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Helper for Pixiv: one-click pixiv artwork downloads (Chrome MV3 extension)",
   "license": "UNLICENSED",
