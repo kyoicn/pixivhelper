@@ -163,6 +163,9 @@ const p = (idx: number): string => `${FOLDER}/${ID}_p${idx}.jpg`;
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
   fake = installChromeFake();
+  // A listening document that takes every command (abort, release), so no send waits out the
+  // readiness resends (D16).
+  fake.offscreen.setHandler(() => ({ ok: true }));
   vi.spyOn(console, 'info').mockImplementation(() => undefined);
   vi.spyOn(console, 'debug').mockImplementation(() => undefined);
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
