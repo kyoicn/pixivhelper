@@ -59,10 +59,12 @@
 // the server hits per click as an annotation instead of asserting them. 4 attempts on 500/503 under
 // the real 1.5/3/6 s backoff, and a stopped server, are QA's dev-build checks (diagOutage.ts).
 //
-// Not covered here: "only metadata.json failed" (needs a chrome.downloads failure on one file; L1/L2
-// cover the classifier row and retryMetadata). R-18G (xRestrict 2) is in the QA gate additions
-// (iteration 2) below.
+// "Only metadata.json failed" and "pages and metadata.json both failed" are in the QA gate additions
+// (iteration 5) below: a wrapper around chrome.downloads.download in the SW refuses metadata.json's
+// hand-off. R-18G (xRestrict 2) is in the QA gate additions (iteration 2) below.
 
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import type { Page } from '@playwright/test';
 import { CAPS_KEY_PREFIX } from '../src/shared/constants';
 import {
@@ -88,6 +90,7 @@ import {
   openArtwork,
   pagesOf,
   range,
+  recordSwLog,
   restingView,
   TRANSITION_MS,
   uiCalls,
@@ -1437,5 +1440,156 @@ test.describe('CUJ-5: QA gate additions (iteration 3)', { tag: '@cuj5' }, () => 
     expect((await settle(refused, 'Retry')).title).toBe(TIP_REFUSED);
     await noCalls();
     expect(await downloadedPaths(harness)).toEqual([]);
+  });
+});
+
+// Refuses the hand-off of every metadata.json while armed: a wrapper around the real
+// chrome.downloads.download in the running SW (the engine looks the API up per call), standing in
+// for a Chrome file-system refusal of that one file. Chrome's real API handles every other file.
+async function refuseMetadataHandOff(harness: Harness, armed: boolean): Promise<void> {
+  await harness.swEval((on) => {
+    const qa = self as unknown as {
+      __qaMeta?: { armed: boolean; refused: number };
+    };
+    if (!qa.__qaMeta) {
+      qa.__qaMeta = { armed: on, refused: 0 };
+      const state = qa.__qaMeta;
+      const real = chrome.downloads.download.bind(chrome.downloads);
+      chrome.downloads.download = (options: chrome.downloads.DownloadOptions) => {
+        if (state.armed && /(^|[\\/])metadata\.json$/.test(options.filename ?? '')) {
+          state.refused++;
+          return Promise.reject(new Error('QA: metadata.json refused by the file system'));
+        }
+        return real(options);
+      };
+    }
+    qa.__qaMeta.armed = on;
+  }, armed);
+}
+
+function metadataRefusals(harness: Harness): Promise<number> {
+  return harness.swEval(
+    () => (self as unknown as { __qaMeta?: { refused: number } }).__qaMeta?.refused ?? 0,
+  );
+}
+
+test.describe('CUJ-5: QA gate additions (iteration 5)', { tag: '@cuj5' }, () => {
+  // PRD CUJ-5 step 5 (refined 2026-10-27): the Retry writes into the job's own folder, "suffix
+  // included if it had one … and the folder check is not run again" (§4.3).
+  test('partial in a sibling folder: a repeat run with 3 failing pages ends Retry · 3 failed in "(1)"; the Retry fetches only those 3 into "(1)", with no new folder check → Saved · 12P naming "(1)"', async ({
+    harness,
+    server,
+  }) => {
+    const log = recordSwLog(harness);
+    const sibling = `${FOLDER} (1)`;
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    await clickButton(page);
+    expect((await settle(page, 'Saved · 12P')).title).toBe(`Saved to Downloads/${FOLDER}`);
+    const first = artworkFiles(EXAMPLE, FOLDER, ALL_PAGES, true);
+
+    failPages(harness, server, EXAMPLE, [4, 9, 11]);
+    await page.waitForTimeout(CLICK_GUARD_MS);
+    await clickButton(page);
+    await settle(page, 'Retry · 3 failed');
+    const failed = await restingView(page);
+    expectRedOutline(failed);
+    expect(failed.title).toBe(
+      '9 of 12 pages saved. 3 failed after 4 attempts each. Click to retry just those 3.',
+    );
+    const landed = ALL_PAGES.filter((p) => ![4, 9, 11].includes(p));
+    expect(await downloadedPaths(harness)).toEqual(
+      [...first, ...artworkFiles(EXAMPLE, sibling, landed, true)].sort(),
+    );
+
+    // A re-run of the folder check here would pick "(2)": plain and "(1)" both hold this artwork.
+    server.clearFaults();
+    const retriedAt = Date.now();
+    await clickButton(page);
+    const done = await settle(page, 'Saved · 12P');
+    expect(done.title).toBe(`Saved to Downloads/${sibling}`);
+    expect(done.ariaLabel).toBe(`Saved 12 pages to Downloads/${sibling}. Click to download again.`);
+    expect(await downloadsStartedAfter(harness, retriedAt)).toEqual(
+      [4, 9, 11].map((p) => `みずき-135882741 (1)/${fileName(EXAMPLE, p)}`).sort(),
+    );
+    expect(await downloadedPaths(harness)).toEqual(
+      [...first, ...artworkFiles(EXAMPLE, sibling, ALL_PAGES, true)].sort(),
+    );
+    // One folder decision only, for the repeat run; the Retry made none.
+    const choices = log.filter((line) => line.text.includes('folder choice'));
+    expect(choices).toHaveLength(1);
+    expect(choices[0]?.text).toContain(`chosen: ${sibling}}`);
+  });
+
+  // PRD CUJ-5 edge "Pages and metadata.json both failed" (R-007 item 6): the usual pages tooltip,
+  // and the Retry re-writes the failed pages and metadata.json, so Saved · 12P means every file.
+  test('pages and metadata.json both failed: Retry · 3 failed with the usual tooltip; the Retry writes metadata.json and the 3 pages → Saved · 12P with all 13 files', async ({
+    harness,
+    server,
+  }) => {
+    await refuseMetadataHandOff(harness, true);
+    failPages(harness, server, EXAMPLE, [4, 9, 11]);
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    await clickButton(page);
+    await settle(page, 'Retry · 3 failed');
+    expect(await metadataRefusals(harness)).toBe(1);
+    const failed = await restingView(page);
+    expectRedOutline(failed);
+    expect(failed.title).toBe(
+      '9 of 12 pages saved. 3 failed after 4 attempts each. Click to retry just those 3.',
+    );
+    const landed = ALL_PAGES.filter((p) => ![4, 9, 11].includes(p));
+    expect(await downloadedPaths(harness)).toEqual(artworkFiles(EXAMPLE, FOLDER, landed, false));
+
+    await refuseMetadataHandOff(harness, false);
+    server.clearFaults();
+    const retriedAt = Date.now();
+    await clickButton(page);
+    const done = await settle(page, 'Saved · 12P');
+    expect(done.title).toBe(`Saved to Downloads/${FOLDER}`);
+    expect(await downloadsStartedAfter(harness, retriedAt)).toEqual(
+      ['metadata.json', ...[4, 9, 11].map((p) => fileName(EXAMPLE, p))]
+        .map((name) => `みずき-135882741/${name}`)
+        .sort(),
+    );
+    expect(await downloadedPaths(harness)).toEqual(artworkFiles(EXAMPLE, FOLDER, ALL_PAGES, true));
+    const metadata = JSON.parse(
+      await readFile(path.join(harness.downloads.dir, FOLDER, 'metadata.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(metadata.id).toBe(EXAMPLE.id);
+    expect(metadata.pageCount).toBe(12);
+  });
+
+  // PRD CUJ-5 edge "Only metadata.json failed (pages all landed)" (R-004 S9).
+  test('only metadata.json failed: Retry with "All 12 pages saved. metadata.json couldn’t be saved. Click to retry it."; the Retry writes only metadata.json → Saved · 12P', async ({
+    harness,
+    server,
+  }) => {
+    await refuseMetadataHandOff(harness, true);
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    await clickButton(page);
+    await settle(page, /^Retry/);
+    const failed = await restingView(page);
+    expectRedOutline(failed);
+    expect(failed.text).toBe('Retry');
+    const tip = "All 12 pages saved. metadata.json couldn't be saved. Click to retry it.";
+    expect(failed.title).toBe(tip);
+    // Not "Download failed. …": the pages did land; the name is the full cause (PRD edge "Screen
+    // reader"; design-artwork-button.md "Presentation", error.metadataOnly).
+    expect(failed.ariaLabel).toBe(tip);
+    expect(await downloadedPaths(harness)).toEqual(artworkFiles(EXAMPLE, FOLDER, ALL_PAGES, false));
+
+    await refuseMetadataHandOff(harness, false);
+    const retriedAt = Date.now();
+    await clickButton(page);
+    const done = await settle(page, 'Saved · 12P');
+    expect(done.title).toBe(`Saved to Downloads/${FOLDER}`);
+    expect(await downloadsStartedAfter(harness, retriedAt)).toEqual([
+      'みずき-135882741/metadata.json',
+    ]);
+    expect(requestsAfter(server, pagesOf(EXAMPLE, ALL_PAGES), retriedAt)).toEqual([]);
+    expect(await downloadedPaths(harness)).toEqual(artworkFiles(EXAMPLE, FOLDER, ALL_PAGES, true));
   });
 });

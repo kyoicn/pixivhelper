@@ -41,7 +41,7 @@
 // Files in flight are held with server.hold(): originals trickle until released, so a job can be
 // stopped at any count without the e2e build's 300 ms stall timeout failing it.
 
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, rename, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { pageBytes } from './fixtures/assets';
 import { artworkUrl, originalUrl, requireWork, type IllustWork } from './fixtures/works';
@@ -1970,4 +1970,47 @@ test.describe('CUJ-1: QA gate additions (iteration 4), Chrome toolbar', { tag: '
       ).toEqual([]);
     },
   );
+});
+
+test.describe('CUJ-1: QA gate additions (iteration 5)', { tag: '@cuj1' }, () => {
+  // PRD CUJ-1 edge "First folder moved, renamed or deleted before the repeat click": "Renaming the
+  // files inside the folder (e.g. to 01.jpg) has the same effect." The folder choice reads only
+  // files of this artwork (`<id>_` / `<id>.`), so renamed pages free the plain folder; the
+  // un-renamed metadata.json is never consulted and meets Chrome's uniquify safety net instead.
+  test('re-download: after the pages inside the first folder are renamed (01.jpg …), the next click uses the plain folder again, no "(1)" folder', async ({
+    harness,
+  }) => {
+    const log = recordSwLog(harness);
+    const page = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(page, 'Download · 12P');
+    await saveExample(harness, page, FOLDER, runFiles(0));
+
+    const renamed = ALL_PAGES.map((p) => {
+      const ext = path.extname(fileName(EXAMPLE, p));
+      return `${FOLDER}/${String(p + 1).padStart(2, '0')}${ext}`;
+    });
+    for (const [p, to] of ALL_PAGES.map((p, i) => [p, renamed[i]] as const)) {
+      await rename(
+        path.join(harness.downloads.dir, FOLDER, fileName(EXAMPLE, p)),
+        path.join(harness.downloads.dir, to ?? ''),
+      );
+    }
+    await harness.downloads.expireExistenceCheck();
+
+    const again = [
+      ...ALL_PAGES.map((p) => `${FOLDER}/${fileName(EXAMPLE, p)}`),
+      `${FOLDER}/metadata (1).json`,
+    ];
+    const saved = await saveExample(harness, page, FOLDER, [
+      ...renamed,
+      `${FOLDER}/metadata.json`,
+      ...again,
+    ]);
+    expect(saved.ariaLabel).toBe(`Saved 12 pages to Downloads/${FOLDER}. Click to download again.`);
+    const paths = await downloadedPaths(harness);
+    expect(paths).not.toContainEqual(expect.stringMatching(/^pixiv\/みずき-135882741 \(\d+\)\//));
+    expect(paths).not.toContainEqual(expect.stringMatching(PARENT_SUFFIX));
+    // The search found the first run's records, all gone after the re-check: plain again.
+    expectFolderChoices(log, [FOLDER]);
+  });
 });
