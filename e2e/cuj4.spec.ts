@@ -9,7 +9,9 @@
 // | 3  Each tab's button shows only its own artwork's progress                  | 'two jobs', 'cancel   |
 // |                                                                             | one job'              |
 // | 4  Badge decreases within 1 s of any file landing, from any job             | 'two jobs'            |
-// | 5  A second artwork starts at once; neither job waits for the other         | 'two jobs'            |
+// | 5  A second artwork starts at once; neither job waits for the other         | 'two jobs'; 'two tabs |
+// |    (D16: also with both clicks at the same instant, same artwork or two;    | at once' (×3 each)    |
+// |    both end Saved, metadata.json each, no `offscreen did not take`)         |                       |
 // | 6  Cancelling one job stops only its files; badge drops by its remainder    | 'cancel one job'      |
 // | 7  Last file lands / last job cancelled or fails → badge gone, idle title   | lands: 'two jobs',    |
 // |                                                                             | 'cancel one job';     |
@@ -20,8 +22,9 @@
 // | 9  SW stopped mid-job: badge correct within 1 s of the restart, jobs finish | 'service worker'      |
 // | 10 Toolbar click while jobs run opens settings, jobs unaffected             | 'toolbar' (needs the  |
 // |                                                                             | 4.2 e2e hook)         |
-// | Edge case: same artwork in two tabs → 24, "across 2 downloads", ` (1)`      | 'same artwork in two  |
-// |                                                                             | tabs'                 |
+// | Edge case: same artwork in two tabs → 24, "across 2 downloads"; both        | 'same artwork in two  |
+// |   started before any original lands → one folder, ` (1)` names; the         | tabs' (2 tests)       |
+// |   second click after the first originals landed → `<folder> (1)/`           |                       |
 //
 // The PRD's 30-page manga has no fixture: tab A runs the 200-page manga 135882743 with its last 18
 // originals held in flight (server.hold), tab B runs 136120877 (8 pages) with its last 5 held,
@@ -44,10 +47,13 @@ import {
   openArtwork,
   pagesOf,
   range,
+  recordSwLog,
   TRANSITION_MS,
   uiCalls,
+  type SwLogLine,
 } from './harness/flows';
 import {
+  buttonCenter,
   buttonView,
   clickButton,
   hoverButton,
@@ -239,7 +245,10 @@ test.describe('CUJ-4: follow several downloads from the toolbar badge', { tag: '
     );
   });
 
-  test('same artwork in two tabs: two jobs, both counted, the second run uniquified', async ({
+  // PRD CUJ-4 edge "Same artwork downloading in two tabs" and CUJ-1 edge "Same artwork clicked in
+  // two tabs": every original is held before tab B clicks, so no original of A has landed when B's
+  // folder check runs, and both jobs use the plain folder with per-file suffixes.
+  test('same artwork in two tabs, both started before any original lands: two jobs, both counted, one folder with the second run uniquified', async ({
     harness,
     server,
   }) => {
@@ -262,6 +271,39 @@ test.describe('CUJ-4: follow several downloads from the toolbar badge', { tag: '
     const firstRun = artworkFiles(EXAMPLE, EXAMPLE_FOLDER, range(0, 11), true);
     const secondRun = firstRun.map((file) => file.replace(/(\.\w+)$/, ' (1)$1'));
     expect(await downloadedPaths(harness)).toEqual([...firstRun, ...secondRun].sort());
+  });
+
+  // The same PRD edges: once A's first originals have landed, B's folder check finds them.
+  test('same artwork in two tabs, the second click after the first originals landed: the second job goes to the (1) sibling folder with clean names', async ({
+    harness,
+    server,
+  }) => {
+    const hold = server.hold(pagesOf(EXAMPLE, range(4, 11)));
+    const tabA = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(tabA, 'Download · 12P');
+    await clickButton(tabA);
+    await waitForText(tabA, '4 / 12');
+    const tabB = await openArtwork(harness, EXAMPLE.id);
+    await waitForText(tabB, 'Download · 12P');
+    await clickButton(tabB);
+    await waitForText(tabB, '4 / 12');
+    await expect.poll(() => hold.held).toBe(10);
+    await expectBadge(harness, '16', manyTitle(16, 2));
+
+    hold.release();
+    expect((await waitForText(tabA, 'Saved · 12P')).title).toBe(
+      `Saved to Downloads/${EXAMPLE_FOLDER}`,
+    );
+    expect((await waitForText(tabB, 'Saved · 12P')).title).toBe(
+      `Saved to Downloads/${EXAMPLE_FOLDER} (1)`,
+    );
+    await expectBadge(harness, '', IDLE_TITLE);
+    expect(await downloadedPaths(harness)).toEqual(
+      [
+        ...artworkFiles(EXAMPLE, EXAMPLE_FOLDER, range(0, 11), true),
+        ...artworkFiles(EXAMPLE, `${EXAMPLE_FOLDER} (1)`, range(0, 11), true),
+      ].sort(),
+    );
   });
 
   test('failed: when the last job fails the badge disappears and the idle title returns', async ({
@@ -690,6 +732,75 @@ test.describe('CUJ-4: QA gate additions (iteration 4)', { tag: '@cuj4' }, () => 
         'files the worker heard complete only after Chrome answered the restore',
       ).toEqual([]);
       expect(restoreAt).toBeLessThanOrEqual(last.startedAt);
+    });
+  }
+});
+
+// CUJ-1 edge "Same artwork clicked in two tabs" and CUJ-4 AC 5 (D16, offscreen readiness): both
+// clicks inside one Promise.all (click gap 0), so the second job's first offscreen command can
+// arrive while the first job is still creating the offscreen document. ×3 each in the suite.
+test.describe('CUJ-4: two tabs clicked at once (D16)', { tag: '@cuj4' }, () => {
+  const RUNS = 3;
+
+  /** Opens both tabs, then clicks both buttons at the same instant. */
+  async function clickBothAtOnce(harness: Harness, ids: [string, string]): Promise<[Page, Page]> {
+    const tabs: [Page, Page] = [
+      await openArtwork(harness, ids[0]),
+      await openArtwork(harness, ids[1]),
+    ];
+    for (const tab of tabs) await waitForText(tab, /^Download/);
+    const [a, b] = await Promise.all([buttonCenter(tabs[0]), buttonCenter(tabs[1])]);
+    await Promise.all([tabs[0].mouse.click(a.x, a.y), tabs[1].mouse.click(b.x, b.y)]);
+    return tabs;
+  }
+
+  /** The tab's job end: `Saved …`, or the failure a D16 regression shows (`Retry …`). */
+  function ending(tab: Page): Promise<ButtonView> {
+    return waitForText(tab, /^(Saved|Retry)/, { timeout: 20_000 });
+  }
+
+  function offscreenRefusals(log: readonly SwLogLine[]): string[] {
+    return log
+      .filter((line) => line.text.includes('offscreen did not take'))
+      .map((line) => line.text);
+  }
+
+  for (let run = 1; run <= RUNS; run++) {
+    test(`two tabs at once, same artwork (run ${run}): both end Saved; both jobs’ 13 files land, in "(1)" or uniquified next to the first`, async ({
+      harness,
+    }) => {
+      const log = recordSwLog(harness);
+      const tabs = await clickBothAtOnce(harness, [EXAMPLE.id, EXAMPLE.id]);
+      for (const tab of tabs) expect((await ending(tab)).text).toBe('Saved · 12P');
+      expect(offscreenRefusals(log)).toEqual([]);
+
+      // Whether B's folder check saw a completed original of A is a race the PRD accepts, so
+      // either outcome passes; both keep every file of both jobs.
+      const plain = artworkFiles(EXAMPLE, EXAMPLE_FOLDER, range(0, 11), true);
+      const sibling = artworkFiles(EXAMPLE, `${EXAMPLE_FOLDER} (1)`, range(0, 11), true);
+      const uniquified = plain.map((file) => file.replace(/(\.\w+)$/, ' (1)$1'));
+      await expect.poll(async () => (await downloadedPaths(harness)).length).toBe(26);
+      expect([[...plain, ...sibling].sort(), [...plain, ...uniquified].sort()]).toContainEqual(
+        await downloadedPaths(harness),
+      );
+    });
+
+    test(`two tabs at once, two artworks (run ${run}): both end Saved; both folders hold metadata.json and every page`, async ({
+      harness,
+    }) => {
+      const log = recordSwLog(harness);
+      const [tabA, tabB] = await clickBothAtOnce(harness, [EXAMPLE.id, TAB_B.id]);
+      expect((await ending(tabA)).text).toBe('Saved · 12P');
+      expect((await ending(tabB)).text).toBe('Saved · 8P');
+      expect(offscreenRefusals(log)).toEqual([]);
+      await expect
+        .poll(() => downloadedPaths(harness))
+        .toEqual(
+          [
+            ...artworkFiles(EXAMPLE, EXAMPLE_FOLDER, range(0, 11), true),
+            ...artworkFiles(TAB_B, TAB_B_FOLDER, range(0, 7), true),
+          ].sort(),
+        );
     });
   }
 });

@@ -111,3 +111,24 @@ export function artworkFiles(
   if (metadata) names.push('metadata.json');
   return names.map((name) => `${folder}/${name}`).sort();
 }
+
+export interface SwLogLine {
+  /** The console method: `debug`, `info`, `warning`, `error`, … */
+  type: string;
+  /** e.g. `[hfp:folder-choice] folder choice {…}`. */
+  text: string;
+}
+
+/**
+ * Records the extension service worker's console lines from now on, every level (dist-e2e keeps
+ * `debug`). consoleErrors() keeps errors only; folder-choice and offscreen checks read `debug` and
+ * `warn` lines.
+ */
+export function recordSwLog(harness: Harness): SwLogLine[] {
+  const lines: SwLogLine[] = [];
+  harness.context.on('console', (message) => {
+    if (message.worker()?.url() !== harness.serviceWorkerUrl) return;
+    lines.push({ type: message.type(), text: message.text() });
+  });
+  return lines;
+}
