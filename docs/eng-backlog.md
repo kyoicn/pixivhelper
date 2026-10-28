@@ -2,7 +2,7 @@
 
 Engineering tasks: infrastructure, tooling, operational hardening, tech debt — work that is neither a defect (docs/issues.md) nor a product feature (docs/prd/). Entries are removed when done; history lives in git via commits referencing the ENG ID.
 
-Next-ID: ENG-014
+Next-ID: ENG-015
 
 ---
 
@@ -32,3 +32,25 @@ Next-ID: ENG-014
   - `npm run check` passes.
   - The coder reports, for each mutation above, the names of the tests that failed.
 - **Relates-to**: prd-000-mvp CUJ-1, CUJ-4
+
+---
+
+### ENG-014: Test-double support for the folder choice and the offscreen readiness fix (fake chrome + e2e harness)
+
+- **Filed**: 2026-10-27 20:32:56 (UTC-7)
+- **Priority**: P1
+- **Background**: Two iteration-5 designs need test doubles the harness does not have. (1) The folder choice (design-download-engine.md "Folder choice", D15) relies on Chrome's asynchronous file-existence re-check that `chrome.downloads.search` triggers; the fake `downloads.search` has no disk model, so neither "folder moved → plain name again" nor the stale-flag residual can be tested at L2, and the e2e harness has no way to remove a folder, wait out Chrome's 10 s re-check rate limit, or clear the history. (2) The offscreen readiness fix (design-offscreen-worker.md "Lifecycle", D16) closes a race the fake cannot reproduce: `FakeOffscreen.createDocument` never lists a document before it listens, which is exactly the window QA hit 14/16 times. Without these doubles the feature and fix tasks have no discriminating tests (the mutation checks in both chapters depend on them).
+- **Scope**: `test/fakes/chrome.ts` and `e2e/harness/launch.ts` (plus `e2e/harness/flows.ts` if a helper fits there); unit tests of the fake in `test/unit/background/chrome-fake.test.ts`. No change under `src/`.
+  - `FakeDownloads`: a disk model (`removeFile(id)`, `removeFiles(predicate)`) that leaves `exists` untouched until the next `search()`; `search()` schedules the re-check of every complete, unflagged item after `existenceCheckDelay` (default 0 → next macrotask): `exists = false` plus one `onChanged({ id, exists: { previous: true, current: false } })`, never cleared again; `existenceCheckDelay(ms)`; `addCompleted(relativePath, { exists?, byExtensionId? })`; `search` honours `limit: 0` as "all" (already true via the falsy check: pin it) and filters scalar fields, `filenameRegex`, `urlRegex`; `uniquify` ignores removed files. Chrome's 10 s rate limit is not modelled (design-test-harness.md L2).
+  - `FakeOffscreen`: `holdCreation(): { release }` (document listed by `getContexts` but without a listener until release; `createDocument` resolves at release) and `holdClose(): { release }` (listeners dropped at once, document listed until release; `closeDocument` resolves at release). Unheld behaviour unchanged.
+  - E2E harness: `downloads.remove(relativePath)`, `downloads.move(from, to)`, `downloads.expireExistenceCheck()` (waits `EXISTENCE_RECHECK_RATE_LIMIT_MS + 500` = 10 500 ms, constant with the comment from design-test-harness.md), `downloads.eraseHistory()` (`swEval(() => chrome.downloads.erase({}))`).
+- **Acceptance criteria**:
+  - `chrome-fake.test.ts` covers: `removeFile` then `search` → the item reads `exists: false` after `vi.advanceTimersByTimeAsync(0)` and one `exists` delta fired; a second `search` fires no second delta; `existenceCheckDelay(400)` → the flag flips only after 400 ms; `search({ filenameRegex })` matches on `DOWNLOADS_DIR`-prefixed absolute filenames, with `limit: 0` returning all and `limit: 2` two; `addCompleted` records are found by `search` and respected by `uniquify`; after `removeFile` a `download()` to the same path gets the clean name.
+  - `chrome-fake.test.ts` covers: during `holdCreation()`, `getContexts` lists the document and `runtime.sendMessage` to it rejects with `RECEIVING_END_ERROR`; after `release()` the scripted handler answers and the `createDocument` promise has resolved; during `holdClose()`, the document is listed and deaf, and after `release()` it is gone and `closeDocument` has resolved.
+  - The e2e helpers exist with the documented signatures; `expireExistenceCheck` is used only where design-test-harness.md says (moved-folder and gap cases).
+  - Every existing test passes unchanged (the holds and the disk model are opt-in).
+- **Verify**:
+  - `npx vitest run test/unit/background/chrome-fake.test.ts` passes and its output lists the new test names (grep: `removeFile`, `existenceCheckDelay`, `holdCreation`, `holdClose`).
+  - `npm run check` passes; `npx tsc -p tsconfig.json --noEmit` reports no error in `e2e/harness/`.
+- **Ordering**: before the L2/e2e tests of the iteration-5 CUJ-1 folder-choice task and of the offscreen-readiness task; the `src/` changes of both can start in parallel.
+- **Relates-to**: prd-000-mvp CUJ-1 (step 8, edges), CUJ-4 AC 5; docs/qa-report.md iteration 4 LOW #1

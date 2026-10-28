@@ -1,7 +1,7 @@
 # Artwork Button (content script)
 
-> Last updated: 2026-10-24 03:57:53 (UTC-7)
-> Serves: prd-000 — CUJ-1 (button, states, SPA, memory), CUJ-2 (ugoira hint/progress), CUJ-4 (per-tab progress only), CUJ-5 (needs-login incl. pixiv's login walls per R-003, error states, floating fallback); PRD §4.7 entirely; index "Accessibility", "Internationalization", "Theming"; R-004 S1 (widths), S2 (contrast), S4 (floating-fallback anchor), S7 (keyboard order), S13 (no busy 100%); R-007 item 6 (a Retry re-writes a `metadata.json` that did not land)
+> Last updated: 2026-10-27 20:32:56 (UTC-7)
+> Serves: prd-000 — CUJ-1 (button, states, SPA, memory; step 8 and §4.7.3/§4.7.6: the Saved tooltip and `aria-label` name the folder actually used, suffix included, refined 2026-10-27), CUJ-2 (ugoira hint/progress), CUJ-4 (per-tab progress only), CUJ-5 (needs-login incl. pixiv's login walls per R-003, error states, floating fallback); PRD §4.7 entirely; index "Accessibility", "Internationalization", "Theming"; R-004 S1 (widths), S2 (contrast), S4 (floating-fallback anchor), S7 (keyboard order), S13 (no busy 100%); R-007 item 6 (a Retry re-writes a `metadata.json` that did not land)
 
 ## Overview
 
@@ -229,6 +229,8 @@ export type ButtonState =
   | { s: 'idle' }                                                        // presentation derives from entry.work + settings + caps
   | { s: 'busy'; jobId: string; progress: JobProgress | null; startedAt: number; armed: boolean }
   | { s: 'saved'; folder: string; kind: 'pages' | 'ugoira'; pages?: number; format?: UgoiraOutput }
+                                   // folder: the folder actually used, suffix included (`JobOutcome.saved.folder` = `JobRecord.folder`;
+                                   // PRD §4.7.6, design-download-engine.md "Folder choice"). Only shown in the tooltip and aria-label.
   | { s: 'error'; err:
         | { t: 'partial'; folder: string; total: number; saved: number; failedPages: number[];
             metadataFailed?: true }    // from the outcome (system.md §10 row 6); never shown, only sent with the Retry (R-007)
@@ -274,8 +276,8 @@ stateDiagram-v2
 |---|---|
 | `pending` | `{ mode: 'full', expectedFiles: 0, loggedIn: ctx.loggedIn }` (the SW repeats the needs-login check, R-003) |
 | `idle` | `{ mode: 'full', expectedFiles: work.illustType === 2 ? 1 : work.pageCount, loggedIn: ctx.loggedIn }` |
-| `saved` | same as `idle` (re-download, current settings; PRD CUJ-1 step 8) |
-| `error.partial` | `{ mode: 'retryPages', folder, pages: failedPages, total }`, plus `withMetadata: true` when `metadataFailed` (PRD CUJ-5 step 5 and edge "Pages and `metadata.json` both failed", R-007 item 6) |
+| `saved` | same as `idle` (re-download, current settings; PRD CUJ-1 step 8). The request carries nothing about the earlier folder: the SW's folder choice reads Chrome's download history and sends the new job to `<folder> (n)` (design-download-engine.md "Folder choice"), so the tab keeps no history (PRD §4.1 #1) and a reload changes nothing about where a repeat run lands |
+| `error.partial` | `{ mode: 'retryPages', folder, pages: failedPages, total }`, plus `withMetadata: true` when `metadataFailed` (PRD CUJ-5 step 5 and edge "Pages and `metadata.json` both failed", R-007 item 6). `folder` is the earlier job's folder as its outcome reported it, suffix included, so a Retry of a `(1)` job writes into `(1)` (PRD CUJ-5 step 5 "suffix included if it had one"); the same holds for `metadataOnly` and `encodeFailed` below |
 | `error.metadataOnly` | `{ mode: 'retryMetadata', folder }` |
 | `error.encodeFailed` | `{ mode: 'retryEncode', folder, format }` (CUJ-5 step 8) |
 | `error.cause` | `{ mode: 'full', … }` (CUJ-5 step 6: "runs the whole job again with the current settings") |
@@ -310,7 +312,7 @@ stateDiagram-v2
 | error, encodeFailed | error | warning | `Retry · MP4\|WebM` | `tip_encode_failed` | the tooltip text |
 | unavailable | disabled | none | `Unavailable` | `tip_unavailable` | `tip_unavailable`; `aria-disabled="true"` |
 
-`tip_saved` and the saved aria strings contain `Downloads/<folder>` with the resolved folder from the job outcome (PRD CUJ-1 step 6).
+`tip_saved` and the saved aria strings contain `Downloads/<folder>`, where `<folder>` is **the folder actually used, suffix included**: `JobOutcome.saved.folder`, which is `JobRecord.folder` after the SW's folder choice (PRD CUJ-1 steps 6 and 8, §4.7.3 Saved row, §4.7.6, Appendix A `tip_saved`; refined 2026-10-27). After a repeat run the tooltip reads `Saved to Downloads/pixiv/みずき-135882741 (1)` and the `aria-label` `Saved 12 pages to Downloads/pixiv/みずき-135882741 (1). Click to download again.`, while the face stays `Saved · 12P`: no new state, no index on the face (mock `cuj-1-saved-again.html`). The string is interpolated verbatim through `$FOLDER$`; nothing in the content script parses or formats it, so the suffix needs no code here beyond what the outcome carries.
 
 ### Fixed width (button/width.ts)
 
@@ -502,9 +504,9 @@ Vanilla TS vs a UI framework: see [system.md §3](system.md). The login-wall sig
   - `lang` on the host for CJK glyph selection (index "CJK rendering").
 - **Observability:** `debug` for route changes, placement mode changes (row → floating), selector strategy used, and width computed. A `warn` when the floating fallback engages ("action row not found"), the first signal of a pixiv redesign.
 - **Testing:**
-  - Unit (happy-dom): router regex and change detection; `pixiv-dom` strategies against committed live fixtures (ENG-002), including both `side` branches with a stubbed `flexDirection`; `reduce()` transitions, including `metadata` with `{ xRestrict: 0, withheld: true }` and `loggedIn` `false` / `true` / `null` (needs-login only for `false`); `present()` for every row of the presentation table in all 4 locales; width candidates (`candidates(null)` = the 99-page faces only; an ugoira widens once before interaction and never after); click guard and arming with fake timers; live-region throttle.
+  - Unit (happy-dom): router regex and change detection; `pixiv-dom` strategies against committed live fixtures (ENG-002), including both `side` branches with a stubbed `flexDirection`; `reduce()` transitions, including `metadata` with `{ xRestrict: 0, withheld: true }` and `loggedIn` `false` / `true` / `null` (needs-login only for `false`); `present()` for every row of the presentation table in all 4 locales, including a `saved` state whose `folder` ends in ` (1)` → `tip_saved`, `aria_saved_pages` and `aria_saved_ugoira` carry the suffix verbatim; `startRequest` for `error.partial` with a `(1)` folder echoes it unchanged; width candidates (`candidates(null)` = the 99-page faces only; an ugoira widens once before interaction and never after); click guard and arming with fake timers; live-region throttle.
   - Unit (`pixiv-api.ts`): `parseIllust` sets `withheld` from reduced live bodies (`test/fixtures/api/illust-walled.json` from 151107515, `illust-visible.json` from 151061734), from a body without `urls` and `sl` 4 (fallback → true) or `sl` 2 (→ false), and `requiresLogin` over the truth table of [system.md §8.5](system.md).
-  - E2E: placement latency, re-insertion after a simulated React re-render, single-host invariant, floating fallback ≤ 3000 ms from the PRD anchors (`performance.getEntriesByType('navigation')[0].domInteractive` on a direct load; `performance.now()` at the in-page click on SPA navigation) to the first animation frame after the host connects (a page `MutationObserver` sees the host, then `requestAnimationFrame` stamps the time), SPA memory, reload reattach, dark theme focus ring, 4-locale width snapshots; logged out on the fake walled work (`135882745`, [design-test-harness.md](design-test-harness.md)) → `Log in to download` before any click with `aria-label` `Log in to pixiv to download this work.`, and the login round-trip → `Download · 4P`; a click while `/ajax/illust` is held (`server.hold()`) on that work → `Log in to download` with no `/pages` or `i.pximg.net` request in the server log; a late `/ajax/illust` on a ≤ 99-page illustration → 164 px throughout.
+  - E2E: placement latency, re-insertion after a simulated React re-render, single-host invariant, floating fallback ≤ 3000 ms from the PRD anchors (`performance.getEntriesByType('navigation')[0].domInteractive` on a direct load; `performance.now()` at the in-page click on SPA navigation) to the first animation frame after the host connects (a page `MutationObserver` sees the host, then `requestAnimationFrame` stamps the time), SPA memory, reload reattach, dark theme focus ring, 4-locale width snapshots; CUJ-1 step 8: after the second click the button's `title` is `Saved to Downloads/pixiv/みずき-135882741 (1)` and its `aria-label` names the same folder, with the face `Saved · 12P` and the width unchanged ([design-test-harness.md](design-test-harness.md)); logged out on the fake walled work (`135882745`, [design-test-harness.md](design-test-harness.md)) → `Log in to download` before any click with `aria-label` `Log in to pixiv to download this work.`, and the login round-trip → `Download · 4P`; a click while `/ajax/illust` is held (`server.hold()`) on that work → `Log in to download` with no `/pages` or `i.pximg.net` request in the server log; a late `/ajax/illust` on a ≤ 99-page illustration → 164 px throughout.
 
 ## Dependencies & Integration Points
 

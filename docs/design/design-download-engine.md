@@ -1,7 +1,7 @@
 # Download Engine (service worker)
 
-> Last updated: 2026-10-24 03:57:53 (UTC-7)
-> Serves: prd-000 — CUJ-1 (pipeline, cancel, re-download, the `N / 12` counter that climbs to `11 / 12`), CUJ-2 (ugoira job orchestration), CUJ-3 (toolbar click → settings tab), CUJ-4 (badge/title), CUJ-5 (retry modes, incl. a `retryPages` that also re-writes a `metadata.json` that did not land per R-007 item 6; outcome classification incl. the job-level "No connection" rule per R-004 S3; login-wall check at resolve per R-003); PRD §4.1 #3 (Chrome's download UI hidden while a job runs, R-005; back on just before the last file of the last running job is handed to Chrome, R-006)
+> Last updated: 2026-10-27 20:32:56 (UTC-7)
+> Serves: prd-000 — CUJ-1 (pipeline, cancel, re-download into the sibling folder `<folder> (n)` chosen from Chrome's download history per §4.3 "Folder choice" and §4.5.1 step 4 as refined 2026-10-27 (Issue 2026-10-27-19-58-31), the `N / 12` counter that climbs to `11 / 12`), CUJ-2 (ugoira job orchestration), CUJ-3 (toolbar click → settings tab), CUJ-4 (badge/title), CUJ-5 (retry modes, incl. a `retryPages` that also re-writes a `metadata.json` that did not land per R-007 item 6; outcome classification incl. the job-level "No connection" rule per R-004 S3; login-wall check at resolve per R-003); PRD §4.1 #3 (Chrome's download UI hidden while a job runs, R-005; back on just before the last file of the last running job is handed to Chrome, R-006)
 
 ## Overview
 
@@ -9,6 +9,7 @@ The service worker (`src/background/`) is the system's **source of truth for job
 
 - accepts start, cancel and attach requests from content scripts;
 - snapshots settings and resolves a job's plan through pixiv's API (proxied through the originating tab, see [system.md §8.3](system.md));
+- chooses the folder actually used: the resolved folder, or its sibling `<folder> (n)` when Chrome's download history shows this artwork's files still present there (PRD §4.3 "Folder choice", refined 2026-10-27; "Folder choice" below, D15);
 - builds the file queue, schedules at most 5 files per artwork, and dispatches byte work to the offscreen document;
 - hands finished bytes to `chrome.downloads` and observes completion;
 - hides Chrome's download UI from a job's first hand-off and turns it back on just before the last file of the last running job is handed to Chrome, or when the last running job ends without such a hand-off (R-005, R-006);
@@ -41,6 +42,7 @@ flowchart TB
   subgraph SW["Service worker"]
     R["registry.ts<br/>JobRecord store + mutex"]
     RES["resolver.ts<br/>plan building"]
+    FC["folder-choice.ts<br/>downloads.search → folder or folder (n)"]
     SCH["scheduler.ts<br/>pump · deps · cap 5"]
     DLW["downloads.ts<br/>download / onChanged"]
     BAD["badge.ts"]
@@ -53,6 +55,8 @@ flowchart TB
   SW <--> OFF["Offscreen document"]
   R <--> SS[("storage.session<br/>job:* · caps:*")]
   DLW <--> DL["chrome.downloads"]
+  RES --> FC
+  FC -- "search(filenameRegex, state complete)" --> DL
   DUI -- "setUiOptions: enabled on or off" --> DL
   BAD --> ACT["chrome.action"]
   OPTT --> TABS["tabs.create/update · windows.update · runtime.getContexts"]
@@ -118,7 +122,8 @@ export interface JobRecord {
   snapshot: SettingsSnapshot;     // taken at click (PRD §4.1 #8)
   expectedFiles: number;          // badge count while resolving — full: tab hint clamped 0..200; retryPages: pages.length; retryEncode: 1; retryMetadata: 0
   metaBody: Record<string, unknown> | null;  // raw /ajax/illust body, kept only until the metadata file is dispatched
-  folder: string | null;          // resolved (full) or echoed (retries); validated by isSafeRelativeFolder
+  folder: string | null;          // the folder actually used: resolved from the pattern plus the folder-choice suffix ` (n)`
+                                  // (full, "Folder choice"), or echoed suffix included (retries); validated by isSafeRelativeFolder
   pagesTotal: number;             // display total N in "k / N" (full page count, also for retries)
   pagesOffset: number;            // pages already saved before this run (retryPages: total − requested)
   files: FileTask[];
@@ -269,7 +274,7 @@ stateDiagram-v2
      | { ok: false; apiFailure: ApiFailure; answered: boolean }   // answered: some API call of this resolve got an HTTP response
      | { ok: false; loginRequired: true };   // R-003: page logged out and pixiv withholds the work
    ```
-4. **Folder:** `full` mode calls `resolveFolder(snapshot.folderPattern, { artist: userName, id, title, userId })` ([design-settings-model.md](design-settings-model.md)). Retry modes use `request.folder` after re-validating it with `isSafeRelativeFolder()`, so a retry writes into the original job's folder (PRD CUJ-5 step 5 and edge case).
+4. **Folder:** `full` mode calls `resolveFolder(snapshot.folderPattern, { artist: userName, id, title, userId })` ([design-settings-model.md](design-settings-model.md)), then **chooses the folder actually used** with `deps.chooseFolder(folder, artworkId)` ("Folder choice" below): the resolved folder, or `<folder> (n)` when Chrome's download history shows files of this artwork still present in it or in a lower-numbered sibling (PRD §4.3 "Folder choice", §4.5.1 step 4). The choice runs **concurrently with the mode's second API call** (`/pages`, or `ugoira_meta` plus the codec probe): `const [pages, chosen] = await Promise.all([fetchPages(job, deps), deps.chooseFolder(folder, job.artworkId)])`. Both must resolve before the plan exists, so nothing is queued, and `metadata.json` in particular is not dispatched, before the folder is chosen (PRD: "before its first write"). A failed API call discards the choice; a failed choice never fails the job (it returns the plain folder). Retry modes never run the check: they use `request.folder` after re-validating it with `isSafeRelativeFolder()`, so a retry writes into the original job's folder, suffix included (PRD CUJ-5 step 5 "the folder check is not run again", and its edge cases).
 5. **Effective ugoira format:** `effectiveFormat(snapshot.ugoiraOutput, caps)` (shared, also used by the button):
    - `zip` → `zip`;
    - `mp4` → `caps.avc ? 'mp4' : caps.vp9 ? 'webm' : 'zip'`;
@@ -281,6 +286,167 @@ stateDiagram-v2
 Failure in resolving → `apiFailure` is set and the job finalizes (classifier rows 2, 3 and 8 in [system.md §10](system.md)); a login-wall stop finalizes through row 4.
 
 **`answered` (R-004 S3, D13).** `applyResolution` sets `job.answered = true` in the same mutation that applies the resolution when the resolution is `ok` (every mode's plan needs at least one API 2xx), is the login-wall stop (its `/ajax/illust` answered), or is a failure with `answered: true`. The resolver computes that flag per call: an API step whose `RetryResult` is `ok`, or whose failure `gotAnswer()` (system.md §10: `http`, `pixivError`, or `answered: true`), marks the resolve answered; the failure returned for a later step carries it. Examples: `full` with `/ajax/illust` 200 and `/pages` unanswered `network` → `answered: true` (server); `full` with `/ajax/illust` unanswered `network` → `false` (offline); `retryPages` whose `/pages` got 503, 503, then refused attempts → the failure has `answered: true` → `true` (server); a transport failure of both proxies (`internal`) → `false`, and row 8 reads `server` anyway because `internal` is not `network`. A re-run of `resolve` after a restart recomputes the flag from scratch.
+
+#### Folder choice (folder-choice.ts; PRD §4.3 "Folder choice", §4.5.1 step 4, CUJ-1 step 8; refined 2026-10-27, D15)
+
+**Rule (PRD, user-visible).** Every `full` job, after `resolveFolder` and before any file is queued, asks Chrome's download history whether files of **this artwork** are still present in the resolved folder or in a sibling `<folder> (n)`. A file of this artwork is one whose basename starts with `<id>_` or `<id>.` (pages, the frame zip, the video); `metadata.json` and `frames.json` are never consulted, because with a token-free pattern they could belong to any artwork. Records whose file Chrome can no longer find on disk do not count. The surviving records are grouped by the last segment's ` (n)` suffix (plain = 0) and the job uses the lowest free `n ≥ 0`, written `<folder>` for 0 and `<folder> (n)` otherwise; gaps are reused. Only the last path segment ever carries a suffix. Inside the chosen folder every name is clean; every hand-off keeps `conflictAction: 'uniquify'` as the safety net. Retry modes echo the earlier job's folder, suffix included. The Saved tooltip and `aria-label` name the folder actually used ([design-artwork-button.md](design-artwork-button.md) "Presentation"). The same-instant two-tab race is accepted and not guarded (CUJ-1 edge).
+
+**Platform facts the design relies on.** Sources: Chromium `chrome/browser/extensions/api/downloads/downloads_api.cc`, `chrome/browser/download/download_query.cc`, `content/browser/download/download_manager_impl.cc`, and the Chrome docs for `chrome.downloads.search`, `DownloadQuery` and `DownloadItem.exists` (read 2026-10-27).
+1. `DownloadQuery.filenameRegex` is matched with **RE2 `PartialMatch`** against `DownloadItem.GetTargetFilePath().LossyDisplayName()` as UTF-8: the **absolute** target path, with the OS separator (`/` on macOS, Linux and ChromeOS; `\` on Windows), case-sensitive, default RE2 options. So the regex is a path *suffix* match, accepts both separators, and stays inside the RE2 ∩ ECMAScript common subset, because the same source is compiled again in JS to read the index.
+2. `search()` calls `CheckForHistoryFilesRemoval()`, which posts a `base::PathExists` for every **complete** history item not already flagged removed. The check is asynchronous and `search()` does not wait for it. A file found missing gets `OnDownloadedFileRemoved()`: `exists` turns `false`, an `onChanged` delta `{ exists: { previous: true, current: false } }` fires, and the flag is never cleared again in this browser session. `DownloadQuery.exists` filters on the same flag.
+3. **The re-check runs at most once per 10 s per profile** (`kFileExistenceRateLimitSeconds`), shared by every extension's `search()` calls, our own `othersSettled` and reconcile searches included. A `search()` inside that window returns the flags as they were. PRD §4.2 records the asynchrony ("at most a few hundred ms") but not the rate limit; see "Open Questions & Risks".
+4. `limit` defaults to 1000, and `0` returns every match. `state: 'complete'` excludes in-progress and interrupted records.
+5. The `downloads` permission already covers `search`: no manifest change ([system.md §5](system.md)).
+
+**Pure part: `src/shared/folder-choice.ts`** (principle 4, no `chrome.*`):
+
+```ts
+/** RE2 and ECMAScript metacharacters; both escape them with a backslash. */
+const REGEX_SPECIALS = /[\\^$.|?*+()[\]{}]/g;
+/** A path separator on any OS, as regex text: the class of backslash and slash. */
+const SEP = '[\\\\/]';
+export const escapeRegex = (s: string): string => s.replace(REGEX_SPECIALS, '\\$&');
+
+/**
+ * The filenameRegex for "a file of `artworkId` directly in `<Downloads>/<folder>/` or `<Downloads>/<folder> (n)/`":
+ * a suffix match on the absolute target path, either OS separator, RE2 ∩ ECMAScript syntax only.
+ * Capture group 1 is n; it is absent for the plain folder. Only the last segment gets the optional suffix.
+ */
+export function folderCheckRegex(folder: string, artworkId: string): string {
+  const segments = folder.split('/').map(escapeRegex).join(SEP);
+  return `(?:^|${SEP})${segments}(?: \\((\\d+)\\))?${SEP}${artworkId}[_.][^\\\\/]*$`;
+}
+
+/** n of the folder a matching record sits in (0 = plain), or null when `filename` does not match. */
+export function folderIndexOf(filename: string, folder: string, artworkId: string): number | null {
+  const m = new RegExp(folderCheckRegex(folder, artworkId)).exec(filename);
+  if (!m) return null;
+  return m[1] === undefined ? 0 : Number(m[1]);
+}
+
+/** The lowest n ≥ 0 not in `taken`: gaps are reused (PRD §4.3 "Index"). */
+export function lowestFreeIndex(taken: Iterable<number>): number {
+  const set = new Set(taken);
+  let n = 0;
+  while (set.has(n)) n++;
+  return n;
+}
+
+export const withFolderIndex = (folder: string, n: number): string =>
+  n === 0 ? folder : `${folder} (${n})`;
+```
+
+For `folderCheckRegex('pixiv/みずき-135882741', '135882741')` the regex text is
+`(?:^|[\\/])pixiv[\\/]みずき-135882741(?: \((\d+)\))?[\\/]135882741[_.][^\\/]*$`
+(every `\` is doubled again inside a TS string literal). It matches `/Users/aoi/Downloads/pixiv/みずき-135882741/135882741_p0.jpg` (n = 0), `C:\Users\aoi\Downloads\pixiv\みずき-135882741 (2)\135882741_p11.png` (n = 2), `…/135882741_ugoira.zip`, `…/135882741.mp4`, and a safety-net name such as `…/135882741_p0 (1).jpg` (still a file of this artwork). It does not match `…/pixiv/みずき-135882741/metadata.json` or `frames.json`, `…/1358827411_p0.jpg` (the `[_.]` after the id), `…/mypixiv/みずき-135882741/…` (the `(?:^|sep)` boundary), `…/pixiv (1)/みずき-135882741/…` (parents never carry a suffix: the optional group sits on the last segment only), or `…/pixiv/みずき-135882741/sub/135882741_p0.jpg` (`[^\\/]*$` allows no further separator).
+
+**Orchestration: `src/background/folder-choice.ts`.**
+
+```ts
+export interface FolderChoiceDeps {
+  search: (query: chrome.downloads.DownloadQuery) => Promise<chrome.downloads.DownloadItem[]>; // default: chrome.downloads.search
+  sleep: (ms: number) => Promise<void>;                                                          // default: setTimeout
+}
+
+/** PRD §4.3 "Folder choice". Never rejects: on any failure it returns `folder`, the pre-refinement behaviour. */
+export async function chooseFolder(folder: string, artworkId: string, deps: FolderChoiceDeps = DEFAULT_DEPS): Promise<string> {
+  const query = { filenameRegex: folderCheckRegex(folder, artworkId), state: 'complete', limit: 0 } as const;
+  try {
+    const first = await deps.search(query);          // also triggers Chrome's existence re-check (fact 2)
+    if (first.length === 0) return folder;            // the common case (a first run): no wait at all
+    await deps.sleep(FOLDER_CHECK_RECHECK_WAIT_MS);   // 250 ms: let the asynchronous re-check land
+    const settled = await deps.search(query);         // the same query; `exists` now reflects the re-check
+    const taken = settled
+      .filter((item) => item.exists !== false)
+      .map((item) => folderIndexOf(item.filename, folder, artworkId))
+      .filter((n): n is number => n !== null);
+    const chosen = withFolderIndex(folder, lowestFreeIndex(taken));
+    if (!isSafeRelativeFolder(chosen)) {              // belt only: cannot happen (design-settings-model.md "Folder-choice suffix")
+      log.warn('chosen folder failed validation, using the plain folder', chosen);
+      return folder;
+    }
+    log.debug('folder choice', { artworkId, records: settled.length, surviving: taken.length, chosen });
+    return chosen;
+  } catch (error) {
+    log.warn('folder check failed, using the plain folder', error);
+    return folder;
+  }
+}
+```
+
+- `FOLDER_CHECK_RECHECK_WAIT_MS = 250` lives in `src/shared/constants.ts` ("Timings"). It is the only new constant of the feature.
+- **Two identical searches.** The first search is what makes Chrome start the re-check (fact 2); there is no completion signal, so the second search, after a fixed wait, is the only way to read the settled flags. The second result replaces the first: a record that completed during the wait (the other tab's job, CUJ-1 edge) counts, and a record flagged removed during it does not.
+- **No wait on a first run.** An empty first result means no file of this artwork is in the history at all, so there is nothing to re-check. The first run of every artwork costs one search and no timer.
+- **`exists !== false`**, not `exists === true`: the field is always present in Chrome; the loose test is for the fakes and for older typings.
+- `state: 'complete'` makes a concurrent job's files count only once they have landed, which is exactly the PRD's "begun landing" wording for the two-tab case; a same-instant start sees none and both jobs use the plain folder with `uniquify` (accepted).
+- `limit: 0` is safe: the result is bounded by the artwork's files times the number of runs (a 200-page manga downloaded ten times is 2000 small objects, once).
+- The resolver gets `chooseFolder` through `ResolverDeps` (`chooseFolder: (folder: string, artworkId: string) => Promise<string>`), injected by `engine.ts` from this module, so resolver unit tests stub it and `folder-choice` unit tests use the fake `chrome.downloads`.
+
+**Why the chosen folder is always a safe path.** `resolveFolder` already returns a folder every segment of which satisfies `chromeSafeSegment(seg) === seg` ([design-settings-model.md](design-settings-model.md) D8). Appending ` (n)` to the last segment keeps that invariant for every n: step a adds no illegal character; step b trims nothing, because the segment now ends in `)`; step d's reserved-name test reads the text before the first `.`, and `CON (1)` is not `con` (and `_CON` was already prefixed); step e's extension test reads the text after the last `.`, which now ends in `) `-style text that is not `local`, `lnk`, `scf`, `url` or `{…}`; step f's 8.3 test excludes any segment with a space. The length stays far below `MAX_FOLDER_CHARS` (1024) and the field's 200 characters plus token expansions. The check in `chooseFolder` is a belt; design-settings-model.md pins the invariant with unit tests over its Golden examples.
+
+**Edge cases** (every PRD line, with what Chrome returns and what the job does):
+
+| Case (PRD) | Records returned by the second search | Chosen folder |
+|---|---|---|
+| First run of the artwork (CUJ-1 step 2) | none (first search empty, no wait) | `pixiv/みずき-135882741` |
+| Repeat run, first run's files present (CUJ-1 step 8) | n = 0 records, `exists: true` | `pixiv/みずき-135882741 (1)` |
+| Third run | n ∈ {0, 1} | `(2)` |
+| First folder moved, renamed or deleted; files renamed (CUJ-1 edge, AC) | the records, `exists: false` after the re-check | plain again, no `(1)` |
+| Gap: plain deleted, `(1)` kept | surviving {1} | plain |
+| Gap: plain and `(2)` kept, `(1)` deleted | surviving {0, 2} | `(1)` |
+| Chrome's history cleared, files still on disk (edge, AC) | none | plain; Chrome's `uniquify` produces `135882741_p0 (1).jpg`, `metadata (1).json` (accepted limitation). The next run then finds those records and uses `(1)` |
+| Files saved by another tool, no record | none | same as above |
+| Token-free pattern `pixiv` (§4.4, edge) | only records of this artwork's files match (`<id>[_.]`); other artworks' files in `pixiv/` do not | `pixiv (1)` only for a repeat of the same artwork |
+| Same artwork in two tabs, second click after the first job's originals began landing (edge, CUJ-4 edge) | the first job's completed pages (`state: 'complete'`) | `(1)` |
+| Same artwork in two tabs, same instant | none complete yet | both plain; per-file `uniquify` (accepted, not guarded) |
+| Partial failure, then reload and click (CUJ-5 edge) | the 9 landed pages | `(1)`; the partial folder is left as it is |
+| 403 mid-job, log in, click (CUJ-5 step 9) | the landed files | `(1)` |
+| Retry of any kind (CUJ-5 step 5) | not consulted | the job's own folder, suffix included |
+| A safety-net name in the history (`135882741_p0 (1).jpg`) | matches (`<id>_`) | counts as present |
+| The search throws, or returns something that is not an array | — | plain, `warn` log (the pre-refinement behaviour) |
+| Second search throws | — | plain, `warn` log (simplest rule; a near-impossible case) |
+| Re-check rate-limited: the click comes within 10 s of the previous `search()` (fact 3) after a folder was removed | stale `exists: true` | the next free n instead of the freed one (residual, Open Questions) |
+| SW restart during the wait | — | `resolve` re-runs from scratch; the job's own files are not complete yet, so the re-run cannot count itself |
+
+**Performance.** A first run: one search; Chrome filters its whole history with RE2, about a microsecond per record, so 10 000 records cost about 10 ms, and no timer. A repeat run: the 250 ms wait plus a second search, started together with `/pages` (typically 100–300 ms on live pixiv), so the net delay is `max(0, 250 ms − API round trip)` plus one search. Nothing changes on screen: the button shows the optimistic `0 / 12` within 100 ms as before, and the badge shows `expectedFiles` while resolving. The PRD's "at most a few hundred ms" is the worst case.
+
+**Observability.** `debug` once per `full` job with the record count, the surviving count and the chosen folder; `warn` when a search fails. Never the absolute paths Chrome returns (they name the user's home directory): only the chosen relative folder.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant SW as Service worker (resolver)
+  participant FC as folder-choice.ts
+  participant DL as chrome.downloads
+  participant FS as Disk (via Chrome's re-check)
+  SW->>SW: resolveFolder → pixiv/みずき-135882741
+  par /pages through the tab
+    SW->>SW: fetchPages(job)
+  and folder choice
+    SW->>FC: chooseFolder(folder, 135882741)
+    FC->>DL: search({ filenameRegex, state: 'complete', limit: 0 })
+    DL->>FS: PathExists for each complete item not yet flagged (async, ≤ once per 10 s)
+    DL-->>FC: records (flags as before the re-check)
+    alt no record
+      FC-->>SW: pixiv/みずき-135882741 (no wait)
+    else records exist
+      FC->>FC: sleep FOLDER_CHECK_RECHECK_WAIT_MS (250 ms)
+      FS-->>DL: missing files → exists: false, onChanged { exists }
+      FC->>DL: search(same query)
+      DL-->>FC: records with settled exists
+      FC->>FC: surviving → indexes → lowest free n
+      FC-->>SW: pixiv/みずき-135882741 (1)
+    end
+  end
+  SW->>SW: plan { folder: chosen, files: metadata.json, pages… } → transferring
+```
+
+**Testing.**
+- Unit, pure (`test/unit/shared/folder-choice.test.ts`): `folderCheckRegex` matches and rejects every example above, including the Windows path, a folder with regex specials (`pixiv/(sora)+[x]-1`), a last segment that itself ends in ` (2)` (records in `… (2)/` are n = 0 and `… (2) (1)/` n = 1), a `{title}` segment with `.` and `$`; the regex source contains no construct outside RE2 (no lookaround, no backreference, no `\Q`); `folderIndexOf` reads n and returns `null` for `metadata.json`; `lowestFreeIndex` over `{}`, `{0}`, `{1}`, `{0, 2}`, `{0, 1, 2}`, duplicates and unsorted input; `withFolderIndex(f, 0) === f`.
+- Unit, orchestration (`test/unit/background/folder-choice.test.ts`, fake `chrome.downloads`, fake timers): present → `(1)` with exactly two `search` calls carrying `state: 'complete'`, `limit: 0` and the regex; absent → plain with one call and no pending timer; `removeFile` on the earlier records before the call → plain (the fake's re-check runs on `search`); the two gap cases; in-progress and interrupted records ignored; another artwork's files in the same folder ignored; a record with `exists: false` ignored; `search` rejecting → plain and a `warn`; a re-check that lands after the wait (the fake's `existenceCheckDelay(400)`) → the stale `(2)`, pinning the residual as intended behaviour of the bound.
+- Resolver unit (`engine-resolver.test.ts`): `full` passes the resolved folder and the artwork id to `chooseFolder` and uses its answer as `plan.folder`; it is called before `/pages` answers (concurrency); retry modes never call it; a `/pages` failure after an answered `chooseFolder` still fails the resolve; a rejecting `chooseFolder` stub is a programming error (the real one never rejects).
+- Integration (`test/integration/sw-folder-choice.test.ts`, L2): two consecutive `full` jobs of one artwork → `pixiv/みずき-135882741/{metadata.json, 135882741_p0.jpg…}` then `pixiv/みずき-135882741 (1)/…` with clean names and the second ended view's `folder` ending in ` (1)`; `fake.downloads.removeFile` on the first run's files, then a third job → plain; a `retryPages` from a `(1)` job writes into `(1)`; two tabs, same artwork, the second `job/start` after the first job's first originals completed → `(1)`; the same with both starts in one tick → both plain and the second's names uniquified by the fake.
+- E2E ([design-test-harness.md](design-test-harness.md) "Acceptance-criteria mapping"): CUJ-1 step 8 and its ACs on real Chrome, the tooltip and `aria-label` included; the moved-folder case waits out fact 3.
 
 #### `metadata.json` construction (src/shared/metadata.ts)
 
@@ -341,7 +507,7 @@ pump(job):
 | `off/ready { blobUrl }` (save) | `fetching → saving` (blobUrl stored, persisted **before** the call) | effect `download` → `handOff()`: decide whether this is the busy period's last hand-off, then `await downloadUi.restore()` if it is (R-006) or `await downloadUi.hideForHandOff()` if not (R-005; both below), stop if the job ended or the file left `saving` meanwhile, then `downloads.download({ url: blobUrl, filename: folder + '/' + name, conflictAction: 'uniquify', saveAs: false })` → store `downloadId` (persist). If the call throws ("Invalid filename" etc.) → `failed{disk}`. |
 | `off/ready` (zip with `save: false`) | `fetching → done` | pump |
 | `off/ready` without `blobUrl` for a file that must be saved | `fetching → failed{ internal, detail: 'no blob' }` | release, pump |
-| Dispatch refused (`{ ok: false }` ack) or undeliverable (`sendMessage` rejects after the one `ensureOffscreen` resend) | `fetching → failed{ internal }` for every role except `video`, which fails `{ encode }` (the zip landed, so `Retry · MP4` is the right next action, §10 row 5) | release, pump |
+| Dispatch refused (`{ ok: false }` ack) or undeliverable (`sendMessage` still finds no listener after the bounded ready wait, `OFFSCREEN_READY_WAIT_MS`; [design-offscreen-worker.md](design-offscreen-worker.md) "Lifecycle", D16) | `fetching → failed{ internal }` for every role except `video`, which fails `{ encode }` (the zip landed, so `Retry · MP4` is the right next action, §10 row 5) | release, pump |
 | `off/progress` | update `ugoira.zipLoaded/zipTotal/encDone`; recompute percent (monotonic) | throttled `job/update` push (≤ 4/s) |
 | `off/failed { failure }` | `fetching → failed` | if `failure.status === 403` and role ∈ {page, zip}: `stopReason = 'forbidden'` (no new dispatches; in-flight files finish, PRD CUJ-5 step 9). Release task; pump. |
 | `downloads.onChanged` `state: complete` | `saving → done` | `off/release` (with `keepRetained: true` for a `zip` file whose `video` is still pending), pump, badge, push. When pump returns `finalize`, `settle()` (`scheduler.ts`) adds neither `badge` nor a running `push`, because finalize sends both: the completion that ends a job reaches the tab only as the ended view ("Progress counter" below). |
@@ -886,11 +1052,16 @@ sequenceDiagram
   SW->>CS: api/fetchJson /ajax/illust/135882741
   CS->>PX: fetch (first-party)
   CS-->>SW: body
-  SW->>CS: api/fetchJson /ajax/illust/135882741/pages
-  CS->>PX: fetch
-  CS-->>SW: 12 original URLs
   SW->>SW: resolveFolder → pixiv/みずき-135882741
-  SW->>SS: set job (transferring, files queued, answered)
+  par
+    SW->>CS: api/fetchJson /ajax/illust/135882741/pages
+    CS->>PX: fetch
+    CS-->>SW: 12 original URLs
+  and folder choice (D15)
+    SW->>DL: search({ filenameRegex, state: 'complete', limit: 0 })
+    DL-->>SW: [] on a first run → folder stays; records → wait 250 ms, search again → folder (n)
+  end
+  SW->>SS: set job (transferring, folder chosen, files queued, answered)
   loop up to 5 in flight, ascending idx
     SW->>OD: off/makeText(metadata) / off/fetchBytes(p_k)
     OD->>IMG: fetch p_k (DNR adds Referer)
@@ -1009,6 +1180,25 @@ sequenceDiagram
 | Code | One pure predicate in `scheduler.ts`, plus an in-memory map and two bounded waits in `handOff()` | Existing | A marker file, its cleanup (`removeFile`/`erase`), and PRD changes | A completion-keyed waiter, plus a timeout for held files |
 | **Verdict** | **Selected (R-006 option B)** | Replaced | Rejected | Rejected |
 
+**Reading Chrome's existence re-check (folder choice, D15)**
+
+| Criteria | **Two identical searches, 250 ms apart** | One search, then watch `onChanged` `exists` deltas for the returned ids, bounded | One search, trust `exists` as returned | `search({ id })` per returned record after the wait |
+|---|---|---|---|---|
+| Correct after the folder was moved or deleted (PRD edge, AC) | Yes, whenever Chrome's re-check runs (fact 3) | Same | **No**: the flags are stale until a re-check completed, so the first run after a deletion would always take `(n + 1)` | Yes |
+| Knows when the re-check is done | No signal exists; waits the full bound | No completion signal either: a delta comes only for a missing file, so the bound always elapses | — | No |
+| Plumbing | Two calls through one injectable `search`; a pure resolver dependency | The engine's `deltaWatchers` would have to reach into the resolver, or a second subscription path | None | One call per record |
+| Cost on a first run | One search, no wait | Same | One search | One search |
+| **Verdict** | **Selected** | Rejected (same latency, more coupling) | Rejected (contradicts the PRD edge) | Rejected (N calls for nothing) |
+
+**Anchoring the history regex (D15)**
+
+| Criteria | **Suffix match from a path separator** | Anchor at the Downloads directory | Count only this extension's records (`byExtensionId`) |
+|---|---|---|---|
+| Needs the Downloads path | No | Yes, and no API exposes it; it could only be inferred from our own earlier records, which we keep nowhere (PRD §4.1 #1) | No |
+| Over-match | A deeper folder with the same relative suffix, e.g. after the pattern changed from `a/pixiv/{artist}-{id}` to `pixiv/{artist}-{id}`, counts and costs one needless `(1)`; rare and harmless | None | — |
+| Under-match | None | — | Files the user saved through Chrome by hand, or with another extension, would be ignored, and a run would write clean names next to them. The PRD counts "completed downloads whose path is …" whatever their origin |
+| **Verdict** | **Selected** | Rejected (impossible) | Rejected (contradicts the PRD) |
+
 **How "No connection" is judged (R-004 S3)**
 
 | Criteria | **Job-level flag (`JobRecord.answered`) + request-level `Failure.answered`** | Per-request `lastStatus` (iteration 2) | Per-URL/host memory of recent 429/5xx in the SW |
@@ -1027,6 +1217,7 @@ sequenceDiagram
 - **Observability:** `info` at job start/end with `jobId`, `artworkId`, `mode`, `kind`, outcome, counts, duration; `debug` per file transition. `chrome://extensions` → Errors shows `warn`/`error`.
 - **Testing:**
   - Unit: scheduler pump (cap, order, deps, stop on 403, cancel), `classifyOutcome` (one case per row plus precedence conflicts; row 8 cases: a job without `answered` whose only failure is an unanswered `network` API failure → offline; a resolved job (`answered: true`) whose every original failed with unanswered `network` → server (the PRD's accepted cost); an API `network` failure with `answered: true` → server; any `internal` or `timeout` → server; `navigator.onLine === false` → offline even when answered; all `disk`/`dismissed` → disk; row 4 via `stopReason 'forbidden'` with no failed file), badge/title math including `999+`, singular, a lone 0-count job (idle title, empty badge) and "across N" counting only jobs with files left, `buildMetadata`/`serializeJson` against golden vectors, `effectiveFormat` truth table.
+  - Folder choice (D15): the pure, orchestration, resolver and integration cases listed under "Folder choice", Testing.
   - Resolver: `full` with `loggedIn: false` on a withheld body → `loginRequired`, and the fake API saw no `/pages` or `ugoira_meta` call; `loggedIn: true` or `null` on the same body → proceeds; `retryEncode` calls `/ajax/illust` before `ugoira_meta`; `retryPages` with `withMetadata` calls `/ajax/illust` before `/pages`, queues `metadata` first with that body, and fails on a deleted work before `/pages`, while without it no `/ajax/illust` call is made and no body is kept (R-007 item 6); a transport error from both the tab and the offscreen fallback → `apiFailure` with `kind: 'internal'` and `answered: false`; `Resolution.answered` per the examples in "Resolving"; `applyResolution` sets `job.answered` for `ok`, the login-wall stop and an answered failure, and leaves it absent for an unanswered failure.
   - `download-ui.ts` (fake `setUiOptions`):
     - concurrent `hideForHandOff()` calls make one Chrome call and all resolve after it;
@@ -1071,6 +1262,13 @@ sequenceDiagram
 
 ## Migration / Rollout
 
+**Iteration 5 (folder choice, D15; offscreen readiness, D16). Version 1.0.0 is live on the Chrome Web Store since 2026-10-27, so this ships as an update to installed users.**
+- **Persisted shape: unchanged.** `JobRecord` gains no field (`folder` simply carries the suffix), `StartRequest` is unchanged (retry requests already echo `folder`), `JobOutcome` is unchanged, and no storage key is added (system.md §6 inventory unchanged). `storage.session` is cleared on update anyway, so no hydrated record of 1.0.0 is ever read.
+- **Permissions: unchanged.** `downloads` already covers `search`; no manifest edit and no re-approval prompt (system.md §5).
+- **Behaviour change for existing users, by design (PRD):** a repeat download of an artwork whose files 1.0.0 saved goes to `<folder> (1)` instead of ` (1)`-suffixed file names, because 1.0.0's records are in Chrome's history and their files are present. 1.0.0's own safety-net names (`135882741_p0 (1).jpg`) match the regex and count as present, so such a folder also gets a sibling. Settings and their storage are untouched.
+- **Rollback** is a plain revert: no state to migrate back. A reverted build writes clean names into the plain folder with `uniquify`, as before.
+- **Constants added** (`src/shared/constants.ts`): `FOLDER_CHECK_RECHECK_WAIT_MS` (250), `OFFSCREEN_READY_WAIT_MS` (1000), `OFFSCREEN_RESEND_DELAY_MS` (25).
+
 **Iteration 4 (R-007 item 6).**
 - **Persisted shape.** `StartRequest.retryPages` gains `withMetadata?: true`, which rides in `JobRecord.request`, and `JobOutcome.partial` gains `metadataFailed?: true`. A record or message without either reads as before: no `metadata.json` in the Retry. The guards accept only `true`. No migration and no bump of `JobRecord.v`, for the reason under iteration 3 (`storage.session` is cleared on update).
 - **Rollback** is a plain revert. The flag on a `partial` button state lives only in the content script's memory.
@@ -1108,4 +1306,10 @@ sequenceDiagram
   - Likelihood is low: pixiv-sized blobs are written in milliseconds. The cap bounds the delay of the job's last file.
   - L5 watches a re-download served from the HTTP cache, where the last files land together, for exactly one animation and a bubble that lists every file.
 - **An end without a final hand-off leaves the button away until Chrome's next download.** This covers cancel, failure, needs login, Unavailable, and a last outstanding file that fails. The UI is on, but Chrome shows the button only with its next download event, and no extension API can show it sooner. R-006 accepts this.
+- **Folder choice (D15) residuals**, none a product change; the first is a PRD technical-fact gap for pm.
+  - **Chrome re-checks file existence at most once per 10 s per profile** (platform fact 3). PRD §4.2 says the re-check "is asynchronous and takes at most a few hundred ms" and the CUJ-1 edge promises the plain name after the folder was moved away. Both hold except when the repeat click comes within 10 s of the previous `search()` (ours or any extension's) after the folder was removed: the records still read `exists: true`, and the run takes the next free `(n)` instead of the freed name. The result is one needless suffix, never a lost or overwritten file. No API forces an earlier check. Flagged for `/spec-sync`: add the 10 s qualifier to §4.2 and the edge (system.md §15). E2E tests of the moved-folder case wait the window out (design-test-harness.md).
+  - **A folder moved back** after Chrome flagged its files removed stays flagged for the browser session (the flag is never cleared, fact 2), so the next run uses the plain name and Chrome's `uniquify` suffixes the files: the same class as the "history cleared" limitation the PRD accepts. After a browser restart the flags are re-derived.
+  - **A folder pattern that is a suffix of an earlier one** (`a/pixiv/{artist}-{id}` → `pixiv/{artist}-{id}`) makes the old folder's records match the new folder's regex ("Anchoring"), costing one needless `(1)`.
+  - **A uniquified video name** `135882741 (1).mp4` (history cleared, ugoira) does not start with `<id>_` or `<id>.`, so by the PRD's definition it does not count. Negligible; pm may extend the definition.
+  - **Case and normalization.** The regex compares code points case-sensitively. The folder is produced deterministically by the same code from the same inputs, and Chrome writes the path exactly as given, so a record matches what the extension wrote. A changed artist name resolves to a different folder, which is not this feature's concern.
 - **Stale logged-in page** (user logged out in another tab): the resolver does not treat a withheld body as a refusal while the page claims to be logged in, so a walled all-ages work downloads in that case. This is PRD text now (CUJ-5 edge, R-004 S12a), to be revisited after the release checklist's logged-in stale-page probe ([system.md §8.5](system.md) miss 2).

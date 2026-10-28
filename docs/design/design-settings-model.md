@@ -1,7 +1,7 @@
 # Settings Model & Folder Paths (shared domain logic)
 
-> Last updated: 2026-10-23 16:31:01 (UTC-7)
-> Serves: prd-000 — §4.4 (folder pattern & sanitization, incl. the Chrome path-safety pass per R-004 S8), §4.9 (settings model), CUJ-1 (folder resolution), CUJ-3 (validation incl. the unclosed `{` per R-004 S5, preview, persistence), CUJ-5 (retry into the same folder)
+> Last updated: 2026-10-27 20:32:56 (UTC-7)
+> Serves: prd-000 — §4.4 (folder pattern & sanitization, incl. the Chrome path-safety pass per R-004 S8), §4.9 (settings model), CUJ-1 (folder resolution; the folder-choice suffix ` (n)` on the last segment stays a safe path, §4.3 "Folder choice" refined 2026-10-27), CUJ-3 (validation incl. the unclosed `{` per R-004 S5, preview, persistence), CUJ-5 (retry into the same folder, suffix included)
 
 ## Overview
 
@@ -135,6 +135,8 @@ resolveFolder(pattern, v):
   return segs.length ? segs.join('/') : 'unknown'
 ```
 
+**Folder-choice suffix (D15).** `resolveFolder` returns the pattern's folder and nothing else. The download engine may then use `<folder> (n)` instead, appending ` (n)` (space, parenthesised decimal) to the **last** segment when Chrome's download history shows this artwork's files still present ([design-download-engine.md](design-download-engine.md) "Folder choice"). The suffix is not part of resolution: the options preview shows the pattern's folder (PRD CUJ-3 step 2 shows `Downloads/pixiv/みずき-135882741/135882741_p0.jpg`), and the engine computes the suffix per job. `isSafeRelativeFolder` accepts the suffixed folder for every `n` whenever it accepts the plain one, so the chosen folder and a retry request echoing it both pass validation: step a adds nothing illegal; step b trims nothing, since the segment ends in `)`; step d reads the text before the first `.`, and `con (1)` is not a reserved name (a reserved name was already prefixed `_`); step e reads the text after the last `.`, which now ends in `) `-style text outside the set; step f excludes any segment containing a space. Length stays far inside `MAX_FOLDER_CHARS`. Pinned by unit tests over the Golden examples (Testing).
+
 #### Token sanitization: `sanitizeToken(s)`
 
 Steps 1–6 are `safe_component` in `ref/pixiv-dl`. The marked steps are additions.
@@ -251,7 +253,7 @@ sequenceDiagram
 - **Observability:** `debug` log of the resolved folder per job (local only).
 - **Testing:**
   - Golden parity: `sanitizeToken(s, { parityOnly: true }) === safe_component(s)` for every vector in `test/golden/safe_component.json`. ENG-003 generates ≥ 200 vectors: all PRD examples, every Python whitespace char, controls, emoji/ZWJ, NFC/NFD pairs, 59/60/61-byte CJK boundaries, 4-byte characters at the boundary, `.`/`_`/space edges, empty strings.
-  - Unit: each validation rule and its precedence (e.g. `/a\..` → rule 2 wins; a 201-character pattern with a stray `:` → rule 6, not 7), rule 5's fragments (`pixiv/{user` → `{user`, `pixiv/{artist` → `{artist`, `{id}{` → `{`, `a{b{id}` → `{b`, `pixiv/{artst}-{` → `{artst}`; `pixiv/a}b` and `}{id}` valid), each D8 step with the table above, every Golden example row (including `~` → `unknown`, `.~.` → `unknown`, `~sora~` → `sora`, `so~ra-1` → `so_ra-1`, literal `~sora~-1` → `sora_-1`), `isSafeRelativeFolder`, newest-wins merging (sync newer, local newer, tie, one missing, corrupt fields), `writeSettings` returning the `updatedAt` it stored, `effectiveFormat` truth table.
+  - Unit: each validation rule and its precedence (e.g. `/a\..` → rule 2 wins; a 201-character pattern with a stray `:` → rule 6, not 7), rule 5's fragments (`pixiv/{user` → `{user`, `pixiv/{artist` → `{artist`, `{id}{` → `{`, `a{b{id}` → `{b`, `pixiv/{artst}-{` → `{artst}`; `pixiv/a}b` and `}{id}` valid), each D8 step with the table above, every Golden example row (including `~` → `unknown`, `.~.` → `unknown`, `~sora~` → `sora`, `so~ra-1` → `so_ra-1`, literal `~sora~-1` → `sora_-1`), `isSafeRelativeFolder`, including the folder-choice invariant: for every Golden example folder `f` and `n ∈ {1, 2, 10, 999}`, `isSafeRelativeFolder(f + ' (' + n + ')')` is true (D15), and so for `_CON (1)`, `My.url_ (1)`, `so_ra-1 (1)` and `pixiv/みずき-135882741 (1)`; newest-wins merging (sync newer, local newer, tie, one missing, corrupt fields), `writeSettings` returning the `updatedAt` it stored, `effectiveFormat` truth table.
   - Golden parity is unaffected by step 4+: `parityOnly` keeps the script's `[._ ]` edge class, and `test/golden/safe_component.json` does not change.
   - Property test (fast-check is optional; a seeded random generator is enough): for 10 000 random Unicode strings, every segment of `resolveFolder('{artist}/{title}', …)` satisfies a JS port of Chrome's `IsSafePortablePathComponent` predicate.
 

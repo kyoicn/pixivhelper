@@ -1,7 +1,7 @@
 # Offscreen Worker (bytes & ugoira encoding)
 
-> Last updated: 2026-10-23 16:31:01 (UTC-7)
-> Serves: prd-000 — CUJ-1 (original bytes), CUJ-2 (zip, frames.json, in-browser video), CUJ-5 (encode-failure retry, byte-level failures)
+> Last updated: 2026-10-27 20:32:56 (UTC-7)
+> Serves: prd-000 — CUJ-1 (original bytes; edge "Same artwork clicked in two tabs": two independent jobs), CUJ-2 (zip, frames.json, in-browser video), CUJ-4 (AC "Starting a second artwork while one is running begins downloading the second immediately"), CUJ-5 (encode-failure retry, byte-level failures)
 
 ## Overview
 
@@ -57,28 +57,99 @@ flowchart LR
 
 ## Detailed Design
 
-### Lifecycle (owned by `src/background/offscreen-client.ts`)
+### Lifecycle (owned by `src/background/offscreen-client.ts`; D16, revised iteration 5)
 
 ```ts
-const OFFSCREEN_URL = 'offscreen.html';
-let creating: Promise<void> | null = null;
+// src/background/offscreen-client.ts
+let creating: Promise<void> | null = null;   // createDocument in flight, this SW instance
+let closing: Promise<void> | null = null;    // closeDocument in flight, this SW instance
+let closeTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Creates the offscreen document unless it exists; concurrent callers share one creation. Never creates over a closing one. */
 export async function ensureOffscreen(): Promise<void> {
   cancelScheduledClose();
-  const ctx = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [chrome.runtime.getURL(OFFSCREEN_URL)] });
-  if (ctx.length) return;
-  creating ??= chrome.offscreen.createDocument({
-    url: OFFSCREEN_URL,
-    reasons: [chrome.offscreen.Reason.BLOBS],
-    justification: 'Fetch pixiv originals into Blob URLs for chrome.downloads and encode ugoira videos with WebCodecs.',
-  }).finally(() => { creating = null; });
-  await creating;
+  if (closing) await closing;                                   // (a) a close in flight: let it finish first
+  if (creating) return creating;                                // (b) the race fix: before getContexts (QA iteration 4)
+  const ctx = await chrome.runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT'],
+    documentUrls: [chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH)],
+  });
+  if (ctx.length > 0) return;
+  if (creating) return creating;                                // (c) a sibling caller started creating during the await
+  creating = chrome.offscreen
+    .createDocument({ url: OFFSCREEN_DOCUMENT_PATH, reasons: ['BLOBS'], justification: JUSTIFICATION })
+    .catch((error: unknown) => {
+      if (!isAlreadyCreated(error)) throw error;                // (d) "Only a single offscreen document may be created": it exists
+    })
+    .finally(() => { creating = null; });
+  return creating;
+}
+
+/**
+ * Sends `cmd`, creating the document first if needed. "Receiving end does not exist" means the document has no listener
+ * yet (its script has not run) or no longer (it is unloading): the command was not delivered, so it is safe to resend.
+ * Resend every OFFSCREEN_RESEND_DELAY_MS, for at most OFFSCREEN_READY_WAIT_MS from the first failure; then the error
+ * propagates and the caller fails the file as `internal`.
+ */
+export async function send<C extends OffscreenCommand>(cmd: C): Promise<ResponseMap[C['type']]> {
+  const message = { ...cmd, target: 'offscreen' } as SwToOffscreenMessage;
+  let deadline: number | null = null;
+  for (;;) {
+    await ensureOffscreen();
+    try {
+      return await chrome.runtime.sendMessage<SwToOffscreenMessage, ResponseMap[C['type']]>(message);
+    } catch (error) {
+      if (!isReceivingEndGone(error)) throw error;
+      deadline ??= Date.now() + OFFSCREEN_READY_WAIT_MS;
+      if (Date.now() + OFFSCREEN_RESEND_DELAY_MS > deadline) throw error;
+      log.debug('offscreen document not listening yet, resending', cmd.type);
+      await sleep(OFFSCREEN_RESEND_DELAY_MS);
+    }
+  }
+}
+
+export function scheduleClose(): void {
+  cancelScheduledClose();
+  closeTimer = setTimeout(() => {
+    closeTimer = null;
+    closing = chrome.offscreen
+      .closeDocument()
+      .catch((error: unknown) => log.debug('offscreen document already closed', error))
+      .finally(() => { closing = null; });
+  }, OFFSCREEN_CLOSE_GRACE_MS);
 }
 ```
 
 - **One document** per extension (Chrome limit). All concurrent jobs share it. Tasks are isolated by `taskId`.
 - **Reason `BLOBS`.** No reason exists for WebCodecs, and `BLOBS` truthfully covers the Blob URL work. With this reason Chrome imposes no lifetime limit (only `AUDIO_PLAYBACK` auto-closes).
-- **Close policy:** when the SW's job registry becomes empty and no `caps` probe is pending, the SW schedules `chrome.offscreen.closeDocument()` after a 5 s grace. Any `ensureOffscreen()` cancels it. Because a job only ends after all its downloads reached a terminal state, closing never revokes a `blob:` URL Chrome is still reading. Closing frees the retained zip and encoder memory (~10–100 MB) instead of holding it for the whole browser session. The 5 s timer runs inside the SW's guaranteed 30 s post-event window, so it is reliable.
-- **Readiness:** `offscreen.ts` registers its `runtime.onMessage` listener synchronously at module top level. `createDocument` resolves after the document loads, so commands sent after `ensureOffscreen()` are never lost. If a command's `sendMessage` still rejects ("Receiving end does not exist"), the client re-runs `ensureOffscreen()` once and resends.
+- **Close policy:** when the SW's job registry becomes empty and no `caps` probe is pending, the SW schedules `chrome.offscreen.closeDocument()` after a 5 s grace (`OFFSCREEN_CLOSE_GRACE_MS`). Any `ensureOffscreen()` cancels a pending timer, and one that arrives after the close call started awaits it (a) and then creates afresh. Because a job only ends after all its downloads reached a terminal state, closing never revokes a `blob:` URL Chrome is still reading. Closing frees the retained zip and encoder memory (~10–100 MB) instead of holding it for the whole browser session. The 5 s timer runs inside the SW's guaranteed 30 s post-event window, so it is reliable.
+- **Readiness (D16).** `offscreen.ts` registers its `runtime.onMessage` listener synchronously at module top level, and `createDocument` resolves once the document has loaded, so a command sent after an *awaited* `createDocument` finds the listener. The race QA reproduced in iteration 4 (14 of 16 runs with two jobs started 5–11 ms apart; `docs/qa-report.md`) sat before that await: **`runtime.getContexts` lists an offscreen document as soon as Chrome creates it, before its script has run.** The first design's `ensureOffscreen()` asked `getContexts` first, so a second job's call returned at once while the first job's `createDocument` was still pending, its command hit a document with no listener ("Receiving end does not exist"), the single immediate resend re-ran the same check and failed the same way, and the file failed `internal` with 0 attempts. Three rules close it:
+  1. **An in-flight creation is awaited before `getContexts` is consulted** (b, and c for the window between the two awaits). Every caller of this SW instance shares the one creation promise, however the context list looks meanwhile. A duplicate `createDocument` rejection (d) is read as "it exists" rather than an error, which also covers a creation another path raced in.
+  2. **"Receiving end does not exist" is "not ready yet", not a failure.** `send()` re-ensures and resends every `OFFSCREEN_RESEND_DELAY_MS` = 25 ms until `OFFSCREEN_READY_WAIT_MS` = 1000 ms after the first such rejection (both in `src/shared/constants.ts`; the bound is pm's, pm-review iteration 4 priority 1). This covers what rule 1 cannot see: a document another SW instance created that is still loading (after a worker restart), and a document that is unloading. A rejection with any other message was delivered or is a different fault, and propagates as before.
+  3. **A close in flight is awaited before anything else** (a). `scheduleClose()` keeps the `closeDocument()` promise in `closing`, so a job that starts during the 5 s grace close waits the few milliseconds the close takes and then creates a fresh document, instead of sending into the unloading one or racing `createDocument` against it.
+- **Why not a readiness handshake** (the document posting `off/hello` on load): the SW would need to await a message that may have arrived before the awaiting code ran (worker restart), which brings back the same class of race with more code. The resend loop needs no protocol change and is idempotent, because a command that was never received has no effect.
+- **Bound.** Chrome creates and loads `offscreen.html` (a ~250 KB bundle) in well under 100 ms on the machines QA measured; 1 s is an order of magnitude of headroom, and it is pm's limit for "neither job waits for the other" (CUJ-4 AC 5). At most 40 resends can happen, each a `getContexts` call and a `sendMessage`, both sub-millisecond. After the bound the command fails exactly as a refused ack does ([design-download-engine.md](design-download-engine.md) "Offscreen events → file transitions"): `internal` with `attempts: 0`, `encode` for a video.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant A as Job A (dispatch)
+  participant B as Job B (dispatch, 5–11 ms later)
+  participant OC as offscreen-client.ts
+  participant CH as chrome.offscreen / runtime
+  participant OD as offscreen.html
+  A->>OC: send(off/makeText)
+  OC->>CH: getContexts → []
+  OC->>CH: createDocument (creating = promise)
+  CH->>OD: create context (listed by getContexts at once)
+  B->>OC: send(off/makeText)
+  Note over OC: (b) creating !== null → B awaits the same promise, getContexts is not asked
+  OD->>OD: script runs → onMessage registered
+  CH-->>OC: createDocument resolves (creating = null)
+  OC->>OD: A's command · B's command
+  OD-->>OC: { ok: true } · { ok: true }
+  Note over OC,OD: Variant: a worker restart while the document loads → getContexts lists it, sendMessage rejects "Receiving end does not exist" → resend every 25 ms, ≤ 1 s
+```
 
 ### Data Model
 
@@ -317,6 +388,14 @@ sequenceDiagram
 - **Observability:** `info` per encode (codec string actually used, hardware/software, W×H, frames, ms elapsed, output bytes), `warn` on the software-retry path, `error` on final failure with the `detail` code.
 - **Testing:**
   - Unit: `timeline.ts` (mixed delays 40/40/500/40 → ts 0/40/80/580, total 620), `avcCandidates` level table, `even()`, `extractEntry` against fflate-built fixture zips (stored and deflated), progress mapping.
+  - **Lifecycle (D16), L2 with `test/fakes/chrome.ts` and fake timers** (`test/unit/background/offscreen-client.test.ts`, `test/integration/sw-concurrent.test.ts`). The fake gains `offscreen.holdCreation()` and `offscreen.holdClose()` ([design-test-harness.md](design-test-harness.md) L2): while creation is held, `createDocument` has created a document that `getContexts` lists but that has **no listener** (sends reject with `RECEIVING_END_ERROR`) until `release()`, when the handler is installed and the promise resolves; while a close is held, `closeDocument()` drops the listener at once but the document stays listed until `release()`.
+    1. `ensureOffscreen`: with creation held, a second call made while the document is already listed does not resolve before `release()`, and `createDocument` is called once.
+    2. `send`: with creation held for 1500 ms (longer than `OFFSCREEN_READY_WAIT_MS`), a command sent by a second caller during creation is delivered exactly once after `release()` and resolves `ok`. **Mutation check:** removing rule (b) (`if (creating) return creating;`) fails this test, because the command then falls to the resend loop and fails after 1 s.
+    3. `send`: `scheduleClose()`, advance `OFFSCREEN_CLOSE_GRACE_MS` with the close held for 1500 ms, then a command → it is delivered once after `release()`, `createDocument` was called a second time, and nothing was sent to the old document. **Mutation check:** removing rule (a) (`if (closing) await closing;`) fails it: the closing document stays listed, so every resend hits it until the bound.
+    4. `send`: a document with no listener at all (no handler) → `sendMessage` is called every 25 ms, at most 41 times, and the rejection propagates no earlier than 1000 ms after the first; a rejection with another message propagates at once with one call. **Mutation check:** replacing the loop with one immediate resend fails the first assertion.
+    5. `ensureOffscreen`: a `createDocument` that rejects with "Only a single offscreen document may be created." resolves (d), and the next `send` is delivered.
+    6. Integration: two `job/start` for different artworks in the same tick, creation held 1500 ms → both jobs end `saved`, no file is `failed`, and the offscreen handler received each file's command exactly once. The same for two tabs on one artwork (both `saved`; the folder choice sees no completed record, so both use the plain folder and the fake uniquifies the second's names, the accepted same-instant race). A job started 5 s after a busy period ended, with the close held → `saved`.
+  - QA's exit for CUJ-1 and CUJ-4 (pm-review iteration 4): `twoTabsProbe.ts` at `CLICK_GAP=0`, same and different artworks, e2e build and store zip, ≥ 8 runs each → both jobs `Saved` with `metadata.json` in both folders; the 0–800 ms gap sweep; the grace-close edge (second job about 5 s after a busy period, ±50 ms); the headed R-006 matrix unchanged.
   - Browser-level (Playwright, offscreen context): encode fixture ugoiras (48 frames 600×600; 601×451 odd; mixed delays; PNG frames) and verify with `ffprobe -show_frames` (frame count, `pkt_duration_time`, dimensions) plus SSIM ([design-test-harness.md](design-test-harness.md)).
 
 ## Dependencies & Integration Points
@@ -326,6 +405,7 @@ sequenceDiagram
 
 ## Open Questions & Risks
 
+- **`createDocument` resolution timing is Chrome's contract, not ours.** D16 assumes the promise resolves after the document's script has run (the current behaviour; the iteration-4 race was in our own early return, not in Chrome). If a Chrome release ever resolved it earlier, rule 2's resend loop still delivers every command within the 1 s bound, so the design degrades to a few resends rather than failed files.
 - **Verified by ENG-002** (2026-10-22): the DNR rule applies to this document's `fetch()`, and `chrome.downloads.download(blobUrl)` from the SW reads Blob URLs created here while the document stays open ([system.md §8.2](system.md)). The codec probe answered `true` for every H.264 profile and VP9 at 600×600 and 1920×1080 on macOS arm64; Linux CI may differ.
 - **H.264 availability in CI Chromium:** Chrome for Testing ships proprietary codecs, but a hardware or OpenH264 encoder may still be absent on Linux CI. The harness logs the probe result and runs MP4 assertions only where `avc` is supported. The WebM path is always tested.
 - **Quality proxy thresholds** (SSIM 0.98/0.95) are engineering proxies for the PRD's visual criterion and may be tuned after the first fixtures run. That would change the test threshold, not the design.
