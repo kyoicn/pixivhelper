@@ -314,6 +314,202 @@ describe('chrome fake: deferred naming (R-006)', () => {
   });
 });
 
+describe('chrome fake: disk model and existence re-check (D15)', () => {
+  const save = (filename: string): Promise<number> =>
+    chrome.downloads.download({
+      url: BLOB_URL,
+      filename,
+      conflictAction: 'uniquify',
+      saveAs: false,
+    });
+
+  async function saved(filename: string): Promise<number> {
+    const id = await save(filename);
+    fake.downloads.complete(id);
+    return id;
+  }
+
+  async function filenameOf(id: number): Promise<string | undefined> {
+    return (await chrome.downloads.search({ id }))[0]?.filename;
+  }
+
+  function existsDeltas(): chrome.downloads.DownloadDelta[] {
+    const deltas: chrome.downloads.DownloadDelta[] = [];
+    chrome.downloads.onChanged.addListener((delta) => {
+      if (delta.exists) deltas.push(delta);
+    });
+    return deltas;
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('removeFile: the record still reads exists: true until a search', async () => {
+    const id = await saved('pixiv/a-1/1_p0.jpg');
+    fake.downloads.removeFile(id);
+    expect(fake.downloads.items()[0]?.exists).toBe(true);
+  });
+
+  it('removeFile: the search itself still returns exists: true', async () => {
+    const id = await saved('pixiv/a-1/1_p0.jpg');
+    fake.downloads.removeFile(id);
+    expect((await chrome.downloads.search({ id }))[0]?.exists).toBe(true);
+  });
+
+  it('removeFile: after a search and the re-check the item reads exists: false, with one exists delta', async () => {
+    const id = await saved('pixiv/a-1/1_p0.jpg');
+    const deltas = existsDeltas();
+    fake.downloads.removeFile(id);
+    await chrome.downloads.search({});
+    await vi.advanceTimersByTimeAsync(0);
+    expect([(await chrome.downloads.search({ id }))[0]?.exists, deltas]).toEqual([
+      false,
+      [{ id, exists: { previous: true, current: false } }],
+    ]);
+  });
+
+  it('removeFile: a second search fires no second exists delta', async () => {
+    const id = await saved('pixiv/a-1/1_p0.jpg');
+    const deltas = existsDeltas();
+    fake.downloads.removeFile(id);
+    await chrome.downloads.search({});
+    await vi.advanceTimersByTimeAsync(0);
+    await chrome.downloads.search({});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deltas).toHaveLength(1);
+  });
+
+  it('removeFile: a file still on disk is never flagged', async () => {
+    const kept = await saved('pixiv/a-1/1_p0.jpg');
+    fake.downloads.removeFile(await saved('pixiv/a-1/1_p1.jpg'));
+    await chrome.downloads.search({});
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await chrome.downloads.search({ id: kept }))[0]?.exists).toBe(true);
+  });
+
+  it('removeFile: a download still in progress throws', async () => {
+    const id = await save('pixiv/a-1/1_p0.jpg');
+    expect(() => fake.downloads.removeFile(id)).toThrow(`no completed download (id ${id})`);
+  });
+
+  it('removeFile: a download to the removed file’s path gets the clean name', async () => {
+    fake.downloads.removeFile(await saved('pixiv/a-1/1_p0.jpg'));
+    expect(await filenameOf(await save('pixiv/a-1/1_p0.jpg'))).toBe(
+      `${DOWNLOADS_DIR}/pixiv/a-1/1_p0.jpg`,
+    );
+  });
+
+  it('removeFiles: marks every completed download matching the predicate as gone', async () => {
+    await saved('pixiv/a-1/1_p0.jpg');
+    await saved('pixiv/a-1/1_p1.jpg');
+    await saved('pixiv/b-2/2_p0.jpg');
+    fake.downloads.removeFiles((item) => item.filename.startsWith(`${DOWNLOADS_DIR}/pixiv/a-1/`));
+    await chrome.downloads.search({});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.downloads.items().map((item) => item.exists)).toEqual([false, false, true]);
+  });
+
+  it('existenceCheckDelay: the flag flips only after the delay', async () => {
+    const id = await saved('pixiv/a-1/1_p0.jpg');
+    fake.downloads.existenceCheckDelay(400);
+    fake.downloads.removeFile(id);
+    await chrome.downloads.search({});
+    await vi.advanceTimersByTimeAsync(399);
+    const before = fake.downloads.items()[0]?.exists;
+    await vi.advanceTimersByTimeAsync(1);
+    expect([before, fake.downloads.items()[0]?.exists]).toEqual([true, false]);
+  });
+
+  it('existenceCheckDelay: reset restores the next-macrotask default', async () => {
+    fake.downloads.existenceCheckDelay(400);
+    fake.reset();
+    const id = await saved('pixiv/a-1/1_p0.jpg');
+    fake.downloads.removeFile(id);
+    await chrome.downloads.search({});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.downloads.items()[0]?.exists).toBe(false);
+  });
+
+  it('reset: a re-check scheduled before it fires no delta', async () => {
+    fake.downloads.existenceCheckDelay(400);
+    fake.downloads.removeFile(await saved('pixiv/a-1/1_p0.jpg'));
+    await chrome.downloads.search({});
+    fake.reset();
+    const deltas = existsDeltas();
+    await vi.advanceTimersByTimeAsync(400);
+    expect(deltas).toEqual([]);
+  });
+
+  it('search: filenameRegex matches the DOWNLOADS_DIR-prefixed absolute filename', async () => {
+    const inFolder = await saved('pixiv/a-1/1_p0.jpg');
+    await saved('pixiv/a-1 (1)/1_p0.jpg');
+    const found = await chrome.downloads.search({
+      filenameRegex: `^${DOWNLOADS_DIR}/pixiv/a-1/1_p\\d+\\.jpg$`,
+    });
+    expect(found.map((item) => item.id)).toEqual([inFolder]);
+  });
+
+  it('search: filenameRegex anchored at the relative path matches nothing', async () => {
+    await saved('pixiv/a-1/1_p0.jpg');
+    expect(await chrome.downloads.search({ filenameRegex: '^pixiv/' })).toEqual([]);
+  });
+
+  it('search: urlRegex filters on the url', async () => {
+    await save('a/1.jpg');
+    const other = await chrome.downloads.download({ url: `${BLOB_URL}-2`, filename: 'a/2.jpg' });
+    const found = await chrome.downloads.search({ urlRegex: '-2$' });
+    expect(found.map((item) => item.id)).toEqual([other]);
+  });
+
+  it('search: limit 0 returns every match', async () => {
+    for (const page of [0, 1, 2]) await saved(`pixiv/a-1/1_p${page}.jpg`);
+    expect(await chrome.downloads.search({ state: 'complete', limit: 0 })).toHaveLength(3);
+  });
+
+  it('search: limit 2 returns two matches', async () => {
+    for (const page of [0, 1, 2]) await saved(`pixiv/a-1/1_p${page}.jpg`);
+    expect(await chrome.downloads.search({ state: 'complete', limit: 2 })).toHaveLength(2);
+  });
+
+  it('addCompleted: the seeded record is found by search as a complete download', async () => {
+    const seeded = fake.downloads.addCompleted('pixiv/a-1/1_p0.jpg', { byExtensionId: 'other' });
+    expect(await chrome.downloads.search({ filenameRegex: '/pixiv/a-1/1_p0\\.jpg$' })).toEqual([
+      expect.objectContaining({
+        id: seeded.id,
+        state: 'complete',
+        exists: true,
+        filename: `${DOWNLOADS_DIR}/pixiv/a-1/1_p0.jpg`,
+        byExtensionId: 'other',
+      }),
+    ]);
+  });
+
+  it('addCompleted: byExtensionId defaults to this extension', () => {
+    expect(fake.downloads.addCompleted('pixiv/a-1/1_p0.jpg').byExtensionId).toBe(FAKE_EXTENSION_ID);
+  });
+
+  it('addCompleted: uniquify respects the seeded record', async () => {
+    fake.downloads.addCompleted('pixiv/a-1/metadata.json');
+    expect(await filenameOf(await save('pixiv/a-1/metadata.json'))).toBe(
+      `${DOWNLOADS_DIR}/pixiv/a-1/metadata (1).json`,
+    );
+  });
+
+  it('addCompleted: exists: false seeds a flagged record whose name is free', async () => {
+    const seeded = fake.downloads.addCompleted('pixiv/a-1/metadata.json', { exists: false });
+    const id = await save('pixiv/a-1/metadata.json');
+    expect([seeded.exists, await filenameOf(id)]).toEqual([
+      false,
+      `${DOWNLOADS_DIR}/pixiv/a-1/metadata.json`,
+    ]);
+  });
+});
+
 describe('chrome fake: download UI (setUiOptions, R-005)', () => {
   const save = (filename: string): Promise<number> =>
     chrome.downloads.download({ url: BLOB_URL, filename });
@@ -576,6 +772,115 @@ describe('chrome fake: contexts, tabs and windows', () => {
     await expect(chrome.offscreen.closeDocument()).rejects.toThrow(
       'No current offscreen document.',
     );
+  });
+});
+
+describe('chrome fake: offscreen lifecycle holds (D16)', () => {
+  const params = { url: 'offscreen.html', reasons: ['BLOBS' as const], justification: 'test' };
+  const filter = { contextTypes: ['OFFSCREEN_DOCUMENT' as const] };
+
+  async function listed(): Promise<number> {
+    return (await chrome.runtime.getContexts(filter)).length;
+  }
+
+  function settledFlag(promise: Promise<void>): () => boolean {
+    let settled = false;
+    void promise.then(() => (settled = true));
+    return () => settled;
+  }
+
+  /** Lets every queued microtask and the next macrotask run. */
+  const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('holdCreation: getContexts lists the document before it listens', async () => {
+    fake.offscreen.setHandler(() => ({ ok: true }));
+    fake.offscreen.holdCreation();
+    void chrome.offscreen.createDocument(params);
+    await flush();
+    expect(await listed()).toBe(1);
+  });
+
+  it('holdCreation: a send to the listed document rejects with RECEIVING_END_ERROR', async () => {
+    fake.offscreen.setHandler(() => ({ ok: true }));
+    fake.offscreen.holdCreation();
+    void chrome.offscreen.createDocument(params);
+    await flush();
+    await expect(chrome.runtime.sendMessage({ target: 'offscreen' })).rejects.toThrow(
+      RECEIVING_END_ERROR,
+    );
+  });
+
+  it('holdCreation: createDocument stays pending until release', async () => {
+    fake.offscreen.holdCreation();
+    const created = settledFlag(chrome.offscreen.createDocument(params));
+    await flush();
+    expect(created()).toBe(false);
+  });
+
+  it('holdCreation: a handler set during the hold leaves the document deaf', async () => {
+    fake.offscreen.holdCreation();
+    void chrome.offscreen.createDocument(params);
+    await flush();
+    fake.offscreen.setHandler(() => ({ ok: true }));
+    await expect(chrome.runtime.sendMessage({ target: 'offscreen' })).rejects.toThrow(
+      RECEIVING_END_ERROR,
+    );
+  });
+
+  it('holdCreation: after release the scripted handler answers and createDocument has resolved', async () => {
+    fake.offscreen.setHandler(() => ({ ok: true }));
+    const hold = fake.offscreen.holdCreation();
+    const creating = chrome.offscreen.createDocument(params);
+    const created = settledFlag(creating);
+    await flush();
+    hold.release();
+    await creating;
+    expect([created(), await chrome.runtime.sendMessage({ target: 'offscreen' })]).toEqual([
+      true,
+      { ok: true },
+    ]);
+  });
+
+  it('holdCreation: after release the next document is created without a hold', async () => {
+    fake.offscreen.setHandler(() => ({ ok: true }));
+    fake.offscreen.holdCreation().release();
+    await chrome.offscreen.createDocument(params);
+    await expect(chrome.runtime.sendMessage({ target: 'offscreen' })).resolves.toEqual({
+      ok: true,
+    });
+  });
+
+  it('holdClose: the closing document stays listed and deaf', async () => {
+    fake.offscreen.setHandler(() => ({ ok: true }));
+    await chrome.offscreen.createDocument(params);
+    fake.offscreen.holdClose();
+    void chrome.offscreen.closeDocument();
+    await flush();
+    const count = await listed();
+    const send = chrome.runtime.sendMessage({ target: 'offscreen' }).then(
+      () => 'answered',
+      (error: Error) => error.message,
+    );
+    expect([count, await send]).toEqual([1, RECEIVING_END_ERROR]);
+  });
+
+  it('holdClose: closeDocument stays pending until release', async () => {
+    await chrome.offscreen.createDocument(params);
+    fake.offscreen.holdClose();
+    const closed = settledFlag(chrome.offscreen.closeDocument());
+    await flush();
+    expect(closed()).toBe(false);
+  });
+
+  it('holdClose: after release the document is gone and closeDocument has resolved', async () => {
+    await chrome.offscreen.createDocument(params);
+    const hold = fake.offscreen.holdClose();
+    const closing = chrome.offscreen.closeDocument();
+    const closed = settledFlag(closing);
+    await flush();
+    hold.release();
+    await closing;
+    expect([closed(), await listed()]).toEqual([true, 0]);
   });
 });
 
