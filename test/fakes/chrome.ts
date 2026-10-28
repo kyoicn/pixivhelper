@@ -415,6 +415,11 @@ export class FakeDownloads {
   #deferNaming = false;
   /** Targets of items created while naming was deferred, by id, until name() sets them. */
   #reserved = new Map<number, string>();
+  /** The disk model (D15): ids of completed downloads whose file is no longer on disk. */
+  #gone = new Set<number>();
+  #existenceCheckDelay = 0;
+  /** Bumped by reset(), so a re-check scheduled before it lands on nothing. */
+  #epoch = 0;
 
   /** `uiPermission`: whether the manifest grants "downloads.ui", without which setUiOptions rejects. */
   constructor(private readonly uiPermission: boolean) {}
@@ -430,6 +435,7 @@ export class FakeDownloads {
       [...this.#items.values()].some(
         (item) =>
           item.state !== 'interrupted' &&
+          !this.#gone.has(item.id) &&
           (item.filename || this.#reserved.get(item.id)) === `${DOWNLOADS_DIR}/${path}`,
       );
     const target = options.conflictAction === 'uniquify' ? uniquified(relative, onDisk) : relative;
@@ -470,6 +476,7 @@ export class FakeDownloads {
           (query.filenameRegex === undefined ||
             new RegExp(query.filenameRegex).test(item.filename)),
       );
+      this.scheduleExistenceCheck();
       return serialize(query.limit ? matches.slice(0, query.limit) : matches);
     },
   );
@@ -518,6 +525,68 @@ export class FakeDownloads {
     this.#reserved.delete(id);
     item.filename = current;
     this.onChanged.dispatch({ id, filename: { previous: '', current } });
+    return serialize(item);
+  }
+
+  /**
+   * The user moved or deleted download `id`'s file (D15). The record is untouched: `exists` stays
+   * `true` until a search() makes Chrome re-check (platform fact 2).
+   */
+  removeFile(id: number): void {
+    const item = this.#items.get(id);
+    if (item?.state !== 'complete') throw new Error(`no completed download (id ${id})`);
+    this.#gone.add(id);
+  }
+
+  /** removeFile() for every completed download matching `predicate`. */
+  removeFiles(predicate: (item: DownloadItem) => boolean): void {
+    for (const item of this.#items.values()) {
+      if (item.state === 'complete' && predicate(serialize(item))) this.#gone.add(item.id);
+    }
+  }
+
+  /**
+   * How long after a search() Chrome's existence re-check lands (default 0: the next macrotask).
+   * Chrome's 10 s rate limit is not modelled (design-test-harness.md L2).
+   */
+  existenceCheckDelay(ms: number): void {
+    this.#existenceCheckDelay = ms;
+  }
+
+  /**
+   * Seeds a finished download at exactly `relativePath` (no uniquify, no call-log entry): an
+   * earlier browser session's download, or another extension's. `exists: false` is a record
+   * Chrome already flagged, its file gone.
+   */
+  addCompleted(
+    relativePath: string,
+    options: { exists?: boolean; byExtensionId?: string } = {},
+  ): DownloadItem {
+    const id = this.#nextId++;
+    const now = new Date().toISOString();
+    const exists = options.exists ?? true;
+    const item: DownloadItem = {
+      id,
+      url: `blob:${EXTENSION_ORIGIN}/seeded-${id}`,
+      finalUrl: `blob:${EXTENSION_ORIGIN}/seeded-${id}`,
+      referrer: '',
+      filename: `${DOWNLOADS_DIR}/${relativePath}`,
+      mime: '',
+      state: 'complete',
+      danger: 'safe',
+      paused: false,
+      canResume: false,
+      exists,
+      incognito: false,
+      bytesReceived: 0,
+      totalBytes: -1,
+      fileSize: -1,
+      startTime: now,
+      endTime: now,
+      byExtensionId: options.byExtensionId ?? FAKE_EXTENSION_ID,
+    };
+    this.#items.set(id, item);
+    if (!exists) this.#gone.add(id);
     return serialize(item);
   }
 
@@ -585,10 +654,34 @@ export class FakeDownloads {
     this.#uiErrors = [];
     this.#deferNaming = false;
     this.#reserved.clear();
+    this.#gone.clear();
+    this.#existenceCheckDelay = 0;
+    this.#epoch++;
     this.uiEnabled = true;
     this.callLog.length = 0;
     this.settledWhileShown.length = 0;
     this.onChanged.clear();
+  }
+
+  /**
+   * Chrome's re-check on search() (platform fact 2): every complete, not-yet-flagged item whose
+   * file is gone gets `exists: false` and one `exists` delta, after the delay. No timer when no
+   * file is gone, so tests that never remove a file see no extra timer.
+   */
+  private scheduleExistenceCheck(): void {
+    const gone = [...this.#items.values()].filter(
+      (item) => item.state === 'complete' && item.exists && this.#gone.has(item.id),
+    );
+    if (gone.length === 0) return;
+    const epoch = this.#epoch;
+    setTimeout(() => {
+      if (epoch !== this.#epoch) return;
+      for (const item of gone) {
+        if (!item.exists) continue;
+        item.exists = false;
+        this.onChanged.dispatch({ id: item.id, exists: { previous: true, current: false } });
+      }
+    }, this.#existenceCheckDelay);
   }
 
   private pending(id: number | undefined): DownloadItem {
@@ -830,11 +923,36 @@ export class FakeTabs {
 
 // ── Offscreen document ──
 
+/** A lifecycle hold (D16): the held step completes at `release()`. */
+export interface Hold {
+  readonly release: () => void;
+}
+
+interface PendingHold extends Hold {
+  readonly released: Promise<void>;
+}
+
+function createHold(onRelease: () => void): PendingHold {
+  let resolve!: () => void;
+  const released = new Promise<void>((r) => (resolve = r));
+  return {
+    released,
+    release: () => {
+      onRelease();
+      resolve();
+    },
+  };
+}
+
 export class FakeOffscreen {
   document: FakeOffscreenDocument | null = null;
   #creating = false;
   #handler: MessageHandler | null = null;
   #nextDocument = 1;
+  #creationHold: PendingHold | null = null;
+  #closeHold: PendingHold | null = null;
+  /** The document a hold keeps listed without listeners; setHandler leaves it deaf. */
+  #deaf: FakeOffscreenDocument | null = null;
 
   constructor(private readonly fake: ChromeFake) {}
 
@@ -845,6 +963,7 @@ export class FakeOffscreen {
       }
       if (parameters.reasons.length === 0) throw new Error('A reason must be provided.');
       if (!parameters.justification) throw new Error('A justification must be provided.');
+      const hold = this.#creationHold;
       this.#creating = true;
       await tick();
       this.#creating = false;
@@ -853,16 +972,60 @@ export class FakeOffscreen {
         this.fake.getURL(parameters.url),
         `offscreen-${this.#nextDocument++}`,
       );
+      if (hold) {
+        this.#deaf = doc;
+        this.document = doc;
+        await hold.released;
+        if (this.#deaf === doc) this.#deaf = null;
+        if (this.#handler && this.document === doc) doc.handle(this.#handler);
+        return;
+      }
       if (this.#handler) doc.handle(this.#handler);
       this.document = doc;
     },
   );
 
   readonly closeDocument = vi.fn(async (): Promise<void> => {
+    const hold = this.#closeHold;
+    const doc = this.document;
+    if (hold && doc) {
+      doc.onMessage.clear();
+      this.#deaf = doc;
+      await hold.released;
+      if (this.#deaf === doc) this.#deaf = null;
+      if (this.document === doc) this.document = null;
+      return;
+    }
     await tick();
     if (!this.document) throw new Error('No current offscreen document.');
     this.document = null;
   });
+
+  /**
+   * Until `release()`, createDocument() stops in Chrome's window between creating the context and
+   * running its script: the document is listed by runtime.getContexts but has no listener, so sends to it
+   * reject with RECEIVING_END_ERROR. `release()` installs the scripted handler and resolves the
+   * createDocument promise.
+   */
+  holdCreation(): Hold {
+    const hold = createHold(() => {
+      if (this.#creationHold === hold) this.#creationHold = null;
+    });
+    this.#creationHold = hold;
+    return { release: hold.release };
+  }
+
+  /**
+   * Holds closeDocument(): the document loses its listeners at once but stays listed by
+   * runtime.getContexts until `release()`, which removes it and resolves the closeDocument promise.
+   */
+  holdClose(): Hold {
+    const hold = createHold(() => {
+      if (this.#closeHold === hold) this.#closeHold = null;
+    });
+    this.#closeHold = hold;
+    return { release: hold.release };
+  }
 
   /**
    * The scripted behavior of the offscreen document: the current document and every one created
@@ -871,7 +1034,7 @@ export class FakeOffscreen {
    */
   setHandler(handler: MessageHandler): void {
     this.#handler = handler;
-    if (this.document) {
+    if (this.document && this.document !== this.#deaf) {
       this.document.onMessage.clear();
       this.document.handle(handler);
     }
@@ -887,6 +1050,9 @@ export class FakeOffscreen {
     this.#creating = false;
     this.#handler = null;
     this.#nextDocument = 1;
+    this.#creationHold = null;
+    this.#closeHold = null;
+    this.#deaf = null;
   }
 }
 

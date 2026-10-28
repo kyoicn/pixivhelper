@@ -6,7 +6,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,6 +48,14 @@ export interface Downloads {
   files(): Promise<DownloadedFile[]>;
   /** Resolves when `relativePath` exists (Chrome renames a download to its final name only when complete). */
   waitForFile(relativePath: string, options?: { timeout?: number }): Promise<DownloadedFile>;
+  /** Deletes a file or folder (recursively), as the user would (D15). Chrome does not notice until a re-check. */
+  remove(relativePath: string): Promise<void>;
+  /** Moves a file or folder inside the downloads directory, as the user would (D15). */
+  move(from: string, to: string): Promise<void>;
+  /** Waits out Chrome's existence re-check rate limit, so the next downloads.search() re-checks (D15). */
+  expireExistenceCheck(): Promise<void>;
+  /** chrome://downloads "Clear all": erases every download record; the files stay on disk (D15). */
+  eraseHistory(): Promise<void>;
 }
 
 const LAUNCH_TIMEOUT_MS = 30_000;
@@ -56,6 +64,14 @@ const SW_STOP_TIMEOUT_MS = 5_000;
 /** How long one stop request gets to take effect before it is repeated. */
 const SW_STOP_ROUND_MS = 300;
 const POLL_MS = 50;
+/**
+ * Chrome re-checks file existence only on a downloads.search(), and at most once per 10 s per
+ * profile (kFileExistenceRateLimitSeconds; design-download-engine.md "Folder choice", platform
+ * fact 3). The extension's own searches (othersSettled, reconcile, the folder choice) reset that
+ * clock, so a spec that removes or moves a folder and expects Chrome to notice waits this out
+ * first: only the moved-folder and gap cases pay this wait.
+ */
+export const EXISTENCE_RECHECK_RATE_LIMIT_MS = 10_000;
 /** Chrome's name for a download still being written: `Unconfirmed 123.crdownload`, `<name>.crdownload`. */
 const IN_PROGRESS_SUFFIX = '.crdownload';
 
@@ -201,6 +217,16 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** `relativePath` ('/'-separated) under `root`; refuses a path that leaves it or is `root` itself. */
+function inside(root: string, relativePath: string): string {
+  const absolute = path.resolve(root, ...relativePath.split('/'));
+  const relative = path.relative(root, absolute);
+  if (relative === '' || relative.split(path.sep)[0] === '..' || path.isAbsolute(relative)) {
+    throw new Error(`downloads: ${relativePath} is not inside the downloads directory`);
+  }
+  return absolute;
+}
+
 export class Harness {
   readonly browser: Browser;
   /** The default (and only) browser context: the profile the extension is installed in. */
@@ -261,6 +287,12 @@ export class Harness {
           }
           await sleep(POLL_MS);
         }
+      },
+      remove: (relativePath) => rm(inside(dir, relativePath), { recursive: true }),
+      move: (from, to) => rename(inside(dir, from), inside(dir, to)),
+      expireExistenceCheck: () => sleep(EXISTENCE_RECHECK_RATE_LIMIT_MS + 500),
+      eraseHistory: async () => {
+        await this.swEval(() => chrome.downloads.erase({}));
       },
     };
     this.#killOnExit = () => init.process.kill('SIGKILL');
