@@ -77,6 +77,13 @@ export const CLICK_GUARD_MS = 500;
 export const LIVE_PROGRESS_THROTTLE_MS = 5000;
 /** The offscreen document is closed this long after the last job ends. */
 export const OFFSCREEN_CLOSE_GRACE_MS = 5000;
+/**
+ * A command whose send finds no offscreen listener is resent for this long after the first such
+ * rejection, then fails (pm's bound for CUJ-4 AC 5; system.md D16).
+ */
+export const OFFSCREEN_READY_WAIT_MS = 1000;
+/** Delay between those resends. */
+export const OFFSCREEN_RESEND_DELAY_MS = 25;
 /** Badge/title renders are coalesced with this trailing delay. */
 export const BADGE_COALESCE_MS = 50;
 /** Caps the wait for earlier in-progress files to finish before the UI restore (R-006 rev. 3). */
