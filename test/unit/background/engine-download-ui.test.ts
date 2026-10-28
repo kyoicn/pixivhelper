@@ -472,6 +472,56 @@ describe('engine: the last hand-off restores the UI first (R-006)', () => {
       stub.ui.hideForHandOff.mock.calls.length,
     ]).toEqual([0, 0]);
   });
+
+  it('handOff: an earlier file Chrome already finished lets the restore go ahead at once (downloads.search)', async () => {
+    const stub = stubUi();
+    const inChrome = await unnamedInChrome(0);
+    // Before the engine listens: it never sees the delta, so the record still says `saving`.
+    fake.downloads.complete(inChrome.downloadId);
+    seedJob('job-1', [inChrome, fetching(1)]);
+    const engine = await hydrated(stub.ui);
+    land(engine, 1);
+    await flush();
+    expect([stub.events, downloadsOf()]).toEqual([['restore'], [p(0), p(1)]]);
+  });
+
+  it('handOff: an earlier download Chrome no longer knows lets the restore go ahead at once', async () => {
+    const stub = stubUi();
+    seedJob('job-1', [
+      page(0, { state: 'saving', taskId: 't0', blobUrl: blob(0), downloadId: 99 }),
+      fetching(1),
+    ]);
+    const engine = await hydrated(stub.ui);
+    land(engine, 1);
+    await flush();
+    expect([stub.events, downloadsOf()]).toEqual([['restore'], [p(1)]]);
+  });
+
+  it('handOff: another job’s file still in progress holds the last hand-off’s restore back until it finishes', async () => {
+    const stub = stubUi();
+    // A distinct name, so `uniquify` never renames job-1's p(0).
+    const otherId = await chrome.downloads.download({
+      url: blob(9),
+      filename: `${FOLDER}/other_p0.jpg`,
+      conflictAction: 'uniquify',
+      saveAs: false,
+    });
+    seedJob('job-1', [fetching(0)]);
+    seedJob('job-2', [
+      page(0, { state: 'saving', taskId: 'u0', blobUrl: blob(9), downloadId: otherId }),
+    ]);
+    const engine = await hydrated(stub.ui);
+    land(engine, 0);
+    await flush();
+    const waiting = [...stub.events];
+    fake.downloads.complete(otherId);
+    await flush();
+    expect([waiting, stub.events, fake.downloads.callLog.at(-1)]).toEqual([
+      [],
+      ['restore'],
+      { op: 'download', filename: p(0) },
+    ]);
+  });
 });
 
 describe('engine: a hand-off leaves the last-hand-off decision once it is settled (R-006)', () => {
