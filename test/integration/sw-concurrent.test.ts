@@ -1,14 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { JobListForTabResponse, JobStartResponse } from '../../src/shared/messages';
+import type { JobView } from '../../src/shared/types';
 import type { ChromeFake } from '../fakes/chrome';
 import {
   API,
   ContentTab,
+  DownloadDriver,
   ScriptedOffscreen,
   advance,
   bootSw,
   illustJson,
   pagesJson,
+  savedFiles,
   settle,
   setUp,
   tearDown,
@@ -159,6 +162,120 @@ describe('sw: two jobs at once (CUJ-4)', () => {
     expect([fake.action.badgeText, fake.action.title]).toEqual([
       '24',
       'Helper for Pixiv — 24 files remaining across 2 downloads',
+    ]);
+  });
+});
+
+describe('sw: offscreen readiness (D16)', () => {
+  /** Longer than OFFSCREEN_READY_WAIT_MS: the resend loop alone cannot outlast the hold. */
+  const HOLD_MS = 1500;
+  const FOLDER_A = `pixiv/みずき-${A}`;
+
+  /** Holds the next createDocument() until HOLD_MS after it is called. */
+  function holdNextCreation(): void {
+    const hold = fake.offscreen.holdCreation();
+    const create = fake.api.offscreen.createDocument.getMockImplementation();
+    if (!create) throw new Error('fake createDocument has no implementation');
+    fake.api.offscreen.createDocument.mockImplementationOnce((parameters) => {
+      setTimeout(hold.release, HOLD_MS);
+      return create(parameters);
+    });
+  }
+
+  /** Drives Chrome until every job has its final view; returns the final views in order. */
+  async function driveToEnd(
+    jobs: Array<[ContentTab, string]>,
+  ): Promise<Array<JobView | undefined>> {
+    const driver = new DownloadDriver(fake);
+    await until(() => {
+      driver.step();
+      return jobs.every(([tab, jobId]) => tab.ended(jobId) !== undefined);
+    }, 'jobs end');
+    await advance(100);
+    return jobs.map(([tab, jobId]) => tab.ended(jobId));
+  }
+
+  /** The task ids of every file command (bytes, metadata.json) the offscreen handler received. */
+  function fileCommandTaskIds(offscreen: ScriptedOffscreen): string[] {
+    return offscreen.commands
+      .filter((command) => command.type === 'off/fetchBytes' || command.type === 'off/makeText')
+      .map((command) => String(command.taskId));
+  }
+
+  it('sw: two artworks started in one tick during a held creation both end saved, each command delivered once', async () => {
+    const offscreen = new ScriptedOffscreen(fake);
+    await bootSw();
+    holdNextCreation();
+    const tabA = new ContentTab(fake, `https://www.pixiv.net/artworks/${A}`, api());
+    const tabB = new ContentTab(fake, `https://www.pixiv.net/artworks/${B}`, api());
+    const [jobA, jobB] = await Promise.all([start(tabA, A, 12), start(tabB, B, 8)]);
+    const [endedA, endedB] = await driveToEnd([
+      [tabA, jobA],
+      [tabB, jobB],
+    ]);
+    const taskIds = fileCommandTaskIds(offscreen);
+    expect([
+      endedA?.outcome,
+      endedB?.outcome,
+      taskIds.length,
+      new Set(taskIds).size,
+      fake.api.offscreen.createDocument.mock.calls.length,
+    ]).toEqual([
+      { type: 'saved', folder: FOLDER_A, pages: 12 },
+      { type: 'saved', folder: `pixiv/そら-${B}`, pages: 8 },
+      22,
+      22,
+      1,
+    ]);
+  });
+
+  it('sw: one artwork in two tabs started in one tick during a held creation → both saved in the plain folder', async () => {
+    const offscreen = new ScriptedOffscreen(fake);
+    await bootSw();
+    holdNextCreation();
+    const first = new ContentTab(fake, `https://www.pixiv.net/artworks/${A}`, api());
+    const second = new ContentTab(fake, `https://www.pixiv.net/artworks/${A}`, api());
+    const [jobFirst, jobSecond] = await Promise.all([start(first, A, 12), start(second, A, 12)]);
+    const [endedFirst, endedSecond] = await driveToEnd([
+      [first, jobFirst],
+      [second, jobSecond],
+    ]);
+    const names = [
+      `${FOLDER_A}/metadata.json`,
+      ...Array.from({ length: 12 }, (_, page) => `${FOLDER_A}/${A}_p${page}.jpg`),
+    ];
+    const uniquified = names.map((name) => name.replace(/(\.[a-z]+)$/, ' (1)$1'));
+    const taskIds = fileCommandTaskIds(offscreen);
+    expect([
+      endedFirst?.outcome,
+      endedSecond?.outcome,
+      savedFiles(fake).sort(),
+      taskIds.length,
+      new Set(taskIds).size,
+    ]).toEqual([
+      { type: 'saved', folder: FOLDER_A, pages: 12 },
+      { type: 'saved', folder: FOLDER_A, pages: 12 },
+      [...names, ...uniquified].sort(),
+      26,
+      26,
+    ]);
+  });
+
+  it('sw: a job started as the grace close begins, with the close held, ends saved in a fresh document', async () => {
+    new ScriptedOffscreen(fake);
+    await bootSw();
+    const tabA = new ContentTab(fake, `https://www.pixiv.net/artworks/${A}`, api());
+    const jobA = await start(tabA, A, 12);
+    await driveToEnd([[tabA, jobA]]);
+    const hold = fake.offscreen.holdClose();
+    await until(() => fake.api.offscreen.closeDocument.mock.calls.length > 0, 'grace close');
+    setTimeout(hold.release, HOLD_MS);
+    const tabB = new ContentTab(fake, `https://www.pixiv.net/artworks/${B}`, api());
+    const jobB = await start(tabB, B, 8);
+    const [endedB] = await driveToEnd([[tabB, jobB]]);
+    expect([endedB?.outcome, fake.api.offscreen.createDocument.mock.calls.length]).toEqual([
+      { type: 'saved', folder: `pixiv/そら-${B}`, pages: 8 },
+      2,
     ]);
   });
 });
