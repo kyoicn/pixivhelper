@@ -52,3 +52,10 @@ Six prd-000 lines overstated, contradicted each other, or left a case open after
 
 **Scope**: prd-000
 **Ruling**: Option A — approve all six as pm recommended. Items 1, 2, 3 and 5 are wording that makes the PRD match what ships; item 4 raises the settings-page links and the selected segment to the PRD's own 4.5:1 contrast rule; item 6 makes `Saved` after a Retry guarantee `metadata.json` is on disk. pm amends the PRD and mocks; items 4 and 6 become code tasks. Owner's words: "go with A". (2026-10-24)
+
+### R-008 · Apply pm's prd-000 spec-sync batch (3 items)?
+
+Three prd-000 lines promise slightly more than Chrome lets the extension deliver: the folder check matches the folder as the last segments of each download record's path (a record under another Downloads location or a longer earlier pattern also counts, one needless ` (n)`); Chrome runs the download-existence re-check at most once every 10 s per profile (a repeat click sooner than that after the folder was moved away may still take the next free `(n)`); the 200-page counter can show an unpainted instant of `200 / 200`. Details: docs/pm-review.md "Spec-sync batch (R-008)".
+
+**Scope**: prd-000
+**Ruling**: Option A — approve all three as pm recommended. Wording only, no code: §4.3 records the folder-check scope as an accepted limitation; §4.2, the CUJ-1 "folder moved" edge and AC 13 gain the 10 s qualifier and the "moved back stays flagged until Chrome restarts" fact; the 200-page edge gains the unpainted-instant parenthetical. prd-000 stays `completed`; 1.0.1 ships from `main` as is. Owner's words: "Go with A". (2026-10-28)
