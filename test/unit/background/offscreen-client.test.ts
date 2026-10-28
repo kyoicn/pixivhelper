@@ -242,3 +242,96 @@ describe('scheduleClose', () => {
     );
   });
 });
+
+describe('lifecycle holds (D16)', () => {
+  /** Longer than OFFSCREEN_READY_WAIT_MS: the resend loop alone cannot outlast it. */
+  const HOLD_MS = 1500;
+
+  type Outcome<T> = { value: T } | { error: unknown } | null;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+  });
+
+  /** Records how `promise` settles, so a test can read it synchronously; never rejects. */
+  function observe<T>(promise: Promise<T>): { outcome: Outcome<T> } {
+    const state: { outcome: Outcome<T> } = { outcome: null };
+    promise.then(
+      (value) => (state.outcome = { value }),
+      (error: unknown) => (state.outcome = { error }),
+    );
+    return state;
+  }
+
+  it('ensureOffscreen: a second call while a held creation is listed waits for release(), one createDocument', async () => {
+    const hold = fake.offscreen.holdCreation();
+    const first = client.ensureOffscreen();
+    await vi.advanceTimersByTimeAsync(0);
+    const listed = fake.offscreen.document !== null;
+    const second = observe(client.ensureOffscreen());
+    await vi.advanceTimersByTimeAsync(HOLD_MS);
+    const beforeRelease = second.outcome;
+    hold.release();
+    await first;
+    await vi.advanceTimersByTimeAsync(0);
+    expect([
+      listed,
+      beforeRelease,
+      second.outcome,
+      fake.api.offscreen.createDocument.mock.calls.length,
+    ]).toEqual([true, null, { value: undefined }, 1]);
+  });
+
+  it('send: a second caller’s command during a creation held past the ready wait is delivered once after release()', async () => {
+    expect(HOLD_MS).toBeGreaterThan(OFFSCREEN_READY_WAIT_MS);
+    const hold = fake.offscreen.holdCreation();
+    setTimeout(hold.release, HOLD_MS);
+    const first = observe(client.ensureOffscreen());
+    await vi.advanceTimersByTimeAsync(0);
+    const pending = observe(client.send(PROBE));
+    await vi.advanceTimersByTimeAsync(HOLD_MS - 1);
+    const beforeRelease = [...received];
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect([first.outcome, beforeRelease, received, pending.outcome]).toEqual([
+      { value: undefined },
+      [],
+      [{ target: 'offscreen', ...PROBE }],
+      { value: { ok: true, caps: CAPS } },
+    ]);
+  });
+
+  it('send: a command during a held close goes once to a fresh document after release(), never to the old one', async () => {
+    await client.ensureOffscreen();
+    const old = fake.offscreen.document?.documentId;
+    const sentTo: Array<string | undefined> = [];
+    const deliver = fake.api.runtime.sendMessage.getMockImplementation();
+    if (!deliver) throw new Error('fake sendMessage has no implementation');
+    fake.api.runtime.sendMessage.mockImplementation((message: unknown) => {
+      sentTo.push(fake.offscreen.document?.documentId);
+      return deliver(message);
+    });
+    const hold = fake.offscreen.holdClose();
+    client.scheduleClose();
+    await vi.advanceTimersByTimeAsync(OFFSCREEN_CLOSE_GRACE_MS);
+    setTimeout(hold.release, HOLD_MS);
+    const pending = observe(client.send(PROBE));
+    await vi.advanceTimersByTimeAsync(HOLD_MS - 1);
+    const beforeRelease = [...received];
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect([
+      beforeRelease,
+      received,
+      pending.outcome,
+      fake.api.offscreen.createDocument.mock.calls.length,
+      sentTo.includes(old),
+    ]).toEqual([
+      [],
+      [{ target: 'offscreen', ...PROBE }],
+      { value: { ok: true, caps: CAPS } },
+      2,
+      false,
+    ]);
+  });
+});

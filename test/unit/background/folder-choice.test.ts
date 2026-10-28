@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 import { chooseFolder, type FolderChoiceDeps } from '../../../src/background/folder-choice';
 import { FOLDER_CHECK_RECHECK_WAIT_MS } from '../../../src/shared/constants';
 import { folderCheckRegex } from '../../../src/shared/folder-choice';
-import { installChromeFake } from '../../fakes/chrome';
+import { installChromeFake, type ChromeFake } from '../../fakes/chrome';
 
 type Item = chrome.downloads.DownloadItem;
 
@@ -189,5 +189,70 @@ describe('chooseFolder: default deps', () => {
       FOLDER,
       1,
     ]);
+  });
+});
+
+describe('chooseFolder: the fake chrome.downloads (default deps)', () => {
+  const REL = 'pixiv/みずき-135882741';
+  const file = (n: number, name = `${ID}_p0.jpg`) => `${REL}${n === 0 ? '' : ` (${n})`}/${name}`;
+
+  let fake: ChromeFake;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    fake = installChromeFake();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** chooseFolder with Chrome's real-world timing: the 250 ms wait runs on fake time. */
+  async function choose(): Promise<string> {
+    const pending = chooseFolder(FOLDER, ID);
+    await vi.advanceTimersByTimeAsync(1000);
+    return pending;
+  }
+
+  it('chooseFolder: the earlier run’s files removed before the call → the plain folder', async () => {
+    const ids = [file(0), file(0, `${ID}_p1.jpg`)].map(
+      (path) => fake.downloads.addCompleted(path).id,
+    );
+    for (const id of ids) fake.downloads.removeFile(id);
+    expect(await choose()).toBe(FOLDER);
+  });
+
+  it('chooseFolder: the plain folder deleted and (1) kept → the plain folder', async () => {
+    fake.downloads.addCompleted(file(0), { exists: false });
+    fake.downloads.addCompleted(file(1));
+    expect(await choose()).toBe(FOLDER);
+  });
+
+  it('chooseFolder: the plain folder and (2) kept, (1) deleted → (1)', async () => {
+    fake.downloads.addCompleted(file(0));
+    fake.downloads.addCompleted(file(1), { exists: false });
+    fake.downloads.addCompleted(file(2));
+    expect(await choose()).toBe(`${FOLDER} (1)`);
+  });
+
+  it('chooseFolder: in-progress and interrupted records are ignored → the plain folder', async () => {
+    const download = (path: string) =>
+      fake.downloads.download({
+        url: `blob:x/${path}`,
+        filename: path,
+        conflictAction: 'uniquify',
+      });
+    await download(file(0));
+    const interrupted = await download(file(1));
+    fake.downloads.interrupt(interrupted, 'NETWORK_FAILED');
+    expect(await choose()).toBe(FOLDER);
+  });
+
+  it('chooseFolder: a re-check landing after the 250 ms wait leaves the stale flag → (2) (the bound’s residual)', async () => {
+    fake.downloads.existenceCheckDelay(400);
+    const plain = fake.downloads.addCompleted(file(0)).id;
+    fake.downloads.addCompleted(file(1));
+    fake.downloads.removeFile(plain);
+    expect(await choose()).toBe(`${FOLDER} (2)`);
   });
 });
