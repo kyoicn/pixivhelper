@@ -1,12 +1,14 @@
 # Project Status
 
 > Auto-generated project status summary.
-> Last updated: 2026-10-23 23:50:00 (UTC-7)
+> Last updated: 2026-10-27 20:19:24 (UTC-7)
 
 ## Overview
 **Helper for Pixiv** (public name per R-002) is a Chrome extension (Manifest V3, desktop Chrome 116+) that adds one Download button to every pixiv artwork page. One click saves the artwork into its own folder under Chrome's Downloads folder: originals, a `metadata.json`, and for ugoira the frame zip, `frames.json` and a video encoded in the browser. It replaces the personal terminal script `ref/pixiv-dl`.
 
 Current phase: **dev-cycle iteration 4, Phase 5 (status refresh after the QA gate).** Iteration 4 started from the iteration-3 LOW "bubble misses the last file", fixed between cycles by quick-fix `c2c9de0` (the last hand-off now waits for earlier files to finish, D12 rev. 3), then added ENG-012 test pins and a comment fix. The QA gate (run `iter4-22-53-54`) is **FAIL with 2 LOW**: CUJ-2, CUJ-3, CUJ-5 PASS; CUJ-1 fails on both LOWs and CUJ-4 on LOW #1. The iteration-3 LOW is RESOLVED. The iteration-4 PM review (`docs/pm-review.md`) rates CUJ-2, CUJ-3, CUJ-5 Satisfied and CUJ-1, CUJ-4 Caveats (held for the offscreen creation race only), with 0 Not done.
+
+Release: 1.0.0 is live on the Chrome Web Store since 2026-10-27 (https://chromewebstore.google.com/detail/helper-for-pixiv/acodafjaeeanbgobjgpjknnehibaednb); CUJ-1 was refined after release (repeat downloads of the same artwork go to a sibling folder `<folder> (1)` chosen via Chrome's download history; Issue 2026-10-27-19-58-31), so its Impl/QA/PM are reset below.
 
 ## Tech Stack
 
@@ -38,7 +40,7 @@ Impl reflects code on `main`; QA is from `docs/qa-report.md` (iteration 4, run `
 
 | CUJ | PRD | Priority | Impl | QA | PM |
 |-----|-----|----------|------|----|----|
-| CUJ-1: Download an illustration or manga from the artwork page | prd-000 | P0 | in progress (2 LOWs) | FAIL (LOW #1, LOW #2) | Caveats |
+| CUJ-1: Download an illustration or manga from the artwork page | prd-000 | P0 | not started | — | — |
 | CUJ-2: Download an ugoira | prd-000 | P0 | merged | PASS | Satisfied |
 | CUJ-3: Configure the extension from the toolbar icon | prd-000 | P0 | merged | PASS | Satisfied |
 | CUJ-4: Follow several downloads at once from the toolbar badge | prd-000 | P1 | in progress (LOW #1) | FAIL (LOW #1) | Caveats |
