@@ -233,7 +233,7 @@ describe('sw: a 12-page job (CUJ-1)', () => {
     expect(savedFiles(fake).some((f) => f.endsWith('metadata.json'))).toBe(false);
   });
 
-  it('sw: a second run of the same artwork gets uniquified names', async () => {
+  it('sw: a second run of the same artwork goes to the (1) folder with clean names (D15)', async () => {
     await runJob();
     const tab = new ContentTab(fake, ARTWORK_URL, api12());
     await settle(
@@ -250,7 +250,14 @@ describe('sw: a 12-page job (CUJ-1)', () => {
       driver.step();
       return tab.ended() !== undefined;
     }, 'second job end');
-    expect(savedFiles(fake)).toContain(`${FOLDER}/${ID}_p0 (1).jpg`);
+    const names = (folder: string) => [
+      `${folder}/metadata.json`,
+      ...Array.from({ length: 12 }, (_, page) => `${folder}/${ID}_p${page}.jpg`),
+    ];
+    expect([tab.ended()?.folder, savedFiles(fake).sort()]).toEqual([
+      `${FOLDER} (1)`,
+      [...names(FOLDER), ...names(`${FOLDER} (1)`)].sort(),
+    ]);
   });
 });
 

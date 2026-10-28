@@ -528,4 +528,38 @@ describe('isSafeRelativeFolder', () => {
   it('isSafeRelativeFolder: accepts what resolveFolder produces', () => {
     expect(isSafeRelativeFolder(resolveFolder('pixiv/{artist}/{title}', SAMPLE))).toBe(true);
   });
+
+  // D15: the folder choice appends " (n)" to the last segment of a resolved folder.
+  const GOLDEN_FOLDERS = [
+    'pixiv/みずき-135882741',
+    'Sora_空_2nd',
+    'unknown',
+    '👩🎨Mika',
+    'sora-1',
+    'so_ra-1',
+    'pixiv/unknown/T',
+    'sora_-1',
+    'pixiv',
+    'a/b',
+    '_CON',
+  ];
+  const SUFFIXES = [1, 2, 10, 999];
+
+  it.each(GOLDEN_FOLDERS)('isSafeRelativeFolder: accepts the Golden folder %j', (folder) => {
+    expect(isSafeRelativeFolder(folder)).toBe(true);
+  });
+
+  it.each(GOLDEN_FOLDERS.flatMap((folder) => SUFFIXES.map((n) => `${folder} (${n})`)))(
+    'isSafeRelativeFolder: accepts the folder-choice suffix in %j',
+    (folder) => {
+      expect(isSafeRelativeFolder(folder)).toBe(true);
+    },
+  );
+
+  it.each(['_CON (1)', 'My.url_ (1)', 'so_ra-1 (1)', 'pixiv/みずき-135882741 (1)'])(
+    'isSafeRelativeFolder: accepts the suffixed edge case %j',
+    (folder) => {
+      expect(isSafeRelativeFolder(folder)).toBe(true);
+    },
+  );
 });

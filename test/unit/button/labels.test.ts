@@ -223,6 +223,34 @@ describe.each(LOCALES)('present (%s)', (locale) => {
     });
   });
 
+  it('present: saved pages in a (1) folder carry the suffix verbatim in tip_saved and aria_saved_pages', () => {
+    const folder = `${FOLDER} (1)`;
+    const state: ButtonState = { s: 'saved', folder, kind: 'pages', pages: 12 };
+    const p = present(entry(state), META_ON);
+    expect([
+      p.label,
+      p.title,
+      p.ariaLabel,
+      p.title?.includes(folder),
+      p.ariaLabel.includes(folder),
+    ]).toEqual([
+      m('btn_saved'),
+      m('tip_saved', [folder]),
+      m('aria_saved_pages', [12, folder]),
+      true,
+      true,
+    ]);
+  });
+
+  it('present: a saved ugoira in a (1) folder carries the suffix verbatim in aria_saved_ugoira', () => {
+    const folder = `${UGOIRA_FOLDER} (1)`;
+    const state: ButtonState = { s: 'saved', folder, kind: 'ugoira', format: 'mp4' };
+    const p = present(entry(state, { work: UGOIRA }), META_ON);
+    expect([p.title, p.ariaLabel, p.title?.includes(folder), p.ariaLabel.includes(folder)]).toEqual(
+      [m('tip_saved', [folder]), m('aria_saved_ugoira', ['MP4', folder]), true, true],
+    );
+  });
+
   it('present: needsLogin shows the neutral login pill without an icon', () => {
     expect(present(entry({ s: 'needsLogin' }), META_ON)).toEqual({
       variant: 'neutral',

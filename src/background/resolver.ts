@@ -37,6 +37,8 @@ export interface ResolverDeps {
   apiFetchJson: (tabId: number, url: string) => Promise<RetryResult<unknown>>;
   /** Cached codec probe (caps.ts). */
   getCaps: (width: number, height: number) => Promise<CodecCaps>;
+  /** The folder actually used by a `full` job (folder-choice.ts, D15). Never rejects. */
+  chooseFolder: (folder: string, artworkId: string) => Promise<string>;
 }
 
 export type ApiFailure = NonNullable<JobRecord['apiFailure']>;
@@ -146,34 +148,42 @@ async function resolveFull(
   const files = new FileQueue();
   if (snapshot.saveMetadata) files.add('metadata', METADATA_NAME);
 
+  // The folder choice runs alongside the mode's second API call; both settle before the plan
+  // exists, so nothing is queued (metadata.json included) before the folder is chosen.
   if (work.illustType !== 2) {
-    const pages = await fetchPages(job, deps);
+    const [pages, chosen] = await Promise.all([
+      fetchPages(job, deps),
+      deps.chooseFolder(folder, job.artworkId),
+    ]);
     if (!pages.ok) return pages;
     pages.value.forEach((url, page) => files.addPage(job.artworkId, page, url));
     return plan({
       kind: 'pages',
-      folder,
+      folder: chosen,
       pagesTotal: pages.value.length,
       files: files.list,
       metaBody: snapshot.saveMetadata ? body : null,
     });
   }
 
-  const meta = await fetchUgoiraMeta(job, deps);
-  if (!meta.ok) return meta;
-  const caps = await fetchCaps(work, deps);
+  const [media, chosen] = await Promise.all([
+    fetchUgoiraMedia(job, work, deps),
+    deps.chooseFolder(folder, job.artworkId),
+  ]);
+  if (!media.ok) return media;
+  const { meta, caps } = media.value;
   const format = effectiveFormat(snapshot.ugoiraOutput, caps);
-  const zip = files.add('zip', zipName(job.artworkId), { url: meta.value.originalSrc });
+  const zip = files.add('zip', zipName(job.artworkId), { url: meta.originalSrc });
   const framesJson = files.add('framesJson', FRAMES_NAME, { dependsOn: [zip] });
   if (format !== 'zip') {
     files.add('video', `${job.artworkId}.${format}`, { dependsOn: [zip, framesJson] });
   }
   return plan({
     kind: 'ugoira',
-    folder,
+    folder: chosen,
     files: files.list,
     metaBody: snapshot.saveMetadata ? body : null,
-    ugoira: ugoiraState(meta.value, work, format, caps),
+    ugoira: ugoiraState(meta, work, format, caps),
     effectiveFormat: format,
   });
 }
@@ -290,6 +300,17 @@ async function fetchUgoiraMeta(job: JobRecord, deps: ResolverDeps): Promise<Step
   if (__TEST_HOOKS__) await __testHook('await:resolver.ugoiraMeta');
   const parsed = parseUgoiraMeta(await fetchJson(job, ugoiraMetaUrl(job.artworkId), deps));
   return parsed.ok ? parsed : failed('ugoira_meta', parsed.failure);
+}
+
+/** ugoira_meta, then the codec probe at the work's size. */
+async function fetchUgoiraMedia(
+  job: JobRecord,
+  work: WorkInfo,
+  deps: ResolverDeps,
+): Promise<Step<{ meta: UgoiraMeta; caps: CodecCaps }>> {
+  const meta = await fetchUgoiraMeta(job, deps);
+  if (!meta.ok) return meta;
+  return { ok: true, value: { meta: meta.value, caps: await fetchCaps(work, deps) } };
 }
 
 async function fetchCaps(work: WorkInfo, deps: ResolverDeps): Promise<CodecCaps> {

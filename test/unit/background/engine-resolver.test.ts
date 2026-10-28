@@ -79,6 +79,7 @@ function deps(
       Promise.resolve(api[url] ?? httpError(404)),
     ),
     getCaps: vi.fn(() => (caps instanceof Error ? Promise.reject(caps) : Promise.resolve(caps))),
+    chooseFolder: vi.fn<ResolverDeps['chooseFolder']>((folder) => Promise.resolve(folder)),
   } satisfies ResolverDeps;
 }
 
@@ -265,6 +266,158 @@ describe('resolver: full, ugoira', () => {
     const p = await plan(job(full(UGOIRA)), deps(STANDARD_API, new Error('probe')));
     expect(p.effectiveFormat).toBe('zip');
   });
+});
+
+describe('resolver: folder choice (D15)', () => {
+  const choosing = (answer: (folder: string) => string) => {
+    const d = deps();
+    d.chooseFolder.mockImplementation((folder: string) => Promise.resolve(answer(folder)));
+    return d;
+  };
+  /** A promise and the function that settles it. */
+  function held<T>(): { promise: Promise<T>; release: (value: T) => void } {
+    let release: (value: T) => void = () => undefined;
+    const promise = new Promise<T>((resolve) => {
+      release = resolve;
+    });
+    return { promise, release };
+  }
+
+  it('resolve: full pages asks for the resolved folder of the artwork', async () => {
+    const d = deps();
+    await plan(job(full(MANGA)), d);
+    expect(d.chooseFolder.mock.calls).toEqual([[MANGA_FOLDER, MANGA]]);
+  });
+
+  it('resolve: full pages uses the chosen folder as the plan folder', async () => {
+    const p = await plan(
+      job(full(MANGA)),
+      choosing((f) => `${f} (1)`),
+    );
+    expect(p.folder).toBe(`${MANGA_FOLDER} (1)`);
+  });
+
+  it('resolve: full ugoira asks for the resolved folder of the artwork', async () => {
+    const d = deps();
+    await plan(job(full(UGOIRA)), d);
+    expect(d.chooseFolder.mock.calls).toEqual([[UGOIRA_FOLDER, UGOIRA]]);
+  });
+
+  it('resolve: full ugoira uses the chosen folder as the plan folder', async () => {
+    const p = await plan(
+      job(full(UGOIRA)),
+      choosing((f) => `${f} (2)`),
+    );
+    expect(p.folder).toBe(`${UGOIRA_FOLDER} (2)`);
+  });
+
+  it('resolve: the folder choice starts before /pages answers', async () => {
+    const d = deps();
+    const pagesAnswer = held<RetryResult<unknown>>();
+    d.apiFetchJson.mockImplementation((_tabId: number, url: string) =>
+      url.endsWith('/pages')
+        ? pagesAnswer.promise
+        : Promise.resolve(STANDARD_API[url] ?? httpError(404)),
+    );
+    const resolution = resolve(job(full(MANGA)), d);
+    await vi.waitFor(() => {
+      expect(d.apiFetchJson).toHaveBeenCalledTimes(2);
+    });
+    const calledWhileHeld = d.chooseFolder.mock.calls.length;
+    pagesAnswer.release(ok(pages));
+    await resolution;
+    expect(calledWhileHeld).toBe(1);
+  });
+
+  it('resolve: the folder choice starts before ugoira_meta answers', async () => {
+    const d = deps();
+    const metaAnswer = held<RetryResult<unknown>>();
+    d.apiFetchJson.mockImplementation((_tabId: number, url: string) =>
+      url.endsWith('/ugoira_meta')
+        ? metaAnswer.promise
+        : Promise.resolve(STANDARD_API[url] ?? httpError(404)),
+    );
+    const resolution = resolve(job(full(UGOIRA)), d);
+    await vi.waitFor(() => {
+      expect(d.apiFetchJson).toHaveBeenCalledTimes(2);
+    });
+    const calledWhileHeld = d.chooseFolder.mock.calls.length;
+    metaAnswer.release(ok(ugoiraMeta));
+    await resolution;
+    expect(calledWhileHeld).toBe(1);
+  });
+
+  it('resolve: nothing is planned before the folder choice answers', async () => {
+    const d = deps();
+    const choice = held<string>();
+    d.chooseFolder.mockImplementation(() => choice.promise);
+    let settled = false;
+    const resolution = resolve(job(full(MANGA)), d).then((r) => {
+      settled = true;
+      return r;
+    });
+    await vi.waitFor(() => {
+      expect(d.apiFetchJson).toHaveBeenCalledTimes(2);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const settledWhileHeld = settled;
+    choice.release(`${MANGA_FOLDER} (1)`);
+    const final = await resolution;
+    expect([settledWhileHeld, final.ok && final.plan.folder]).toEqual([
+      false,
+      `${MANGA_FOLDER} (1)`,
+    ]);
+  });
+
+  it('resolve: a /pages failure after an answered folder choice fails the resolve', async () => {
+    const d = deps({ ...STANDARD_API, [`${API}/${MANGA}/pages`]: httpError(403) });
+    d.chooseFolder.mockResolvedValue(`${MANGA_FOLDER} (1)`);
+    const resolution = await resolve(job(full(MANGA)), d);
+    expect([resolution, d.chooseFolder.mock.calls.length]).toEqual([
+      {
+        ok: false,
+        apiFailure: { endpoint: 'pages', failure: { kind: 'http', status: 403, attempts: 1 } },
+        answered: true,
+      },
+      1,
+    ]);
+  });
+
+  it('resolve: a login-wall stop never runs the folder choice', async () => {
+    const d = deps();
+    await resolve(job(full(WALLED, false)), d);
+    expect(d.chooseFolder).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, StartRequest]>([
+    [
+      'retryPages',
+      { mode: 'retryPages', artworkId: MANGA, folder: 'pixiv/old (1)', pages: [0], total: 3 },
+    ],
+    [
+      'retryPages withMetadata',
+      {
+        mode: 'retryPages',
+        artworkId: MANGA,
+        folder: 'pixiv/old (1)',
+        pages: [0],
+        total: 3,
+        withMetadata: true,
+      },
+    ],
+    [
+      'retryEncode',
+      { mode: 'retryEncode', artworkId: UGOIRA, folder: 'pixiv/old (1)', format: 'mp4' },
+    ],
+    ['retryMetadata', { mode: 'retryMetadata', artworkId: MANGA, folder: 'pixiv/old (1)' }],
+  ])(
+    'resolve: %s never runs the folder choice and keeps the echoed folder',
+    async (_m, request) => {
+      const d = choosing((f) => `${f} (9)`);
+      const p = await plan(job(request), d);
+      expect([d.chooseFolder.mock.calls.length, p.folder]).toEqual([0, 'pixiv/old (1)']);
+    },
+  );
 });
 
 describe('resolver: retryPages', () => {
